@@ -1,0 +1,73 @@
+# Curated MI records captured from GNU gdb (Ubuntu 17.1-2ubuntu1) 17.1.
+# Format: '@name' line, then exactly one raw record line, byte-identical
+# to gdb output. Regenerate with scripts/capture-mi.py.
+@result-done-bare
+^done
+@result-done-value
+^done,value="off"
+@result-features
+^done,features=["frozen-varobjs","pending-breakpoints","thread-info","data-read-memory-bytes","breakpoint-notifications","ada-task-info","language-option","info-gdb-mi-command","undefined-command-error-code","exec-run-start-option","data-disassemble-a-option","simple-values-ref-types","python"]
+@result-error-simple
+^error,msg="The program is not being run."
+@result-error-escaped-quotes
+^error,msg="Function \"main\" not defined."
+@result-error-code
+^error,msg="Undefined MI command: exec-kill",code="undefined-command"
+@result-error-running
+^error,msg="Selected thread is running."
+@result-running
+^running
+@result-exit
+^exit
+@result-bkpt
+^done,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x000000000000117a",func="main",file="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",line="12",thread-groups=["i1"],times="0",original-location="main"}
+@result-breakpoint-table
+^done,BreakpointTable={nr_rows="2",nr_cols="6",hdr=[{width="7",alignment="-1",col_name="number",colhdr="Num"},{width="14",alignment="-1",col_name="type",colhdr="Type"},{width="4",alignment="-1",col_name="disp",colhdr="Disp"},{width="3",alignment="-1",col_name="enabled",colhdr="Enb"},{width="18",alignment="-1",col_name="addr",colhdr="Address"},{width="40",alignment="2",col_name="what",colhdr="What"}],body=[bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x000000000000117a",func="main",file="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",line="12",thread-groups=["i1"],times="0",original-location="main"},bkpt={number="2",type="breakpoint",disp="keep",enabled="y",addr="<PENDING>",pending="nosuchfunction_xyz",times="0",original-location="nosuchfunction_xyz"}]}
+@result-stack-frames
+^done,stack=[frame={level="0",addr="0x0000555555555157",func="add",file="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",line="5",arch="i386:x86-64"},frame={level="1",addr="0x0000555555555199",func="main",file="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",line="15",arch="i386:x86-64"}]
+@result-variables
+^done,variables=[{name="cfg",type="struct config"},{name="i",type="int",value="32767"}]
+@result-thread-info-running
+^done,threads=[{id="1",target-id="Thread 0x7ffff7d68b00 (LWP 145450)",name="sleep",state="running",core="11"}],current-thread-id="1"
+@result-register-names
+^done,register-names=["rax","rbx","rcx","rdx","rsi","rdi","rbp","rsp","r8","r9","r10","r11","r12","r13","r14","r15","rip","eflags","cs","ss","ds","es","fs","gs","st0","st1","st2","st3","st4","st5","st6","st7","fctrl","fstat","ftag","fiseg","fioff","foseg","fooff","fop","xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7","xmm8","xmm9","xmm10","xmm11","xmm12","xmm13","xmm14","xmm15","mxcsr","ymm0h","ymm1h","ymm2h","ymm3h","ymm4h","ymm5h","ymm6h","ymm7h","ymm8h","ymm9h","ymm10h","ymm11h","ymm12h","ymm13h","ymm14h","ymm15h","","","","","","","xmm16","xmm17","xmm18","xmm19","xmm20","xmm21","xmm22","xmm23","xmm24","xmm25","xmm26","xmm27","xmm28","xmm29","xmm30","xmm31","ymm16h","ymm17h","ymm18h","ymm19h","ymm20h","ymm21h","ymm22h","ymm23h","ymm24h","ymm25h","ymm26h","ymm27h","ymm28h","ymm29h","ymm30h","ymm31h","k0","k1","k2","k3","k4","k5","k6","k7","zmm0h","zmm1h","zmm2h","zmm3h","zmm4h","zmm5h","zmm6h","zmm7h","zmm8h","zmm9h","zmm10h","zmm11h","zmm12h","zmm13h","zmm14h","zmm15h","zmm16h","zmm17h","zmm18h","zmm19h","zmm20h","zmm21h","zmm22h","zmm23h","zmm24h","zmm25h","zmm26h","zmm27h","zmm28h","zmm29h","zmm30h","zmm31h","pkru","pl3_ssp","fs_base","gs_base","orig_rax","al","bl","cl","dl","sil","dil","bpl","spl","r8l","r9l","r10l","r11l","r12l","r13l","r14l","r15l","ah","bh","ch","dh","ax","bx","cx","dx","si","di","bp","","r8w","r9w","r10w","r11w","r12w","r13w","r14w","r15w","eax","ebx","ecx","edx","esi","edi","ebp","esp","r8d","r9d","r10d","r11d","r12d","r13d","r14d","r15d","ymm0","ymm1","ymm2","ymm3","ymm4","ymm5","ymm6","ymm7","ymm8","ymm9","ymm10","ymm11","ymm12","ymm13","ymm14","ymm15","ymm16","ymm17","ymm18","ymm19","ymm20","ymm21","ymm22","ymm23","ymm24","ymm25","ymm26","ymm27","ymm28","ymm29","ymm30","ymm31","zmm0","zmm1","zmm2","zmm3","zmm4","zmm5","zmm6","zmm7","zmm8","zmm9","zmm10","zmm11","zmm12","zmm13","zmm14","zmm15","zmm16","zmm17","zmm18","zmm19","zmm20","zmm21","zmm22","zmm23","zmm24","zmm25","zmm26","zmm27","zmm28","zmm29","zmm30","zmm31"]
+@result-asm-flat
+^done,asm_insns=[{address="0x000055555555527a",func-name="main",offset="27",inst="movl   $0x3,-0x40(%rbp)"},{address="0x0000555555555281",func-name="main",offset="34",inst="lea    0xd92(%rip),%rax        # 0x55555555601a"},{address="0x0000555555555288",func-name="main",offset="41",inst="mov    %rax,-0x30(%rbp)"},{address="0x000055555555528c",func-name="main",offset="45",inst="mov    -0x40(%rbp),%eax"},{address="0x000055555555528f",func-name="main",offset="48",inst="cltq"},{address="0x0000555555555291",func-name="main",offset="50",inst="mov    $0x20,%esi"},{address="0x0000555555555296",func-name="main",offset="55",inst="mov    %rax,%rdi"},{address="0x0000555555555299",func-name="main",offset="58",inst="call   0x5555555550f0 <calloc@plt>"}]
+@result-asm-src-and-asm
+^done,asm_insns=[src_and_asm_line={line="31",file="/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",line_asm_insn=[{address="0x000055555555527a",func-name="main",offset="27",opcodes="c7 45 c0 03 00 00 00",inst="movl   $0x3,-0x40(%rbp)"}]},src_and_asm_line={line="32",file="/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",line_asm_insn=[{address="0x0000555555555281",func-name="main",offset="34",opcodes="48 8d 05 92 0d 00 00",inst="lea    0xd92(%rip),%rax        # 0x55555555601a"},{address="0x0000555555555288",func-name="main",offset="41",opcodes="48 89 45 d0",inst="mov    %rax,-0x30(%rbp)"}]},src_and_asm_line={line="33",file="/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",line_asm_insn=[{address="0x000055555555528c",func-name="main",offset="45",opcodes="8b 45 c0",inst="mov    -0x40(%rbp),%eax"},{address="0x000055555555528f",func-name="main",offset="48",opcodes="48 98",inst="cltq"},{address="0x0000555555555291",func-name="main",offset="50",opcodes="be 20 00 00 00",inst="mov    $0x20,%esi"},{address="0x0000555555555296",func-name="main",offset="55",opcodes="48 89 c7",inst="mov    %rax,%rdi"},{address="0x0000555555555299",func-name="main",offset="58",opcodes="e8 52 fe ff ff",inst="call   0x5555555550f0 <calloc@plt>"}]}]
+@result-memory
+^done,memory=[{begin="0x00007fffffffd6b0",offset="0x0000000000000000",end="0x00007fffffffd6c0",contents="00c0000000000000e8d6ffffff7f0000"}]
+@result-varobj-create
+^done,name="v1",numchild="4",value="{...}",type="struct config",thread-id="1",has_more="0"
+@result-varobj-children
+^done,numchild="4",children=[child={name="v1.count",exp="count",numchild="0",type="int",thread-id="1"},child={name="v1.items",exp="items",numchild="3",type="struct item *",thread-id="1"},child={name="v1.label",exp="label",numchild="1",type="const char *",thread-id="1"},child={name="v1.matrix",exp="matrix",numchild="2",type="int [2][3]",thread-id="1"}],has_more="0"
+@result-symbol-lines
+^done,lines=[{pc="0x00005555555551e9",line="19"},{pc="0x00005555555551f9",line="19"},{pc="0x0000555555555208",line="22"},{pc="0x000055555555523c",line="23"},{pc="0x0000555555555248",line="24"},{pc="0x000055555555525f",line="27"},{pc="0x000055555555526b",line="27"},{pc="0x000055555555527a",line="31"},{pc="0x0000555555555281",line="32"},{pc="0x000055555555528c",line="33"},{pc="0x000055555555528f",line="33"},{pc="0x00005555555552a2",line="34"},{pc="0x00005555555552a9",line="34"},{pc="0x00005555555552ab",line="35"},{pc="0x00005555555552af",line="35"},{pc="0x00005555555552bc",line="35"},{pc="0x00005555555552c1",line="36"},{pc="0x00005555555552c5",line="36"},{pc="0x00005555555552d2",line="36"},{pc="0x00005555555552d6",line="36"},{pc="0x00005555555552f1",line="37"},{pc="0x00005555555552fa",line="37"},{pc="0x00005555555552fe",line="37"},{pc="0x000055555555530b",line="37"},{pc="0x0000555555555317",line="37"},{pc="0x000055555555531c",line="34"},{pc="0x0000555555555328",line="39"},{pc="0x0000555555555342",line="40"},{pc="0x0000555555555349",line="42"},{pc="0x0000555555555355",line="43"},{pc="0x0000555555555359",line="43"},{pc="0x0000555555555361",line="44"},{pc="0x0000555555555366",line="45"},{pc="0x000055555555537c",line="0"}]
+@result-completion
+^done,completion="info threads",matches=["info threads"],max_completions_reached="0"
+@result-empty-files-list
+^done,files=[]
+@exec-stopped-signal
+*stopped,reason="signal-received",signal-name="SIGINT",signal-meaning="Interrupt",frame={addr="0x00007ffff7aa05ae",func="__internal_syscall_cancel",args=[{name="a1",value="0"},{name="a1@entry",value="0"},{name="a2",value="0"},{name="a2@entry",value="0"},{name="a3",value="140737488343088"},{name="a4",value="140737488343088"},{name="a5",value="0"},{name="a5@entry",value="0"},{name="a6",value="0"},{name="a6@entry",value="0"},{name="nr",value="230"}],file="./nptl/cancellation.c",fullname="./nptl/./nptl/cancellation.c",line="44",arch="i386:x86-64"},thread-id="1",stopped-threads="all",core="1"
+@exec-stopped-breakpoint
+*stopped,reason="breakpoint-hit",disp="keep",bkptno="1",frame={addr="0x000055555555517a",func="main",args=[{name="argc",value="1"},{name="argv",value="0x7fffffffd838"}],file="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",line="12",arch="i386:x86-64"},thread-id="1",stopped-threads="all",core="10"
+@exec-stopped-exited
+*stopped,reason="exited-normally"
+@notify-breakpoint-modified
+=breakpoint-modified,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x000055555555517a",func="main",file="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",fullname="/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",line="12",thread-groups=["i1"],times="0",original-location="main"}
+@notify-library-loaded
+=library-loaded,id="/lib64/ld-linux-x86-64.so.2",target-name="/lib64/ld-linux-x86-64.so.2",host-name="/lib64/ld-linux-x86-64.so.2",symbols-loaded="0",thread-group="i1",ranges=[{from="0x00007ffff7fc0000",to="0x00007ffff7fff000"}]
+@notify-thread-group-started
+=thread-group-started,id="i1",pid="145259"
+@notify-thread-created
+=thread-created,id="1",group-id="i1"
+@console-no-symbols
+~"(No debugging symbols found in /tmp/gdb-wui-mi-capture/nodebug)\n"
+@log-warning
+&"warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts\nof file "
+@garbage-inferior-line
+total=3 argc=1
+@prompt-glued-to-record
+(gdb) ^done,value="off"
+@log-octal-and-tab
+&"warning: 78\t\303\251\n"

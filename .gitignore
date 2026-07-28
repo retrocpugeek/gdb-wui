@@ -1,0 +1,8 @@
+/gdb-wui
+*.test
+coverage.out
+/e2e/node_modules
+.mi-log*
+
+# compiled fixtures
+/testdata/fixtures/*.bin
