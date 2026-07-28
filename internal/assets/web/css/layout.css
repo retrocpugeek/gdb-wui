@@ -19,22 +19,27 @@ body {
 /* Track sizes are custom properties so the splitters in M8 can mutate them
  * without touching the rule. */
 #app {
-  --tree-w: 260px;
+  --tree-w: 240px;
+  --right-w: 320px;
+  --bottom-h: 180px;
 
   height: 100%;
   display: grid;
-  grid-template-columns: var(--tree-w) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: var(--tree-w) minmax(0, 1fr) var(--right-w);
+  grid-template-rows: auto minmax(0, 1fr) var(--bottom-h) auto;
   grid-template-areas:
-    "toolbar toolbar"
-    "tree    source"
-    "status  status";
+    "toolbar toolbar toolbar"
+    "tree    source  right"
+    "tree    bottom  right"
+    "status  status  status";
 }
 
-.toolbar   { grid-area: toolbar; }
+.toolbar      { grid-area: toolbar; }
 .panel-tree   { grid-area: tree; }
 .panel-source { grid-area: source; }
-.statusbar { grid-area: status; }
+.panel-right  { grid-area: right; }
+.panel-bottom { grid-area: bottom; }
+.statusbar    { grid-area: status; }
 
 /* Every panel root needs all four of these. Without min-width/min-height a
  * grid item refuses to shrink below its content, so one long source line makes
@@ -56,6 +61,9 @@ body {
   min-height: 0;
 }
 
+/* The right column stacks two lists; each gets half and scrolls on its own. */
+.panel-right > .panel-body { flex: 1 1 50%; }
+
 .toolbar, .statusbar {
   display: flex;
   align-items: center;
@@ -65,3 +73,16 @@ body {
 }
 
 .toolbar-gap { flex: 1 1 auto; }
+
+/* --- the virtual list -----------------------------------------------------
+ * The sizer is an empty box whose height establishes the scroll range; the
+ * viewport holds the row pool and is moved with one transform. Rows must not
+ * affect the sizer's height, hence the absolute positioning. */
+.vlist-sizer { position: relative; width: 100%; }
+.vlist-viewport {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}

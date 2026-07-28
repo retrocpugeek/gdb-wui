@@ -21,6 +21,7 @@
 .status-item[data-state="connecting"] { color: var(--warn); }
 .status-item[data-state="open"]       { color: var(--ok); }
 .status-item[data-state="closed"]     { color: var(--danger); }
+.status-dim { color: var(--fg-2); }
 
 .pill {
   padding: 1px 8px;
@@ -31,9 +32,45 @@
 }
 .pill[data-state="running"] { color: var(--warn); border-color: var(--warn); }
 .pill[data-state="stopped"] { color: var(--ok);   border-color: var(--ok); }
+.pill[data-state="exited"]  { color: var(--fg-2); }
+
+/* --- toolbar buttons ------------------------------------------------------ */
+
+.exec-group { display: flex; gap: 2px; }
+
+.btn {
+  font: inherit;
+  min-width: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  color: var(--fg-1);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) { background: var(--bg-3); color: var(--fg-0); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn-danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+.btn-small { padding: 0 6px; font-size: 11px; }
+
+.toolbar-exe {
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-reason { color: var(--fg-2); }
+
+/* --- panels --------------------------------------------------------------- */
 
 .panel-tree   { background: var(--bg-1); border-right: 1px solid var(--border); }
 .panel-source { background: var(--bg-0); }
+.panel-right  { background: var(--bg-1); border-left: 1px solid var(--border); }
+.panel-bottom { background: var(--bg-1); border-top: 1px solid var(--border); }
 
 .panel-head {
   display: flex;
@@ -43,14 +80,22 @@
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   min-height: 24px;
+  flex: 0 0 auto;
 }
 
+.panel-head-split { border-top: 1px solid var(--border); }
+
+/* The title keeps its width and the subtitle gives way. Letting both shrink
+ * equally produces "F." next to a full-width path, which is exactly backwards:
+ * the path is the expendable one. */
 .panel-title {
   font-weight: 600;
   color: var(--fg-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 4ch;
 }
 
 /* Long paths ellipsize at the *start*, so the interesting tail stays visible.
@@ -70,6 +115,8 @@
   direction: rtl;
   unicode-bidi: plaintext;
   text-align: left;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* --- file tree ------------------------------------------------------------ */
@@ -88,7 +135,6 @@
 
 .tree-row:hover { background: var(--bg-2); }
 .tree-row[aria-selected="true"] { background: var(--accent-dim); color: var(--fg-0); }
-
 .tree-row.is-file { cursor: pointer; }
 
 .tree-twisty {
@@ -110,20 +156,20 @@
 
 /* --- source view ---------------------------------------------------------- */
 
-/* M2 renders the whole file. M3 replaces this with a virtualised list; the row
- * shape is already what that list will pool, so the CSS survives. */
 .source {
   font-family: var(--font-mono);
   font-size: var(--font-size);
   line-height: var(--line-h);
   white-space: pre;
   tab-size: 8;
+  position: relative;
 }
 
 .src-row {
   display: grid;
   grid-template-columns: auto 1fr;
   height: var(--line-h);
+  line-height: var(--line-h);
 }
 
 /* A sticky gutter cell gives a frozen gutter with horizontally scrolling code
@@ -133,8 +179,10 @@
   position: sticky;
   left: 0;
   z-index: 1;
-  padding: 0 8px 0 10px;
-  text-align: right;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 4px;
   color: var(--fg-2);
   background: var(--bg-1);
   border-right: 1px solid var(--border);
@@ -143,23 +191,99 @@
   cursor: pointer;
 }
 
-.src-gutter:hover { color: var(--fg-0); background: var(--bg-2); }
+.src-gutter:hover { background: var(--bg-2); }
+.src-gutter:hover .src-bp { border-color: var(--fg-2); }
+
+.src-lineno { min-width: 3.5ch; text-align: right; }
+
+/* The breakpoint dot is always present, as an empty outline on hover, so the
+ * gutter shows where a click would land. */
+.src-bp {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+}
+
+.src-row.has-bp .src-bp { background: var(--bp-fill); }
+.src-row.bp-disabled .src-bp { background: transparent; border-color: var(--bp-fill); }
+.src-row.bp-pending .src-bp { background: var(--bp-pending); }
 
 .src-code { padding: 0 10px; color: var(--tok-plain); }
 
-.src-empty {
+.src-row.is-exec { background: var(--exec-line); }
+.src-row.is-exec .src-gutter { background: var(--exec-line); color: var(--fg-0); }
+
+.src-empty, .src-error {
   padding: 20px;
-  color: var(--fg-2);
   font-family: var(--font-ui);
   white-space: normal;
+}
+.src-empty { color: var(--fg-2); }
+.src-error { color: var(--danger); }
+
+/* --- generic lists (stack, breakpoints) ----------------------------------- */
+
+.list { font-family: var(--font-mono); font-size: 12px; }
+
+.list-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--fg-1);
 }
 
-.src-error {
-  padding: 20px;
-  color: var(--danger);
+.list-row:hover { background: var(--bg-2); }
+.list-row[aria-selected="true"] { background: var(--accent-dim); color: var(--fg-0); }
+
+.list-index { color: var(--fg-2); min-width: 2.5ch; }
+.list-main { overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; }
+.list-sub { color: var(--fg-2); font-size: 11px; }
+
+.list-note {
+  padding: 8px 10px;
+  color: var(--fg-2);
   font-family: var(--font-ui);
-  white-space: normal;
+  font-style: italic;
 }
+
+.bp-row.is-disabled .list-main { color: var(--fg-2); text-decoration: line-through; }
+.bp-row.is-pending .list-sub { color: var(--warn); }
+
+.bp-toggle { margin: 0; }
+
+.bp-delete {
+  font: inherit;
+  border: none;
+  background: none;
+  color: var(--fg-2);
+  cursor: pointer;
+  padding: 0 4px;
+}
+.bp-delete:hover { color: var(--danger); }
+
+/* --- log ------------------------------------------------------------------ */
+
+.log {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-line { color: var(--fg-1); }
+.log-console  { color: var(--fg-0); }
+.log-gdblog   { color: var(--fg-2); }
+.log-inferior { color: var(--ok); }
+.log-system   { color: var(--accent); }
+.log-mi-out   { color: var(--tok-keyword); }
+.log-mi-in    { color: var(--fg-2); }
 
 :focus-visible {
   outline: 2px solid var(--focus);

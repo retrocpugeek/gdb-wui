@@ -56,39 +56,85 @@ Two rules that shape the frontend:
 
 ### Implemented
 
+Everything below needs a debugger session except the `session.*` group; with
+`-no-gdb` the rest return `unsupported`.
+
 | Type | Payload | Response | Notes |
 |---|---|---|---|
 | `session.hello` | — | [`Hello`](#hello) | The snapshot, on demand. |
 | `session.info` | — | [`Hello`](#hello) | Alias of `session.hello`. |
 | `session.ping` | — | `{"pong": true}` | Liveness check. |
+| `exe.load` | `{path, args?}` | `{path, runState}` | Root-relative path; refused unless the file starts with the ELF magic. |
+| `exec.run` | `{stopAtMain?}` | [`ExecAck`](#execack) | `stopAtMain` uses `-exec-run --start`. |
+| `exec.continue` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | |
+| `exec.step` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | Step into. |
+| `exec.next` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | Step over. |
+| `exec.finish` | `{thread?, frame?, stopSeq?}` | [`ExecAck`](#execack) | Refused on the outermost frame. |
+| `exec.pause` | — | `{paused}` | Allowed while running. |
+| `exec.kill` | — | [`ExecAck`](#execack) | Allowed while running. |
+| `bp.setSource` | `{path, line, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | |
+| `bp.delete` | `{number}` | [`BreakpointList`](#breakpoints-1) | |
+| `bp.setEnabled` | `{number, enabled}` | [`BreakpointList`](#breakpoints-1) | |
+| `bp.list` | — | [`BreakpointList`](#breakpoints-1) | Re-reads from gdb. Allowed while running. |
+| `stack.list` | `{thread?, low?, high?, stopSeq?}` | `{stopSeq, threadId, frames}` | Capped at 64 frames. |
+| `frame.select` | `{thread?, frame, stopSeq?}` | [`Selection`](#selection) | Also emits `selectionChanged`. |
+
+`exec.pause` is the one request that does not queue behind the others. The
+server's actor loop is frequently blocked in a gdb round-trip, and that is
+exactly when a user presses Pause — routing it through the queue would mean the
+button works only when it is not needed. It goes straight to gdb as
+`-exec-interrupt`, which is also why `mi-async on` is in the startup handshake.
+
+`exec.kill` is a semantic name, not a passthrough. `-exec-kill` is **not** an
+MI3 command — gdb 17.1 answers `^error,msg="Undefined MI command:
+exec-kill",code="undefined-command"` — so the server implements it with
+`-interpreter-exec console "kill"`.
+
+#### ExecAck
+
+```jsonc
+{"runState": "running", "stopSeq": 4}
+```
+
+An acknowledgement, never a completion. The stop that follows arrives as a
+[`stopped`](#stopped) event.
+
+Every exec request may carry `stopSeq`: the stop the client believed it was
+acting on. If it does not match the server's current stop, the request is
+refused with `busy` rather than applied to state that has moved on. Sending `0`
+(or omitting it) opts out, which is what a toolbar button does. This one
+mechanism covers a double-clicked step, a panel refreshing against a stop that
+has been superseded, and — from M4 — a variable tree built from a frame that no
+longer exists.
 
 ### Reserved
 
-These names are fixed now so the frontend and the docs do not have to be
-renamed later. Requesting one today returns `unsupported`.
+These names are fixed now so the frontend and the docs do not have to be renamed
+later. Requesting one today returns `unsupported`.
 
-`exe.load` `exe.unload` · `exec.run` `exec.continue` `exec.pause` `exec.step`
-`exec.next` `exec.stepi` `exec.nexti` `exec.finish` `exec.until` `exec.return`
-`exec.kill` · `bp.setSource` `bp.setFunction` `bp.setAddress` `bp.setWatch`
-`bp.delete` `bp.setEnabled` `bp.setCondition` `bp.setIgnoreCount` `bp.list` ·
-`threads.list` `thread.select` · `stack.list` `frame.select` · `vars.locals`
+`exe.unload` · `exec.stepi` `exec.nexti` `exec.until` `exec.return` ·
+`bp.setFunction` `bp.setAddress` `bp.setWatch` `bp.setCondition`
+`bp.setIgnoreCount` · `threads.list` `thread.select` · `vars.locals`
 `vars.expand` `vars.setFormat` `vars.assign` · `eval.expr` · `watch.add`
 `watch.remove` `watch.list` · `regs.names` `regs.values` · `disasm.function`
 `disasm.range` · `mem.read` · `console.exec` `console.complete` ·
 `inferior.stdin` `inferior.signal` `inferior.resize` · `path.substitute`
 `path.addDir` `path.list`
 
-Note: `exec.kill` is a semantic name, not a passthrough. `-exec-kill` is **not**
-an MI3 command — gdb 17.1 answers `^error,msg="Undefined MI command:
-exec-kill",code="undefined-command"` — so the server implements it with
-`-interpreter-exec console "kill"`.
-
 ## Events
 
 | Event | When | Payload |
 |---|---|---|
 | `hello` | Immediately on connect, before anything is requested. | [`Hello`](#hello) |
-| `console` | gdb wrote console or log output. | `{"text": "…"}` |
+| `stopped` | The inferior stopped. | [`Stopped`](#stopped) |
+| `running` | The inferior resumed. | `{threadId, runState}` |
+| `exited` | The inferior finished. | `{exitCode?, signal?, runState}` |
+| `exeLoaded` | A program was loaded. | `{path, runState}` |
+| `breakpointsChanged` | The breakpoint mirror changed. | `{breakpoints}` |
+| `selectionChanged` | The selected thread or frame changed. | [`Selection`](#selection) |
+| `console` | gdb or the inferior wrote output. | `{text, stream}` |
+| `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
+| `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
 | `shuttingDown` | The server is going away. | `{}` |
 
@@ -99,22 +145,134 @@ path is identical to its recovery path.
 
 Unknown events must be ignored by clients, so a newer server can add one.
 
+`console` carries a `stream` of `console`, `log`, `target` or `inferior`. Until
+M5 gives the debuggee its own pty, its stdout is interleaved into gdb's and
+arrives here tagged `inferior` — the server recovers it from lines that are not
+valid MI rather than discarding them.
+
 ### Hello
+
+The full snapshot. A client repaints entirely from this and asks for nothing
+else, which is what makes a reload indistinguishable from a first load.
 
 ```jsonc
 {
   "protocol": 1,
   "server": "dev",
-  "projectRoot": "/home/user/project",  // absolute, for display only
-  "gdbVersion": "",                     // empty until a session exists (M3)
-  "features": [],                       // gdb's -list-features (M3)
-  "runState": "noProgram",              // noProgram | stopped | running | exited
-  "stopSeq": 0                          // increments on every stop
+  "projectRoot": "/home/user/project",  // absolute, display only
+  "gdbVersion": "GNU gdb (Ubuntu 17.1-2ubuntu1) 17.1",
+  "features": ["thread-info", "…"],     // gdb's -list-features
+  "runState": "stopped",                // noProgram | stopped | running | exited
+  "stopSeq": 4,                         // increments on every stop
+  "exePath": "build/hello",             // root-relative, absent if none
+  "breakpoints": [ /* Breakpoint */ ],
+  "threads":     [ /* Thread */ ],
+  "frames":      [ /* Frame */ ],       // present only when stopped
+  "locals":      [ /* Variable */ ],    // the selected frame's
+  "selection":   { /* Selection */ },
+  "lastStopReason": "breakpoint-hit"
 }
 ```
 
 Every path elsewhere in the protocol is **root-relative** with forward slashes
 and no leading slash. `projectRoot` is the sole exception and is display-only.
+
+### Stopped
+
+One fat event carrying everything the UI needs to repaint.
+
+```jsonc
+{
+  "stopSeq": 4,
+  "reason": "breakpoint-hit",
+  "breakpointNumber": 1,
+  "signal": "SIGINT", "signalMeaning": "Interrupt",  // signal-received only
+  "returnValue": "42",                               // function-finished only
+  "threadId": 1,
+  "threads": [ /* Thread */ ],
+  "frames":  [ /* Frame */ ],
+  "locals":  [ /* Variable */ ],
+  "runState": "stopped"
+}
+```
+
+Threads, the stack and frame-0 locals are gathered eagerly and sent together
+because fetching them separately costs four or five round-trips per single-step,
+and stepping is the thing users do most. Registers, disassembly and memory are
+deliberately **not** here: those panels pull lazily and pass `stopSeq`.
+
+`reason` is passed through verbatim, including values not listed here.
+Recognised: `breakpoint-hit`, `watchpoint-trigger`, `watchpoint-scope`,
+`function-finished`, `end-stepping-range`, `location-reached`,
+`signal-received`, `solib-event`, `exited-normally`, `exited`,
+`exited-signalled`.
+
+Note that gdb reports an exit **twice**: `=thread-group-exited` carries the exit
+code, and the `*stopped` that follows carries the reason but not the code. The
+server merges them, so a client sees one `exited` event with both.
+
+### Frame
+
+```jsonc
+{
+  "level": 0,
+  "address": "0x0000555555555157",
+  "func": "add",
+  "args": [{"name": "a", "value": "0"}],
+  "source": {"available": true, "path": "hello.c", "line": 5}
+}
+```
+
+Every part of `source` is optional, and `available` may be false. A stripped
+binary reports `func="??"` with no file at all, so **`address` is the only
+guaranteed frame identity** — a client must render such frames rather than skip
+them. When a path could not be located inside the project (a libc frame, or a
+build-time path that does not exist on this machine) `available` is false and
+`gdbPath` holds what gdb said, so the UI can offer to locate it.
+
+Arguments come from a second command: `-stack-list-frames` does not return them.
+
+### Variable
+
+```jsonc
+{"name": "cfg", "type": "struct config", "expandable": true}
+```
+
+`value` is **absent** for aggregates, because the server asks with
+`--simple-values`. That absence *is* the expandable signal, and it is also the
+defence against a 100k-element array: nothing was fetched.
+
+### Selection
+
+```jsonc
+{"threadId": 1, "frame": 1, "stopSeq": 4, "locals": [], "source": {}}
+```
+
+### Breakpoints
+
+```jsonc
+{
+  "number": 1,
+  "enabled": true,
+  "pending": false,
+  "address": "0x0000555555555157",
+  "func": "main",
+  "path": "hello.c",        // root-relative when resolvable
+  "gdbPath": "",            // what gdb said, when it was not
+  "line": 12,
+  "condition": "", "hitCount": 0, "temporary": false
+}
+```
+
+`bp.list`, `bp.delete` and `bp.setEnabled` return `{"breakpoints": [...]}`.
+
+Breakpoint state is **event-driven**: `-break-insert -f` can return
+`addr="<PENDING>"` and the real address arrives later in a
+`=breakpoint-modified`. A client must not assume the creation reply is final.
+
+The mirror hides temporary breakpoints the server did not create. `-exec-run
+--start` injects one at `main`, and a marker the user cannot delete because they
+never made it is worse than no marker.
 
 ## Errors
 

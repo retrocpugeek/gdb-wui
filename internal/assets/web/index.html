@@ -13,7 +13,18 @@
 <div id="app">
   <header class="toolbar" role="toolbar" aria-label="Debugger controls">
     <span class="brand">gdb-wui</span>
+    <span class="exec-group">
+      <button id="btn-run"      class="btn" title="Run (Ctrl+F5)">Run</button>
+      <button id="btn-continue" class="btn" title="Continue (F5)">▶</button>
+      <button id="btn-pause"    class="btn" title="Pause (F6)">⏸</button>
+      <button id="btn-next"     class="btn" title="Step over (F10)">⤼</button>
+      <button id="btn-step"     class="btn" title="Step into (F11)">↳</button>
+      <button id="btn-finish"   class="btn" title="Step out (Shift+F11)">↰</button>
+      <button id="btn-kill"     class="btn btn-danger" title="Kill">■</button>
+    </span>
+    <span id="exe-name" class="toolbar-exe"></span>
     <span class="toolbar-gap"></span>
+    <span id="stop-reason" class="toolbar-reason"></span>
     <span id="run-state" class="pill" data-state="noProgram">no program</span>
   </header>
 
@@ -33,8 +44,30 @@
     <div id="source" class="panel-body source" tabindex="0"></div>
   </main>
 
+  <aside class="panel panel-right" aria-label="Debug state">
+    <div class="panel-head">
+      <span class="panel-title">Call stack</span>
+    </div>
+    <div id="stack" class="panel-body list" role="list"></div>
+    <div class="panel-head panel-head-split">
+      <span class="panel-title">Breakpoints</span>
+    </div>
+    <div id="breakpoints" class="panel-body list" role="list"></div>
+  </aside>
+
+  <section class="panel panel-bottom" aria-label="Console">
+    <div class="panel-head">
+      <span class="panel-title">Log</span>
+      <span class="panel-sub" id="log-hint"></span>
+      <span class="toolbar-gap"></span>
+      <button id="btn-clear-log" class="btn btn-small" title="Clear">clear</button>
+    </div>
+    <div id="log" class="panel-body log" tabindex="0"></div>
+  </section>
+
   <footer class="statusbar">
     <span id="conn" class="status-item" data-state="connecting">connecting…</span>
+    <span id="gdb-version" class="status-item status-dim"></span>
     <span class="toolbar-gap"></span>
     <span id="status-message" class="status-item"></span>
   </footer>

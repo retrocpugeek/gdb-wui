@@ -1,0 +1,736 @@
+package debugger_test
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/retrocpugeek/gdb-wui/internal/debugger"
+	"github.com/retrocpugeek/gdb-wui/internal/gdbfake"
+	"github.com/retrocpugeek/gdb-wui/internal/mi"
+	"github.com/retrocpugeek/gdb-wui/internal/srcfs"
+	"github.com/retrocpugeek/gdb-wui/internal/wire"
+)
+
+// recorder collects broadcast events.
+type recorder struct {
+	mu     sync.Mutex
+	events []recorded
+	ch     chan recorded
+}
+
+type recorded struct {
+	name    string
+	payload any
+}
+
+func newRecorder() *recorder { return &recorder{ch: make(chan recorded, 512)} }
+
+func (r *recorder) Broadcast(event string, payload any) {
+	r.mu.Lock()
+	r.events = append(r.events, recorded{event, payload})
+	r.mu.Unlock()
+	select {
+	case r.ch <- recorded{event, payload}:
+	default:
+	}
+}
+
+func (r *recorder) all() []recorded {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]recorded(nil), r.events...)
+}
+
+// reset forgets everything recorded so far.
+//
+// Setup broadcasts too — loading a program reconciles breakpoints and announces
+// an empty list — so a test asserting on "the next breakpointsChanged" has to
+// say where "next" starts, or it matches the setup's event and passes or fails
+// for the wrong reason.
+func (r *recorder) reset() {
+	r.mu.Lock()
+	r.events = nil
+	r.mu.Unlock()
+	for {
+		select {
+		case <-r.ch:
+		default:
+			return
+		}
+	}
+}
+
+func (r *recorder) count(name string) int {
+	var n int
+	for _, e := range r.all() {
+		if e.name == name {
+			n++
+		}
+	}
+	return n
+}
+
+// wait blocks for the next event with the given name.
+func (r *recorder) wait(t *testing.T, name string) any {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case e := <-r.ch:
+			if e.name == name {
+				return e.payload
+			}
+		case <-deadline:
+			var seen []string
+			for _, e := range r.all() {
+				seen = append(seen, e.name)
+			}
+			t.Fatalf("timed out waiting for %q; saw %v", name, seen)
+		}
+	}
+}
+
+// testLogf is t.Logf that falls silent once the test ends: gdb-side goroutines
+// outlive the test body, and logging after tRunner marks the test done is a
+// race inside the testing package.
+func testLogf(t *testing.T) func(string, ...any) {
+	var mu sync.Mutex
+	finished := false
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		finished = true
+	})
+	return func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if finished {
+			return
+		}
+		t.Logf(format, args...)
+	}
+}
+
+// project builds a tiny project with a fake ELF so exe.load can be exercised
+// without a compiler.
+func project(t *testing.T) *srcfs.FS {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name string, content []byte) {
+		if err := os.WriteFile(filepath.Join(dir, name), content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("main.c", []byte("int main(void){return 0;}\n"))
+	write("prog", append([]byte{0x7f, 'E', 'L', 'F'}, make([]byte, 64)...))
+	write("notelf", []byte("#!/bin/sh\necho hi\n"))
+
+	f, err := srcfs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
+}
+
+// harness wires a session to a scripted fake gdb.
+type harness struct {
+	t     *testing.T
+	sess  *debugger.Session
+	fake  *gdbfake.Fake
+	rec   *recorder
+	files *srcfs.FS
+}
+
+// start wires a session to a scripted fake gdb.
+//
+// The transcript may use PROJECT wherever the project's absolute path appears;
+// it is substituted here. Commands carry absolute paths because gdb is a
+// separate process, and the temp directory is not known until the fixture is
+// built.
+func start(t *testing.T, transcript string, opts ...gdbfake.Option) *harness {
+	t.Helper()
+	rec := newRecorder()
+	files := project(t)
+	transcript = strings.ReplaceAll(transcript, "PROJECT", files.Abs())
+
+	fake, err := gdbfake.StartTranscript(transcript, append(opts, gdbfake.WithDefaultDone())...)
+	if err != nil {
+		t.Fatalf("transcript: %v", err)
+	}
+
+	sess, err := debugger.New(t.Context(), debugger.Config{
+		MI: mi.Options{
+			// A non-nil empty handshake: transcripts describe only the
+			// dialogue under test.
+			Handshake: []string{},
+			Stdin:     fake.ClientStdin,
+			Stdout:    fake.ClientStdout,
+			Logf:      testLogf(t),
+		},
+		Files:          files,
+		Events:         rec,
+		Logf:           testLogf(t),
+		Version:        "test",
+		CommandTimeout: 3 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("debugger.New: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = sess.Close(ctx)
+		fake.Close()
+	})
+	return &harness{t: t, sess: sess, fake: fake, rec: rec, files: files}
+}
+
+// do issues a request through the session.
+func (h *harness) do(typ string, payload any) (any, *wire.Error) {
+	h.t.Helper()
+	var raw json.RawMessage
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		raw = b
+	}
+	ctx, cancel := context.WithTimeout(h.t.Context(), 5*time.Second)
+	defer cancel()
+	return h.sess.Handle(ctx, wire.Request{ID: 1, Type: typ, Payload: raw})
+}
+
+// mustDo fails the test if the request errors.
+func (h *harness) mustDo(typ string, payload any) any {
+	h.t.Helper()
+	out, werr := h.do(typ, payload)
+	if werr != nil {
+		h.t.Fatalf("%s: %s: %s", typ, werr.Code, werr.Message)
+	}
+	return out
+}
+
+// loadProgram runs the exe.load dialogue the other tests need first.
+const loadTranscript = `
+> -file-exec-and-symbols*
+< ^done
+> -environment-cd*
+< ^done
+> -break-list
+< ^done,BreakpointTable={nr_rows="0",nr_cols="6",body=[]}
+`
+
+func (h *harness) load() {
+	h.t.Helper()
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "prog"})
+}
+
+func TestExeLoadValidatesELF(t *testing.T) {
+	h := start(t, ``)
+	_, werr := h.do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "notelf"})
+	if werr == nil {
+		t.Fatal("a shell script was accepted as a program")
+	}
+	if werr.Code != wire.CodeBadRequest {
+		t.Errorf("code = %q, want bad_request", werr.Code)
+	}
+	if !strings.Contains(werr.Message, "not an ELF") {
+		t.Errorf("message = %q; it should say what is wrong", werr.Message)
+	}
+}
+
+func TestExeLoadRejectsTraversal(t *testing.T) {
+	h := start(t, ``)
+	_, werr := h.do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "../../bin/ls"})
+	if werr == nil {
+		t.Fatal("a path outside the project was accepted")
+	}
+	if werr.Code != wire.CodePathDenied && werr.Code != wire.CodeNotFound {
+		t.Errorf("code = %q, want path_denied or not_found", werr.Code)
+	}
+}
+
+func TestExeLoadSucceeds(t *testing.T) {
+	h := start(t, loadTranscript)
+	h.load()
+
+	payload := h.rec.wait(t, wire.EventExeLoaded)
+	loaded, ok := payload.(wire.ExeLoaded)
+	if !ok {
+		t.Fatalf("payload is %T", payload)
+	}
+	if loaded.Path != "prog" {
+		t.Errorf("path = %q", loaded.Path)
+	}
+	if got := h.sess.Snapshot().ExePath; got != "prog" {
+		t.Errorf("snapshot exePath = %q", got)
+	}
+}
+
+// TestRunStateGate is the contract that replaces gdb's cryptic errors. It must
+// refuse without sending anything, which is what makes it faster than gdb's own
+// rejection as well as clearer.
+func TestRunStateGate(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -exec-run
+< ^running
+< *running,thread-id="all"
+`)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventRunning)
+
+	for _, typ := range []string{
+		wire.TypeExecContinue, wire.TypeExecStep, wire.TypeExecNext,
+		wire.TypeExecFinish, wire.TypeStackList, wire.TypeFrameSelect,
+	} {
+		_, werr := h.do(typ, wire.ExecRequest{})
+		if werr == nil {
+			t.Errorf("%s was accepted while the inferior is running", typ)
+			continue
+		}
+		if werr.Code != wire.CodeBusy {
+			t.Errorf("%s: code = %q, want busy", typ, werr.Code)
+		}
+	}
+
+	// Pause and kill must remain available: they are the only way out.
+	for _, typ := range []string{wire.TypeExecPause, wire.TypeBpList} {
+		if _, werr := h.do(typ, wire.ExecRequest{}); werr != nil && werr.Code == wire.CodeBusy {
+			t.Errorf("%s was gated as busy; it must work while running", typ)
+		}
+	}
+}
+
+func TestNotReadyBeforeRun(t *testing.T) {
+	h := start(t, loadTranscript)
+	h.load()
+	for _, typ := range []string{wire.TypeExecContinue, wire.TypeExecStep, wire.TypeStackList} {
+		_, werr := h.do(typ, wire.ExecRequest{})
+		if werr == nil || werr.Code != wire.CodeNotReady {
+			t.Errorf("%s: got %v, want not_ready", typ, werr)
+		}
+	}
+}
+
+// stopTranscript drives a full run-to-breakpoint, including everything the fat
+// stopped event fetches.
+const stopTranscript = `
+> -exec-run
+< ^running
+< *running,thread-id="all"
+< *stopped,reason="breakpoint-hit",disp="keep",bkptno="1",frame={addr="0x1149",func="main",args=[],file="main.c",fullname="PROJECT/main.c",line="1"},thread-id="1",stopped-threads="all"
+> -thread-info
+< ^done,threads=[{id="1",target-id="process 1",name="prog",state="stopped",core="3"}],current-thread-id="1"
+> -stack-list-frames --thread 1 0 63
+< ^done,stack=[frame={level="0",addr="0x1149",func="main",file="main.c",fullname="PROJECT/main.c",line="1"}]
+> -stack-list-arguments --thread 1 --simple-values 0 63
+< ^done,stack-args=[frame={level="0",args=[{name="argc",type="int",value="1"}]}]
+> -stack-list-variables --thread 1 --frame 0 --simple-values
+< ^done,variables=[{name="argc",type="int",value="1"},{name="cfg",type="struct config"}]
+`
+
+func TestFatStoppedEvent(t *testing.T) {
+	h := start(t, loadTranscript+stopTranscript)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+
+	payload := h.rec.wait(t, wire.EventStopped)
+	stopped, ok := payload.(wire.Stopped)
+	if !ok {
+		t.Fatalf("payload is %T", payload)
+	}
+	if stopped.Reason != "breakpoint-hit" {
+		t.Errorf("reason = %q", stopped.Reason)
+	}
+	if stopped.BreakpointNumber != 1 {
+		t.Errorf("bkptno = %d", stopped.BreakpointNumber)
+	}
+	if stopped.StopSeq != 1 {
+		t.Errorf("stopSeq = %d, want 1", stopped.StopSeq)
+	}
+	// One event carrying everything is the whole point.
+	if len(stopped.Threads) != 1 {
+		t.Errorf("threads = %d, want 1", len(stopped.Threads))
+	}
+	if len(stopped.Frames) != 1 {
+		t.Errorf("frames = %d, want 1", len(stopped.Frames))
+	}
+	if len(stopped.Locals) != 2 {
+		t.Fatalf("locals = %d, want 2", len(stopped.Locals))
+	}
+	// Absence of "value" with --simple-values is the expandable signal.
+	byName := map[string]wire.Variable{}
+	for _, v := range stopped.Locals {
+		byName[v.Name] = v
+	}
+	if byName["argc"].Expandable {
+		t.Error("argc has a value, so it must not be marked expandable")
+	}
+	if !byName["cfg"].Expandable {
+		t.Error("cfg has no value with --simple-values, so it must be expandable")
+	}
+}
+
+// TestStopSeqRejectsStaleRequests is the double-click-step case: the second
+// click carries the stop sequence from before the first step landed.
+func TestStopSeqRejectsStaleRequests(t *testing.T) {
+	h := start(t, loadTranscript+stopTranscript)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventStopped)
+
+	if got := h.sess.Snapshot().StopSeq; got != 1 {
+		t.Fatalf("stopSeq = %d, want 1", got)
+	}
+	_, werr := h.do(wire.TypeExecStep, wire.ExecRequest{StopSeq: 99})
+	if werr == nil {
+		t.Fatal("a request naming a stop that never happened was accepted")
+	}
+	if werr.Code != wire.CodeBusy {
+		t.Errorf("code = %q, want busy", werr.Code)
+	}
+
+	// Zero means "I do not care", which is what a toolbar button sends.
+	if _, werr := h.do(wire.TypeStackList, wire.StackListRequest{}); werr != nil {
+		t.Errorf("an unguarded request was rejected: %v", werr)
+	}
+}
+
+func TestSourceResolutionInsideProject(t *testing.T) {
+	h := start(t, loadTranscript+stopTranscript)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	stopped := h.rec.wait(t, wire.EventStopped).(wire.Stopped)
+
+	if len(stopped.Frames) == 0 {
+		t.Fatal("no frames")
+	}
+	src := stopped.Frames[0].Source
+	if !src.Available {
+		t.Fatalf("source not available for a file inside the project: %+v", src)
+	}
+	if src.Path != "main.c" {
+		t.Errorf("path = %q, want the root-relative main.c", src.Path)
+	}
+	if src.Line != 1 {
+		t.Errorf("line = %d", src.Line)
+	}
+}
+
+// TestSourceOutsideProjectDegrades is the libc frame: gdb reports a path that
+// does not exist here, and the UI must be told so rather than shown a blank
+// pane.
+func TestSourceOutsideProjectDegrades(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -exec-run
+< ^running
+< *stopped,reason="signal-received",signal-name="SIGINT",frame={addr="0x7ffff7aa05ae",func="__internal_syscall_cancel",file="./nptl/cancellation.c",fullname="./nptl/./nptl/cancellation.c",line="44"},thread-id="1"
+> -thread-info
+< ^done,threads=[{id="1",target-id="p",state="stopped"}],current-thread-id="1"
+> -stack-list-frames --thread 1 0 63
+< ^done,stack=[frame={level="0",addr="0x7ffff7aa05ae",func="__internal_syscall_cancel",file="./nptl/cancellation.c",fullname="./nptl/./nptl/cancellation.c",line="44"}]
+> -stack-list-arguments --thread 1 --simple-values 0 63
+< ^done,stack-args=[frame={level="0",args=[]}]
+> -stack-list-variables --thread 1 --frame 0 --simple-values
+< ^done,variables=[]
+`)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	stopped := h.rec.wait(t, wire.EventStopped).(wire.Stopped)
+
+	src := stopped.Frames[0].Source
+	if src.Available {
+		t.Error("a libc path was reported as available")
+	}
+	if src.GDBPath == "" {
+		t.Error("GDBPath is empty; the UI needs it to offer a locate-source action")
+	}
+	if stopped.Signal != "SIGINT" {
+		t.Errorf("signal = %q", stopped.Signal)
+	}
+}
+
+// TestStrippedBinaryFrameSurvives is finding 5 at the domain layer: no file, no
+// line, func="??" — addr is the only identity, and nothing may crash.
+func TestStrippedBinaryFrameSurvives(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -exec-run
+< ^running
+< *stopped,reason="end-stepping-range",frame={addr="0x555555555129",func="??"},thread-id="1"
+> -thread-info
+< ^done,threads=[{id="1",target-id="p",state="stopped"}],current-thread-id="1"
+> -stack-list-frames --thread 1 0 63
+< ^done,stack=[frame={level="0",addr="0x555555555129",func="??"},frame={level="1",addr="0x7ffff7829d90"}]
+> -stack-list-arguments --thread 1 --simple-values 0 63
+< ^error,msg="No symbol table info available."
+> -stack-list-variables --thread 1 --frame 0 --simple-values
+< ^error,msg="No symbol table info available."
+`)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	stopped := h.rec.wait(t, wire.EventStopped).(wire.Stopped)
+
+	if len(stopped.Frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(stopped.Frames))
+	}
+	if stopped.Frames[0].Address == "" {
+		t.Error("address is empty; it is the only guaranteed frame identity")
+	}
+	if stopped.Frames[0].Source.Available {
+		t.Error("a frame with no file was reported as having source")
+	}
+	// A locals command that errors must not lose the whole stop event.
+	if stopped.Reason != "end-stepping-range" {
+		t.Errorf("reason = %q", stopped.Reason)
+	}
+}
+
+func TestExitedClearsState(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -exec-run
+< ^running
+< *stopped,reason="exited-normally"
+`)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+
+	payload := h.rec.wait(t, wire.EventExited)
+	exited, ok := payload.(wire.Exited)
+	if !ok {
+		t.Fatalf("payload is %T", payload)
+	}
+	if exited.RunState != wire.RunStateExited {
+		t.Errorf("runState = %q", exited.RunState)
+	}
+	if exited.ExitCode == nil || *exited.ExitCode != 0 {
+		t.Errorf("exitCode = %v, want 0", exited.ExitCode)
+	}
+	snap := h.sess.Snapshot()
+	if len(snap.Frames) != 0 || len(snap.Locals) != 0 {
+		t.Error("frames or locals survived the program exiting")
+	}
+}
+
+func TestExitCodeIsOctal(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -exec-run
+< ^running
+< *stopped,reason="exited",exit-code="012"
+`)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	exited := h.rec.wait(t, wire.EventExited).(wire.Exited)
+	if exited.ExitCode == nil || *exited.ExitCode != 10 {
+		t.Errorf("exitCode = %v, want 10 (gdb reports it in octal)", exited.ExitCode)
+	}
+}
+
+func TestBreakpointMirror(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -break-insert -f "PROJECT/main.c:1"
+< ^done,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x1149",func="main",file="main.c",fullname="PROJECT/main.c",line="1",times="0",original-location="main.c:1"}
+`)
+	h.load()
+	h.rec.reset()
+	out := h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "main.c", Line: 1})
+	bp, ok := out.(wire.Breakpoint)
+	if !ok {
+		t.Fatalf("payload is %T", out)
+	}
+	if bp.Number != 1 || bp.Line != 1 {
+		t.Errorf("breakpoint = %+v", bp)
+	}
+	if bp.Path != "main.c" {
+		t.Errorf("path = %q, want the root-relative main.c", bp.Path)
+	}
+	if bp.Pending {
+		t.Error("a resolved breakpoint is marked pending")
+	}
+
+	list := h.rec.wait(t, wire.EventBreakpointsChanged).(wire.BreakpointList)
+	if len(list.Breakpoints) != 1 {
+		t.Errorf("mirror has %d breakpoints, want 1", len(list.Breakpoints))
+	}
+	if got := h.sess.Snapshot().Breakpoints; len(got) != 1 {
+		t.Errorf("snapshot has %d breakpoints, want 1", len(got))
+	}
+}
+
+// TestPendingBreakpointResolves is finding 6: the address arrives later, in a
+// notification, so the mirror has to be event-driven.
+func TestPendingBreakpointResolves(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -break-insert -f "PROJECT/main.c:1"
+< ^done,bkpt={number="2",type="breakpoint",disp="keep",enabled="y",addr="<PENDING>",pending="main.c:1",times="0",original-location="main.c:1"}
+< =breakpoint-modified,bkpt={number="2",type="breakpoint",disp="keep",enabled="y",addr="0x1149",func="main",file="main.c",fullname="PROJECT/main.c",line="1",times="0",original-location="main.c:1"}
+`)
+	h.load()
+	bp := h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "main.c", Line: 1}).(wire.Breakpoint)
+	if !bp.Pending {
+		t.Error("a <PENDING> breakpoint was not marked pending")
+	}
+	if bp.Address != "" {
+		t.Errorf("address = %q; <PENDING> is not an address", bp.Address)
+	}
+
+	// The notification must update the mirror.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		list := h.sess.Snapshot().Breakpoints
+		if len(list) == 1 && !list[0].Pending && list[0].Address != "" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("the pending breakpoint never resolved: %+v", h.sess.Snapshot().Breakpoints)
+}
+
+// TestTemporaryBreakpointWeDidNotCreateIsHidden is finding 11: -exec-run
+// --start injects one, and a marker the user cannot delete is worse than none.
+func TestTemporaryBreakpointWeDidNotCreateIsHidden(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -break-list
+< ^done,BreakpointTable={nr_rows="2",nr_cols="6",body=[bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x1149",func="main",fullname="PROJECT/main.c",line="1",times="0"},bkpt={number="2",type="breakpoint",disp="del",enabled="y",addr="0x1155",func="main",fullname="PROJECT/main.c",line="2",times="0",original-location="-qualified main"}]}
+`)
+	h.load()
+	out := h.mustDo(wire.TypeBpList, nil).(wire.BreakpointList)
+	if len(out.Breakpoints) != 1 {
+		t.Fatalf("mirror has %d breakpoints, want 1: %+v", len(out.Breakpoints), out.Breakpoints)
+	}
+	if out.Breakpoints[0].Number != 1 {
+		t.Errorf("kept breakpoint %d, want 1", out.Breakpoints[0].Number)
+	}
+}
+
+func TestBreakpointDelete(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -break-insert -f "PROJECT/main.c:1"
+< ^done,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x1149",fullname="PROJECT/main.c",line="1",times="0"}
+> -break-delete 1
+< ^done
+`)
+	h.load()
+	h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "main.c", Line: 1})
+	out := h.mustDo(wire.TypeBpDelete, wire.BreakpointIDRequest{Number: 1}).(wire.BreakpointList)
+	if len(out.Breakpoints) != 0 {
+		t.Errorf("mirror still has %d breakpoints", len(out.Breakpoints))
+	}
+}
+
+func TestBreakpointRejectsTraversal(t *testing.T) {
+	h := start(t, loadTranscript)
+	h.load()
+	_, werr := h.do(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "../../etc/passwd", Line: 1})
+	if werr == nil {
+		t.Fatal("a breakpoint outside the project was accepted")
+	}
+	if werr.Code != wire.CodePathDenied && werr.Code != wire.CodeNotFound {
+		t.Errorf("code = %q", werr.Code)
+	}
+}
+
+// TestSnapshotRestoresStoppedState is the M3 acceptance criterion in miniature:
+// everything a reloading browser needs is in the snapshot.
+func TestSnapshotRestoresStoppedState(t *testing.T) {
+	h := start(t, loadTranscript+`
+> -break-insert -f "PROJECT/main.c:1"
+< ^done,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x1149",func="main",fullname="PROJECT/main.c",line="1",times="0"}
+`+stopTranscript)
+	h.load()
+	h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "main.c", Line: 1})
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventStopped)
+
+	snap := h.sess.Snapshot()
+	if snap.RunState != wire.RunStateStopped {
+		t.Errorf("runState = %q", snap.RunState)
+	}
+	if snap.ExePath != "prog" {
+		t.Errorf("exePath = %q", snap.ExePath)
+	}
+	if len(snap.Breakpoints) != 1 {
+		t.Errorf("breakpoints = %d", len(snap.Breakpoints))
+	}
+	if len(snap.Frames) == 0 {
+		t.Error("no frames in the snapshot; a reloading browser could not show the stack")
+	}
+	if len(snap.Locals) == 0 {
+		t.Error("no locals in the snapshot")
+	}
+	if snap.Selection == nil || snap.Selection.StopSeq != snap.StopSeq {
+		t.Errorf("selection = %+v, stopSeq = %d", snap.Selection, snap.StopSeq)
+	}
+	if snap.LastStopReason != "breakpoint-hit" {
+		t.Errorf("lastStopReason = %q", snap.LastStopReason)
+	}
+}
+
+// TestNoDeclaredTypeIsUnsupported is the debugger half of the docs-honesty
+// check: every type in wire.RequestTypes must be routed somewhere. Whether it
+// succeeds depends on state; coming back "unsupported" never does.
+func TestNoDeclaredTypeIsUnsupported(t *testing.T) {
+	h := start(t, ``)
+	for _, typ := range wire.RequestTypes {
+		_, werr := h.do(typ, map[string]any{})
+		if werr != nil && werr.Code == wire.CodeUnsupported {
+			t.Errorf("%s came back unsupported; it is declared in wire.RequestTypes", typ)
+		}
+	}
+}
+
+func TestGDBDeathIsBroadcast(t *testing.T) {
+	h := start(t, `
+! eof
+`)
+	payload := h.rec.wait(t, wire.EventGDBDead)
+	dead, ok := payload.(wire.GDBDead)
+	if !ok {
+		t.Fatalf("payload is %T", payload)
+	}
+	if dead.Reason == "" {
+		t.Error("no reason given")
+	}
+	// Every subsequent request must fail cleanly rather than hang.
+	if _, werr := h.do(wire.TypeBpList, nil); werr == nil {
+		t.Error("a request succeeded after gdb died")
+	} else if werr.Code != wire.CodeGDBDead {
+		t.Errorf("code = %q, want gdb_dead", werr.Code)
+	}
+}
+
+// TestInferiorOutputBecomesConsole covers finding 3 at this layer: a garbage
+// line is the program talking, and it must reach the UI.
+func TestInferiorOutputBecomesConsole(t *testing.T) {
+	// A leading send with no expect fires as soon as the fake starts, which is
+	// exactly how the real thing arrives: unsolicited, between other records.
+	h := start(t, `
+< total=3 argc=1
+`)
+	_ = h
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range h.rec.all() {
+			if e.name != wire.EventConsole {
+				continue
+			}
+			if m, ok := e.payload.(map[string]string); ok && strings.Contains(m["text"], "total=3") {
+				if m["stream"] != "inferior" {
+					t.Errorf("stream = %q, want inferior", m["stream"])
+				}
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Error("the inferior's output never reached the console")
+}

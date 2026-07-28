@@ -68,6 +68,9 @@ type Hub struct {
 	mu    sync.Mutex
 	conns map[*conn]struct{}
 
+	// session is swapped in after construction; see SetSession.
+	session atomic.Pointer[Session]
+
 	// seq is server-monotonic across every event on every connection, so a
 	// client can detect a gap and tests can assert ordering.
 	seq atomic.Uint64
@@ -81,7 +84,27 @@ func New(cfg Config) *Hub {
 	if h.logf == nil {
 		h.logf = func(string, ...any) {}
 	}
+	if cfg.Session != nil {
+		h.session.Store(&cfg.Session)
+	}
 	return h
+}
+
+// SetSession attaches the debugger after construction.
+//
+// The three-way cycle is the reason this exists: the MI client needs an event
+// handler, the handler is the debugger session, and the session broadcasts
+// through the hub. Something has to be wired up second.
+func (h *Hub) SetSession(s Session) {
+	h.session.Store(&s)
+}
+
+// currentSession returns the attached session, or nil.
+func (h *Hub) currentSession() Session {
+	if p := h.session.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 // conn is one browser connection.
@@ -194,7 +217,8 @@ func (h *Hub) dispatch(ctx context.Context, req wire.Request) wire.Response {
 		return res
 	}
 
-	if h.cfg.Session == nil {
+	session := h.currentSession()
+	if session == nil {
 		// Unknown or not-yet-implemented types get an error response, never a
 		// closed connection: a newer frontend talking to an older server should
 		// degrade, not disconnect.
@@ -203,7 +227,7 @@ func (h *Hub) dispatch(ctx context.Context, req wire.Request) wire.Response {
 		return res
 	}
 
-	payload, werr := h.cfg.Session.Handle(ctx, req)
+	payload, werr := session.Handle(ctx, req)
 	if werr != nil {
 		res.Error = werr
 		return res
@@ -216,8 +240,8 @@ func (h *Hub) dispatch(ctx context.Context, req wire.Request) wire.Response {
 }
 
 func (h *Hub) snapshot() wire.Hello {
-	if h.cfg.Session != nil {
-		return h.cfg.Session.Snapshot()
+	if session := h.currentSession(); session != nil {
+		return session.Snapshot()
 	}
 	return wire.Hello{
 		Protocol:    wire.Protocol,

@@ -289,6 +289,89 @@ func (f *FS) ReadFile(p string) (File, error) {
 	}, nil
 }
 
+// Head reads the first n bytes of a file.
+//
+// It exists because ReadFile refuses anything containing NUL, and the one place
+// that legitimately needs to look at a binary is the ELF magic check before a
+// program is handed to gdb.
+func (f *FS) Head(p string, n int) ([]byte, error) {
+	rel, err := clean(p)
+	if err != nil {
+		return nil, err
+	}
+	fh, err := f.root.Open(rel)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer fh.Close()
+
+	info, err := fh.Stat()
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if info.IsDir() {
+		return nil, ErrIsDir
+	}
+	buf := make([]byte, n)
+	read, err := io.ReadFull(fh, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("srcfs: reading %s: %w", p, err)
+	}
+	return buf[:read], nil
+}
+
+// AbsPath returns the absolute path of a root-relative path, after checking
+// that it resolves inside the root.
+//
+// It exists for one reason: gdb is a separate process that does not share our
+// os.Root, so a program or breakpoint location has to be named by an absolute
+// path. The containment check is done here, through the Root, before the string
+// is handed over.
+//
+// There is a TOCTOU gap between this check and gdb's open. It is not worth
+// closing: gdb runs as the same user with the same privileges and is about to
+// execute the binary anyway, so an attacker who can win that race can already
+// do everything the race would buy them.
+func (f *FS) AbsPath(p string) (string, error) {
+	rel, err := clean(p)
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.root.Stat(rel); err != nil {
+		return "", mapErr(err)
+	}
+	if rel == "." {
+		return f.abs, nil
+	}
+	return f.abs + "/" + rel, nil
+}
+
+// RelPath maps an absolute path back to a root-relative one.
+//
+// The prefix comparison here is a *mapping heuristic*, not a security control:
+// it answers "does this path gdb reported look like it belongs to the project",
+// and the answer is then verified by statting through the Root, which is what
+// actually enforces containment. ok is false for anything outside — a libc
+// frame, or a build-time path that does not exist on this machine.
+func (f *FS) RelPath(abs string) (string, bool) {
+	if abs == "" || !strings.HasPrefix(abs, "/") {
+		return "", false
+	}
+	cleaned := path.Clean(abs)
+	if cleaned == f.abs {
+		return "", false
+	}
+	prefix := f.abs + "/"
+	if !strings.HasPrefix(cleaned, prefix) {
+		return "", false
+	}
+	rel := strings.TrimPrefix(cleaned, prefix)
+	if _, err := f.root.Stat(rel); err != nil {
+		return "", false
+	}
+	return rel, true
+}
+
 // Stat reports on one path.
 func (f *FS) Stat(p string) (fs.FileInfo, error) {
 	rel, err := clean(p)

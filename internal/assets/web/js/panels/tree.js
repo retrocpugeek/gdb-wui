@@ -13,6 +13,7 @@ export function createTree({ element, onOpenFile, onError }) {
   const children = new Map(); // dir path -> entries
   const loading = new Set();
   let selected = null;
+  let fileHandler = null;
 
   async function load(path) {
     if (children.has(path) || loading.has(path)) return;
@@ -117,6 +118,7 @@ export function createTree({ element, onOpenFile, onError }) {
     }
     selected = path;
     render();
+    if (fileHandler?.(path)) return;
     onOpenFile?.(path);
   });
 
@@ -127,6 +129,13 @@ export function createTree({ element, onOpenFile, onError }) {
     select(path) {
       selected = path;
       render();
+    },
+    // setFileHandler installs a first-refusal handler for file clicks. It
+    // returns true if it consumed the click; otherwise the file opens in the
+    // source view. This is how clicking a binary loads it into gdb instead of
+    // trying to render it as text.
+    setFileHandler(fn) {
+      fileHandler = fn;
     },
   };
 }

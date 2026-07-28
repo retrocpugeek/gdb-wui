@@ -82,6 +82,26 @@ disassembly, locals, registers, threads, and a raw GDB console all visible.
     (`disp="del"`). The breakpoint mirror must filter breakpoints we didn't create.
 12. **`=library-loaded` floods** (one per shared object) — suppress by default.
 
+### Corrections found while implementing (gdb 17.1)
+
+All twelve findings above were re-verified against gdb 17.1 during M1 and hold.
+Three things the plan got wrong or left out, each discovered by a test:
+
+13. **There is no `-exec-kill`.** `^error,msg="Undefined MI command:
+    exec-kill",code="undefined-command"`. The `exec.kill` message is therefore a
+    semantic command implemented with `-interpreter-exec console "kill"`, not a
+    passthrough. (The lifecycle section already assumed console `kill`; the
+    message-group list did not.)
+14. **`-stack-list-frames` does not return arguments.** A stack panel showing
+    `main(argc=1, argv=0x…)` needs a second command,
+    `-stack-list-arguments --simple-values`, merged by frame level. It is one
+    extra round-trip per stop, still inside the single fat `stopped` event.
+15. **gdb reports an exit twice, and the code is on the first one.**
+    `=thread-group-exited,exit-code="0"` arrives *before*
+    `*stopped,reason="exited-normally"`, and only the notification carries the
+    code — in octal. The two must be merged, or the UI sees a codeless exit
+    followed by a redundant second event.
+
 ## Architecture
 
 Module `github.com/retrocpugeek/gdb-wui`. Exactly two non-stdlib deps:

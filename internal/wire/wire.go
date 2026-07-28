@@ -110,6 +110,32 @@ var RequestTypes = []string{
 	TypeSessionHello,
 	TypeSessionInfo,
 	TypeSessionPing,
+
+	TypeExeLoad,
+
+	TypeExecRun,
+	TypeExecContinue,
+	TypeExecPause,
+	TypeExecStep,
+	TypeExecNext,
+	TypeExecFinish,
+	TypeExecKill,
+
+	TypeBpSetSource,
+	TypeBpDelete,
+	TypeBpSetEnabled,
+	TypeBpList,
+
+	TypeStackList,
+	TypeFrameSelect,
+}
+
+// SessionRequestTypes is the subset the hub answers with no debugger attached.
+// The rest require a Session and return not_ready without one.
+var SessionRequestTypes = []string{
+	TypeSessionHello,
+	TypeSessionInfo,
+	TypeSessionPing,
 }
 
 // Event names.
@@ -126,6 +152,15 @@ var EventNames = []string{
 	EventConsole,
 	EventError,
 	EventShuttingDown,
+
+	EventStopped,
+	EventRunning,
+	EventExited,
+	EventExeLoaded,
+	EventBreakpointsChanged,
+	EventSelectionChanged,
+	EventGDBDead,
+	EventMI,
 }
 
 // Hello is pushed to every connection the moment it opens, before anything is
@@ -153,6 +188,24 @@ type Hello struct {
 	// StopSeq increments on every stop; requests carry it and stale responses
 	// are dropped.
 	StopSeq uint64 `json:"stopSeq"`
+
+	// Everything below is what makes a page reload indistinguishable from a
+	// first load. A client repaints entirely from this and asks for nothing.
+
+	// ExePath is the loaded program, root-relative, empty if none.
+	ExePath string `json:"exePath,omitempty"`
+	// Breakpoints is the full mirror.
+	Breakpoints []Breakpoint `json:"breakpoints,omitempty"`
+	// Threads is empty unless the inferior exists.
+	Threads []Thread `json:"threads,omitempty"`
+	// Frames is the selected thread's stack, present only when stopped.
+	Frames []Frame `json:"frames,omitempty"`
+	// Locals belong to the selected frame, present only when stopped.
+	Locals []Variable `json:"locals,omitempty"`
+	// Selection is the current thread and frame, present only when stopped.
+	Selection *Selection `json:"selection,omitempty"`
+	// LastStopReason is why the inferior last stopped, for the status bar.
+	LastStopReason string `json:"lastStopReason,omitempty"`
 }
 
 // Protocol is the current protocol version.

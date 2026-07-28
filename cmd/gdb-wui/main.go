@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,9 +22,12 @@ import (
 	"time"
 
 	"github.com/retrocpugeek/gdb-wui/internal/assets"
+	"github.com/retrocpugeek/gdb-wui/internal/debugger"
 	"github.com/retrocpugeek/gdb-wui/internal/httpapi"
 	"github.com/retrocpugeek/gdb-wui/internal/hub"
+	"github.com/retrocpugeek/gdb-wui/internal/mi"
 	"github.com/retrocpugeek/gdb-wui/internal/srcfs"
+	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -37,6 +41,11 @@ type options struct {
 	listenAnywhere bool
 	verbose        bool
 	showVersion    bool
+
+	gdbPath string
+	exe     string
+	noGDB   bool
+	miLog   bool
 }
 
 func main() {
@@ -51,6 +60,10 @@ func main() {
 	flag.BoolVar(&opt.listenAnywhere, "listen-anywhere", false, "allow binding a non-loopback address (dangerous)")
 	flag.BoolVar(&opt.verbose, "v", false, "verbose logging")
 	flag.BoolVar(&opt.showVersion, "version", false, "print the version and exit")
+	flag.StringVar(&opt.gdbPath, "gdb", "gdb", "gdb executable")
+	flag.StringVar(&opt.exe, "exe", "", "program to load at startup, relative to -project")
+	flag.BoolVar(&opt.noGDB, "no-gdb", false, "browse the project without starting a debugger")
+	flag.BoolVar(&opt.miLog, "mi-log", false, "stream raw MI traffic to the browser's log pane")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -103,12 +116,28 @@ func run(opt options) error {
 	}
 
 	_, origins := loopbackOrigins(listener.Addr())
-	h := hub.New(hub.Config{
+	hubCfg := hub.Config{
 		AllowedOrigins: origins,
 		Logf:           logf,
 		ProjectRoot:    files.Abs(),
 		Version:        version,
-	})
+	}
+	h := hub.New(hubCfg)
+
+	if !opt.noGDB {
+		session, err := startDebugger(opt, files, h, logf)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := session.Close(shutdownCtx); err != nil {
+				log.Printf("closing gdb: %v", err)
+			}
+		}()
+		h.SetSession(session)
+	}
 
 	api, err := httpapi.New(httpapi.Config{
 		Files:          files,
@@ -164,6 +193,59 @@ func run(opt options) error {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 	return <-serveErr
+}
+
+// startDebugger brings up gdb and the session that drives it.
+func startDebugger(opt options, files *srcfs.FS, h *hub.Hub, logf func(string, ...any)) (*debugger.Session, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	session, err := debugger.New(ctx, debugger.Config{
+		MI: mi.Options{
+			Path: opt.gdbPath,
+			Dir:  files.Abs(),
+			Logf: logf,
+		},
+		Files:      files,
+		Events:     h,
+		Logf:       logf,
+		Version:    version,
+		GDBVersion: gdbVersion(opt.gdbPath),
+		MILog:      opt.miLog,
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("gdb ready")
+
+	if opt.exe != "" {
+		payload, err := json.Marshal(wire.ExeLoadRequest{Path: opt.exe})
+		if err != nil {
+			return nil, err
+		}
+		if _, werr := session.Handle(ctx, wire.Request{
+			Type:    wire.TypeExeLoad,
+			Payload: payload,
+		}); werr != nil {
+			// Not fatal: the UI can load a different program. Refusing to start
+			// over a bad -exe would be a worse experience than saying so.
+			log.Printf("loading %s: %s", opt.exe, werr.Message)
+		} else {
+			log.Printf("loaded %s", opt.exe)
+		}
+	}
+	return session, nil
+}
+
+// gdbVersion reads the banner. It is display-only, so a failure is not an
+// error — MI has no synchronous way to ask.
+func gdbVersion(path string) string {
+	out, err := exec.Command(path, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(string(out), "\n")
+	return strings.TrimSpace(line)
 }
 
 func loadAssets(dir string) (*assets.Assets, error) {

@@ -205,16 +205,21 @@ func TestUnknownTypeIsUnsupported(t *testing.T) {
 	}
 }
 
-// TestEveryDeclaredTypeIsAnswered is the other half of the docs-honesty check.
+// TestEveryDeclaredTypeIsAnswered is one half of the docs-honesty check.
 // assets.TestProtocolDocumented proves every declared type is written down;
-// this proves the server actually implements it, so a type cannot be documented
-// and reserved at the same time.
+// this proves the server implements it, so a type cannot be documented and
+// quietly unimplemented at the same time.
+//
+// Only the session group is checked here, because that is all a hub with no
+// debugger attached can answer. The debugger group is covered by the matching
+// test in internal/debugger, which asserts none of them come back
+// "unsupported".
 func TestEveryDeclaredTypeIsAnswered(t *testing.T) {
 	_, ts := serve(t, hub.Config{})
 	c := dial(t, ts)
 	c.readEvent()
 
-	for i, typ := range wire.RequestTypes {
+	for i, typ := range wire.SessionRequestTypes {
 		id := uint64(i + 1)
 		c.send(id, typ, nil)
 		res := c.readResponse()
@@ -222,8 +227,8 @@ func TestEveryDeclaredTypeIsAnswered(t *testing.T) {
 			t.Fatalf("id = %d, want %d", res.ID, id)
 		}
 		if !res.OK {
-			t.Errorf("%s: ok = false (%v); it is in wire.RequestTypes, so it must work",
-				typ, res.Error)
+			t.Errorf("%s: ok = false (%v); it is in wire.SessionRequestTypes, so it must "+
+				"work without a debugger attached", typ, res.Error)
 		}
 	}
 }
