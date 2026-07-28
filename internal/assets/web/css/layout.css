@@ -1,0 +1,67 @@
+/* layout.css owns geometry only: the grid, the regions, and the rules that stop
+ * a long line from blowing the layout out. Appearance lives in panels.css. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-ui);
+  background: var(--bg-0);
+  color: var(--fg-0);
+}
+
+/* Track sizes are custom properties so the splitters in M8 can mutate them
+ * without touching the rule. */
+#app {
+  --tree-w: 260px;
+
+  height: 100%;
+  display: grid;
+  grid-template-columns: var(--tree-w) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "toolbar toolbar"
+    "tree    source"
+    "status  status";
+}
+
+.toolbar   { grid-area: toolbar; }
+.panel-tree   { grid-area: tree; }
+.panel-source { grid-area: source; }
+.statusbar { grid-area: status; }
+
+/* Every panel root needs all four of these. Without min-width/min-height a
+ * grid item refuses to shrink below its content, so one long source line makes
+ * the whole page scroll sideways instead of the panel. contain keeps a repaint
+ * in one panel from costing a layout pass over the others. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  contain: layout paint;
+}
+
+.panel-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.toolbar, .statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--pad);
+  padding: 0 var(--pad);
+  min-height: 30px;
+}
+
+.toolbar-gap { flex: 1 1 auto; }

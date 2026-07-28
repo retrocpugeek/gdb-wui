@@ -1,0 +1,99 @@
+/* tokens.css is the only stylesheet allowed to contain colour literals.
+ *
+ * A Go test greps every other CSS file for #hex, rgb() and hsl(). The rule
+ * exists so that a light theme is an override of ~30 custom properties rather
+ * than an archaeology exercise across every panel, and so the terminal and the
+ * source view cannot drift apart: xterm's theme is built at boot by reading
+ * these same properties with getComputedStyle. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, from furthest back to nearest front. */
+  --bg-0: #14171c;
+  --bg-1: #1a1e25;
+  --bg-2: #21262f;
+  --bg-3: #2b313c;
+
+  /* Text. */
+  --fg-0: #e4e8ef;
+  --fg-1: #b6bfcd;
+  --fg-2: #7f8b9e;
+
+  --border: #2f3641;
+  --border-strong: #3d4654;
+
+  --accent: #6cb6ff;
+  --accent-dim: #2f4a68;
+  --focus: #8fd0ff;
+
+  --ok: #7fd88f;
+  --warn: #e8c07d;
+  --danger: #ef8478;
+
+  /* Execution markers, used from M3 onward. */
+  --exec-line: #3a4a2e;
+  --bp-fill: #ef8478;
+  --bp-pending: #e8c07d;
+
+  /* Syntax tokens. Source, disassembly and the hex viewer all map onto these
+   * so the three views agree about what a number looks like. */
+  --tok-keyword: #c99bf0;
+  --tok-string: #96d7a1;
+  --tok-number: #e8c07d;
+  --tok-comment: #6d7987;
+  --tok-type: #6cb6ff;
+  --tok-func: #a5c9ff;
+  --tok-punct: #9aa5b4;
+  --tok-plain: var(--fg-0);
+
+  /* Geometry. --line-h is load-bearing: the virtual source list in M3 computes
+   * scroll offsets from it and verifies it against a measured probe at boot. */
+  --line-h: 19px;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+    Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --font-ui: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --font-size: 13px;
+  --font-size-ui: 12px;
+
+  --pad: 8px;
+  --radius: 4px;
+  --tree-indent: 14px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-0: #ffffff;
+  --bg-1: #f6f7f9;
+  --bg-2: #eceef2;
+  --bg-3: #e0e4ea;
+
+  --fg-0: #1b1f26;
+  --fg-1: #414b58;
+  --fg-2: #6b7684;
+
+  --border: #d8dce3;
+  --border-strong: #c0c6d0;
+
+  --accent: #0a66c2;
+  --accent-dim: #cfe2f7;
+  --focus: #0a66c2;
+
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --danger: #cf222e;
+
+  --exec-line: #ddf4dd;
+  --bp-fill: #cf222e;
+  --bp-pending: #9a6700;
+
+  --tok-keyword: #8250df;
+  --tok-string: #0a7c42;
+  --tok-number: #953800;
+  --tok-comment: #6b7684;
+  --tok-type: #0550ae;
+  --tok-func: #1f5fbf;
+  --tok-punct: #57606a;
+  --tok-plain: var(--fg-0);
+}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gdb-wui</title>
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/layout.css">
+<link rel="stylesheet" href="/css/panels.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<div id="app">
+  <header class="toolbar" role="toolbar" aria-label="Debugger controls">
+    <span class="brand">gdb-wui</span>
+    <span class="toolbar-gap"></span>
+    <span id="run-state" class="pill" data-state="noProgram">no program</span>
+  </header>
+
+  <aside class="panel panel-tree" aria-label="Project files">
+    <div class="panel-head">
+      <span class="panel-title">Files</span>
+      <span id="project-root" class="panel-sub" title=""></span>
+    </div>
+    <div id="tree" class="panel-body tree" role="tree" tabindex="0"></div>
+  </aside>
+
+  <main class="panel panel-source" aria-label="Source">
+    <div class="panel-head">
+      <span id="source-path" class="panel-title">No file open</span>
+      <span id="source-meta" class="panel-sub"></span>
+    </div>
+    <div id="source" class="panel-body source" tabindex="0"></div>
+  </main>
+
+  <footer class="statusbar">
+    <span id="conn" class="status-item" data-state="connecting">connecting…</span>
+    <span class="toolbar-gap"></span>
+    <span id="status-message" class="status-item"></span>
+  </footer>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

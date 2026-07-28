@@ -1,0 +1,167 @@
+/* panels.css owns appearance. No colour literals here — see tokens.css. */
+
+.toolbar {
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-1);
+}
+
+.statusbar {
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-item[data-state="connecting"] { color: var(--warn); }
+.status-item[data-state="open"]       { color: var(--ok); }
+.status-item[data-state="closed"]     { color: var(--danger); }
+
+.pill {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-1);
+  color: var(--fg-1);
+}
+.pill[data-state="running"] { color: var(--warn); border-color: var(--warn); }
+.pill[data-state="stopped"] { color: var(--ok);   border-color: var(--ok); }
+
+.panel-tree   { background: var(--bg-1); border-right: 1px solid var(--border); }
+.panel-source { background: var(--bg-0); }
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pad);
+  padding: 4px var(--pad);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 24px;
+}
+
+.panel-title {
+  font-weight: 600;
+  color: var(--fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Long paths ellipsize at the *start*, so the interesting tail stays visible.
+ *
+ * direction:rtl moves the clipping to the leading edge, but on its own it also
+ * reorders the neutral characters at each end — a leading "/" jumps to the
+ * visual end and "/home/steve" renders as "home/steve/". unicode-bidi:plaintext
+ * takes the content's own direction (LTR, from the first strong character) for
+ * ordering while leaving the box's RTL alignment alone, which is what makes
+ * both halves behave. */
+.panel-sub {
+  color: var(--fg-2);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+}
+
+/* --- file tree ------------------------------------------------------------ */
+
+.tree { padding: 4px 0; user-select: none; }
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 1px 0;
+  white-space: nowrap;
+  cursor: default;
+  color: var(--fg-1);
+}
+
+.tree-row:hover { background: var(--bg-2); }
+.tree-row[aria-selected="true"] { background: var(--accent-dim); color: var(--fg-0); }
+
+.tree-row.is-file { cursor: pointer; }
+
+.tree-twisty {
+  width: 12px;
+  flex: 0 0 12px;
+  text-align: center;
+  color: var(--fg-2);
+}
+
+.tree-name { overflow: hidden; text-overflow: ellipsis; }
+.tree-row.is-dir .tree-name { color: var(--fg-0); }
+.tree-row.is-symlink .tree-name { font-style: italic; }
+
+.tree-note {
+  padding: 6px 10px;
+  color: var(--fg-2);
+  font-style: italic;
+}
+
+/* --- source view ---------------------------------------------------------- */
+
+/* M2 renders the whole file. M3 replaces this with a virtualised list; the row
+ * shape is already what that list will pool, so the CSS survives. */
+.source {
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  line-height: var(--line-h);
+  white-space: pre;
+  tab-size: 8;
+}
+
+.src-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  height: var(--line-h);
+}
+
+/* A sticky gutter cell gives a frozen gutter with horizontally scrolling code
+ * in pure CSS, and keeps click targets aligned with their lines by
+ * construction rather than by arithmetic. */
+.src-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding: 0 8px 0 10px;
+  text-align: right;
+  color: var(--fg-2);
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.src-gutter:hover { color: var(--fg-0); background: var(--bg-2); }
+
+.src-code { padding: 0 10px; color: var(--tok-plain); }
+
+.src-empty {
+  padding: 20px;
+  color: var(--fg-2);
+  font-family: var(--font-ui);
+  white-space: normal;
+}
+
+.src-error {
+  padding: 20px;
+  color: var(--danger);
+  font-family: var(--font-ui);
+  white-space: normal;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
