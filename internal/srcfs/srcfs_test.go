@@ -359,3 +359,52 @@ func itoa(i int) string {
 	}
 	return string(b)
 }
+
+// TestClassify covers the signal the file tree uses to tell a program from a
+// file. Getting it wrong means clicking a source file tries to load it into
+// gdb, or a program silently opens as text.
+func TestClassify(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, body []byte, mode os.FileMode) {
+		if err := os.WriteFile(filepath.Join(dir, name), body, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elf := append([]byte{0x7f, 'E', 'L', 'F'}, make([]byte, 32)...)
+	write("prog", elf, 0o755)
+	// An ELF file without the execute bit: a .o or a stripped artefact. Not a
+	// debuggee you can run, so it is not offered as one.
+	write("prog.o", elf, 0o644)
+	write("script.sh", []byte("#!/bin/sh\necho hi\n"), 0o755)
+	write("main.c", []byte("int main(void){return 0;}\n"), 0o644)
+	write("noext", []byte("just text\n"), 0o644)
+	write("tiny", []byte("#!"), 0o755)
+
+	f, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	got, err := f.Tree("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, e := range got.Entries {
+		kinds[e.Name] = e.Kind
+	}
+
+	for name, want := range map[string]string{
+		"prog":      KindELF,
+		"prog.o":    KindPlain,
+		"script.sh": KindExec,
+		"main.c":    KindPlain,
+		"noext":     KindPlain,
+		"tiny":      KindExec,
+	} {
+		if kinds[name] != want {
+			t.Errorf("%s: kind = %q, want %q", name, kinds[name], want)
+		}
+	}
+}

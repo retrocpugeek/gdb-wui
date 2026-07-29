@@ -350,16 +350,19 @@ ui.buttons.finish.addEventListener("click", () => exec("exec.finish"));
 ui.buttons.kill.addEventListener("click", () => exec("exec.kill"));
 el("btn-clear-log").addEventListener("click", () => log.clear());
 
-// Loading a program: the tree cannot tell an executable from a data file
-// without reading it, so any non-source click offers to load it and the server
-// checks the ELF magic.
-tree.setFileHandler((path) => {
-  if (/\.(c|h|cc|cpp|hpp|s|md|txt|json|ya?ml|mk|sh)$/i.test(path)) return false;
+// Clicking a file does one of two quite different things, and which one is
+// decided by the server's `kind` rather than by guessing from the filename: a
+// compiled program usually has no extension, so a filename guess is wrong in
+// both directions. The tree badges the difference, so the outcome is visible
+// before the click.
+tree.setFileHandler((path, kind) => {
+  if (kind !== "elf") return false;
   send("exe.load", { path })
     .then(() => setStatus(`loaded ${path}`))
     .catch((err) => {
       if (err.code === "bad_request") {
-        // Not an executable: fall back to showing it as text.
+        // Executable but not something gdb will take: show it as text instead
+        // of leaving the click with no visible effect.
         source.open(path).catch(reportError);
         return;
       }

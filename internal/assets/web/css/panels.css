@@ -144,9 +144,45 @@
   color: var(--fg-2);
 }
 
-.tree-name { overflow: hidden; text-overflow: ellipsis; }
+.tree-name { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
 .tree-row.is-dir .tree-name { color: var(--fg-0); }
 .tree-row.is-symlink .tree-name { font-style: italic; }
+
+/* Programs are the files that do something entirely different when clicked, so
+ * they read differently: the accent colour and a badge, rather than a subtle
+ * shade nobody would notice.
+ *
+ * kind- rather than is-, because .src-row.is-exec already means "the execution
+ * line is here". The two never collide — different parents — but a reader
+ * should not have to work that out. */
+.tree-row.kind-elf .tree-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.tree-row.kind-exec .tree-name { color: var(--fg-0); }
+
+.tree-badge {
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  flex: 0 0 auto;
+}
+
+.tree-badge-elf {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-dim);
+}
+
+.tree-badge-exec {
+  color: var(--fg-2);
+  border-color: var(--border-strong);
+}
 
 .tree-note {
   padding: 6px 10px;

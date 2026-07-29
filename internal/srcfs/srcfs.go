@@ -195,6 +195,7 @@ func (f *FS) Tree(p string) (Listing, error) {
 			e.Dir = fi.IsDir()
 			if !e.Dir {
 				e.Size = fi.Size()
+				e.Kind = f.classify(child, fi.Mode())
 			}
 		}
 		out.Entries = append(out.Entries, e)
@@ -212,6 +213,20 @@ func (f *FS) Tree(p string) (Listing, error) {
 	return out, nil
 }
 
+// Entry kinds. The tree uses these to tell a program apart from a file, which
+// decides whether clicking it loads a debuggee or opens a text buffer.
+const (
+	// KindPlain is anything that is not executable.
+	KindPlain = ""
+	// KindELF is an executable whose first four bytes are the ELF magic: a
+	// candidate debuggee.
+	KindELF = "elf"
+	// KindExec is executable but not ELF — a shell script, usually. Worth
+	// distinguishing, because handing one to gdb produces an error and the UI
+	// should not invite that.
+	KindExec = "exec"
+)
+
 // Entry is one directory entry.
 type Entry struct {
 	Name    string
@@ -219,6 +234,8 @@ type Entry struct {
 	Dir     bool
 	Size    int64
 	Symlink bool
+	// Kind is one of the Kind constants; empty for directories.
+	Kind string
 }
 
 // Listing is one directory level.
@@ -383,6 +400,27 @@ func (f *FS) Stat(p string) (fs.FileInfo, error) {
 		return nil, mapErr(err)
 	}
 	return info, nil
+}
+
+// classify decides whether an entry is a program.
+//
+// The execute bit is checked first because it is already in hand and rules out
+// almost everything; only the survivors are opened to look at four bytes. The
+// alternative — guessing from the filename, which is what the frontend used to
+// do — is wrong in both directions: a compiled program usually has no
+// extension, and plenty of extensionless files are not programs.
+func (f *FS) classify(rel string, mode fs.FileMode) string {
+	if !mode.IsRegular() || mode.Perm()&0o111 == 0 {
+		return KindPlain
+	}
+	head, err := f.Head(rel, 4)
+	if err != nil || len(head) < 4 {
+		return KindExec
+	}
+	if head[0] == 0x7f && head[1] == 'E' && head[2] == 'L' && head[3] == 'F' {
+		return KindELF
+	}
+	return KindExec
 }
 
 // isBinary reports whether the content looks like something the source viewer

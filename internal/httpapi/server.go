@@ -237,7 +237,8 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, e := range listing.Entries {
 		out.Entries = append(out.Entries, wire.TreeEntry{
-			Name: e.Name, Path: e.Path, Dir: e.Dir, Size: e.Size, Symlink: e.Symlink,
+			Name: e.Name, Path: e.Path, Dir: e.Dir, Size: e.Size,
+			Symlink: e.Symlink, Kind: e.Kind,
 		})
 	}
 	w.Header().Set("Cache-Control", "no-store")

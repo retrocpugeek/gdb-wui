@@ -77,8 +77,10 @@ export function createTree({ element, onOpenFile, onError }) {
       const el = document.createElement("div");
       el.className = "tree-row " + (entry.dir ? "is-dir" : "is-file");
       if (entry.symlink) el.classList.add("is-symlink");
+      if (entry.kind) el.classList.add(`kind-${entry.kind}`);
       el.setAttribute("role", "treeitem");
       el.dataset.path = entry.path;
+      el.dataset.kind = entry.kind ?? "";
       el.style.paddingLeft = `${4 + depth * 14}px`;
       if (entry.path === selected) el.setAttribute("aria-selected", "true");
       if (entry.dir) el.setAttribute("aria-expanded", String(expanded.has(entry.path)));
@@ -91,8 +93,20 @@ export function createTree({ element, onOpenFile, onError }) {
       const name = document.createElement("span");
       name.className = "tree-name";
       name.textContent = entry.name;
-      if (entry.symlink) name.title = `${entry.path} (symbolic link)`;
       el.append(name);
+
+      // A badge, not just a colour: what happens when you click a file is not
+      // a nuance, it is two entirely different actions, and the user should be
+      // able to tell them apart before clicking rather than after.
+      if (entry.kind === "elf") {
+        el.title = `${entry.path} — click to load into gdb`;
+        el.append(badge("ELF", "tree-badge-elf"));
+      } else if (entry.kind === "exec") {
+        el.title = `${entry.path} — executable, but not an ELF program`;
+        el.append(badge("exec", "tree-badge-exec"));
+      } else if (entry.symlink) {
+        el.title = `${entry.path} (symbolic link)`;
+      }
 
       frag.append(el);
     }
@@ -118,7 +132,7 @@ export function createTree({ element, onOpenFile, onError }) {
     }
     selected = path;
     render();
-    if (fileHandler?.(path)) return;
+    if (fileHandler?.(path, row.dataset.kind || "")) return;
     onOpenFile?.(path);
   });
 
@@ -131,11 +145,18 @@ export function createTree({ element, onOpenFile, onError }) {
       render();
     },
     // setFileHandler installs a first-refusal handler for file clicks. It
-    // returns true if it consumed the click; otherwise the file opens in the
-    // source view. This is how clicking a binary loads it into gdb instead of
-    // trying to render it as text.
+    // receives the path and the server's kind, and returns true if it consumed
+    // the click; otherwise the file opens in the source view.
     setFileHandler(fn) {
       fileHandler = fn;
     },
   };
+}
+
+// badge renders the small right-aligned tag that marks a program.
+function badge(text, className) {
+  const span = document.createElement("span");
+  span.className = `tree-badge ${className}`;
+  span.textContent = text;
+  return span;
 }

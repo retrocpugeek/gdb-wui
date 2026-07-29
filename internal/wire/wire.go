@@ -238,6 +238,15 @@ type TreeEntry struct {
 	// rather than followed: a link out of the root is refused on open, and the
 	// UI should say why rather than appear to lose the file.
 	Symlink bool `json:"symlink,omitempty"`
+	// Kind is "elf" for a candidate debuggee, "exec" for something executable
+	// that is not ELF, and absent otherwise.
+	//
+	// The server decides this because the client cannot: a compiled program
+	// usually has no extension, and guessing from the filename is wrong in both
+	// directions. It is what makes "clicking this loads a program" and
+	// "clicking this opens text" visibly different actions rather than a
+	// surprise.
+	Kind string `json:"kind,omitempty"`
 }
 
 // Tree is the response body of GET /api/tree.
