@@ -349,3 +349,68 @@ func TestReloadRestoresState(t *testing.T) {
 		t.Log("gdbVersion is empty (set by cmd, not by the session)")
 	}
 }
+
+// TestSwitchProgramWhileStopped is the ordinary "debug something else" flow:
+// load a second program without restarting the server.
+//
+// It is subtler than it looks. -file-exec-and-symbols discards the live
+// inferior and gdb announces that with =thread-group-exited — which arrives
+// *after* exe.load has already reset the state, so a naive handler leaves the
+// UI reading "exited" when it should read "no program".
+func TestSwitchProgramWhileStopped(t *testing.T) {
+	h := startReal(t, "hello")
+
+	// Build a second program in the same project.
+	second := filepath.Join(h.files.Abs(), "structs")
+	src := filepath.Join(testutil.RepoRoot(t), "testdata", "fixtures", "structs.c")
+	body, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dstSrc := filepath.Join(h.files.Abs(), "structs.c")
+	if err := os.WriteFile(dstSrc, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("gcc", "-g", "-O0", "-o", second, dstSrc).CombinedOutput(); err != nil {
+		t.Fatalf("compiling structs: %v\n%s", err, out)
+	}
+
+	// Get the first program to a stop.
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+	h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "hello.c", Line: lineMainInit})
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventStopped)
+
+	// Switch. This must be allowed while stopped.
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "structs"})
+
+	// Let any trailing notifications land.
+	time.Sleep(500 * time.Millisecond)
+
+	snap := h.sess.Snapshot()
+	if snap.ExePath != "structs" {
+		t.Errorf("exePath = %q, want structs", snap.ExePath)
+	}
+	if snap.RunState != wire.RunStateNoProgram {
+		t.Errorf("runState = %q, want noProgram: swapping the file is not the "+
+			"program exiting, and the UI should not claim it is", snap.RunState)
+	}
+	if len(snap.Frames) != 0 || len(snap.Locals) != 0 {
+		t.Error("the previous program's stack or locals survived the switch")
+	}
+
+	// Breakpoints survive the switch, because gdb keeps them and re-resolves
+	// against the new symbols. One from the old program cannot resolve, so it
+	// comes back pending rather than silently vanishing — which is the honest
+	// answer: the user set it, and it is still set.
+	bps := snap.Breakpoints
+	if len(bps) != 1 {
+		t.Fatalf("breakpoints after the switch = %d, want the one from before: %+v",
+			len(bps), bps)
+	}
+	t.Logf("carried-over breakpoint: %+v", bps[0])
+
+	// And the new program must be runnable.
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventExited)
+}
