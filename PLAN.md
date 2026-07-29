@@ -85,7 +85,8 @@ disassembly, locals, registers, threads, and a raw GDB console all visible.
 ### Corrections found while implementing (gdb 17.1)
 
 All twelve findings above were re-verified against gdb 17.1 during M1 and hold.
-Three things the plan got wrong or left out, each discovered by a test:
+What follows is what the plan got wrong or left out, each found by a test while
+implementing:
 
 13. **There is no `-exec-kill`.** `^error,msg="Undefined MI command:
     exec-kill",code="undefined-command"`. The `exec.kill` message is therefore a
@@ -101,6 +102,24 @@ Three things the plan got wrong or left out, each discovered by a test:
     `*stopped,reason="exited-normally"`, and only the notification carries the
     code — in octal. The two must be merged, or the UI sees a codeless exit
     followed by a redundant second event.
+16. **`-var-create` does not take `--thread`/`--frame` where the plan puts
+    them.** The varobj section writes
+    `-var-create r17 * --thread T --frame F expr`; gdb 17.1 answers
+    `^error,msg="-var-create: Usage: NAME FRAME EXPRESSION."`, having read the
+    options as part of the expression. MI general options come *before* a
+    command's positional arguments:
+    `-var-create --thread T --frame F r17 * expr`.
+17. **`--all-values` does not stringify char arrays.** On finding that
+    `char name[16]` shows no value under `--simple-values`, the temptation is
+    to switch. It does not help: gdb renders such a child as the literal
+    `"[16]"`, which looks like a value and is not. A `char *` already shows its
+    string under `--simple-values`. The plan's choice stands, and the cost — a
+    string reads as an openable array of chars — is a real limitation rather
+    than an oversight.
+18. **Varobj children of a pointer are the pointee's fields.** `struct item
+    *items` expands straight to `id`/`name`/`weight`; gdb dereferences for you.
+    Numeric children appear only for genuine arrays, which is the only place
+    the `[n]` path form is needed.
 
 ## Architecture
 

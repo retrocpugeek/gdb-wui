@@ -325,3 +325,109 @@
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
+
+/* --- tabs ----------------------------------------------------------------- */
+
+.tabs { gap: 2px; }
+
+.tab {
+  font: inherit;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg-2);
+  cursor: pointer;
+}
+
+.tab:hover { color: var(--fg-0); }
+.tab.is-active {
+  color: var(--fg-0);
+  background: var(--bg-1);
+  border-color: var(--border-strong);
+}
+
+/* --- variables tree ------------------------------------------------------- */
+
+.vars, .regs {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: var(--line-h);
+}
+
+.var-row, .reg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--line-h);
+  white-space: nowrap;
+  padding-right: 8px;
+  color: var(--fg-1);
+}
+
+.var-row:hover, .reg-row:hover { background: var(--bg-2); }
+
+.var-twisty {
+  width: 10px;
+  flex: 0 0 10px;
+  color: var(--fg-2);
+}
+
+.var-row.is-expandable { cursor: pointer; }
+
+.var-name { color: var(--fg-0); flex: 0 0 auto; }
+.var-row.is-arg .var-name { font-style: italic; }
+
+.var-value {
+  color: var(--tok-number);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.var-type {
+  color: var(--fg-2);
+  font-size: 11px;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+
+/* A value that just changed is the thing the user is watching for, so it is
+ * the loudest thing in the panel. */
+.var-row.is-changed .var-value {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.var-row.is-optimized-out .var-value,
+.var-row.is-stale .var-value {
+  color: var(--fg-2);
+  font-style: italic;
+}
+
+.var-row.is-header {
+  color: var(--fg-2);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  background: var(--bg-2);
+  cursor: default;
+}
+.var-row.is-header .var-name { color: var(--fg-2); }
+
+/* --- registers ------------------------------------------------------------ */
+
+.reg-num {
+  color: var(--fg-2);
+  min-width: 3ch;
+  text-align: right;
+  font-size: 10px;
+}
+
+.reg-name { color: var(--fg-0); min-width: 8ch; }
+.reg-value { color: var(--tok-number); overflow: hidden; text-overflow: ellipsis; }
+
+.reg-row.is-changed .reg-value { color: var(--warn); font-weight: 600; }

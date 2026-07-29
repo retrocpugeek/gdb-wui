@@ -3,6 +3,7 @@ package debugger_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -733,4 +734,73 @@ func TestInferiorOutputBecomesConsole(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Error("the inferior's output never reached the console")
+}
+
+// TestVarobjLRUEviction covers the leak defence.
+//
+// Every -var-create is a permanent allocation inside gdb until a matching
+// -var-delete. A UI that expands a struct a few hundred times over an afternoon
+// will make a few hundred, and without a cap they all live until gdb exits —
+// a leak that shows up as gdb slowing to a crawl hours later, with nothing in
+// the UI to suggest why. This is the test that the cap is real and that
+// eviction actually deletes rather than merely forgetting.
+func TestVarobjLRUEviction(t *testing.T) {
+	h := start(t, loadTranscript+stopTranscript)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventStopped)
+
+	// Comfortably past the cap, so eviction has to have happened repeatedly.
+	const created = 600
+	for i := range created {
+		path := fmt.Sprintf("local:v%d", i)
+		if _, werr := h.do(wire.TypeVarsExpand, wire.VarsExpandRequest{
+			Path: path, Expr: fmt.Sprintf("v%d", i),
+		}); werr != nil {
+			t.Fatalf("expand %s: %s", path, werr.Message)
+		}
+	}
+
+	if n := h.sess.VarobjCount(); n > 512 {
+		t.Errorf("%d varobjs live after %d creations; the 512 cap did not hold", n, created)
+	}
+
+	// Eviction must issue real -var-delete commands, not just drop references.
+	var deletes int
+	for _, cmd := range h.fake.Received() {
+		if strings.HasPrefix(cmd, "-var-delete ") {
+			deletes++
+		}
+	}
+	if deletes == 0 {
+		t.Error("no -var-delete was ever sent; the registry forgot objects without " +
+			"deleting them, which is the leak this cap exists to prevent")
+	}
+	if deletes < created-512 {
+		t.Errorf("%d deletes for %d creations over a 512 cap; want at least %d",
+			deletes, created, created-512)
+	}
+}
+
+// TestVarobjsClearedOnRerun is the plan's named criterion, at the unit level so
+// it runs without gdb.
+func TestVarobjsClearedOnRerun(t *testing.T) {
+	h := start(t, loadTranscript+stopTranscript)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventStopped)
+
+	h.mustDo(wire.TypeVarsExpand, wire.VarsExpandRequest{Path: "local:cfg", Expr: "cfg"})
+	if h.sess.VarobjCount() == 0 {
+		t.Fatal("expanding created no varobjs; the test proves nothing")
+	}
+
+	h.rec.reset()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+
+	if n := h.sess.VarobjCount(); n != 0 {
+		t.Errorf("%d varobjs survived a re-run, want 0: every one refers to a frame "+
+			"in a process that no longer exists", n)
+	}
+	h.rec.wait(t, wire.EventVarsInvalidated)
 }

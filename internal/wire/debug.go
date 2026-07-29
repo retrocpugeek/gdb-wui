@@ -156,6 +156,12 @@ type Variable struct {
 	Type       string `json:"type,omitempty"`
 	Value      string `json:"value,omitempty"`
 	Expandable bool   `json:"expandable"`
+	// Arg marks a function argument. gdb reports it as arg="1" and the
+	// variables panel groups on it.
+	Arg bool `json:"arg,omitempty"`
+	// OptimizedOut is derived from Value, so the UI can render an erased
+	// variable honestly instead of as a puzzling literal string.
+	OptimizedOut bool `json:"optimizedOut,omitempty"`
 }
 
 // Thread is one thread from -thread-info.

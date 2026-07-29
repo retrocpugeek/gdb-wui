@@ -78,6 +78,13 @@ Everything below needs a debugger session except the `session.*` group; with
 | `bp.list` | — | [`BreakpointList`](#breakpoints-1) | Re-reads from gdb. Allowed while running. |
 | `stack.list` | `{thread?, low?, high?, stopSeq?}` | `{stopSeq, threadId, frames}` | Capped at 64 frames. |
 | `frame.select` | `{thread?, frame, stopSeq?}` | [`Selection`](#selection) | Also emits `selectionChanged`. |
+| `vars.locals` | `{thread?, frame?, stopSeq?}` | `{stopSeq, threadId, frame, variables}` | [`VarNode`](#varnode) rows, no varobjs created. |
+| `vars.expand` | `{path, id?, expr?, thread?, frame?, from?, to?, stopSeq?}` | `{path, id, children, hasMore, numChild}` | Creates a varobj on first expansion. Pages 200 children at a time. |
+| `watch.add` | `{expr}` | [`WatchList`](#watches) | Floating varobj; a gdb error is returned as `gdb_error`. |
+| `watch.remove` | `{path}` | [`WatchList`](#watches) | Allowed while running. |
+| `watch.list` | — | [`WatchList`](#watches) | Allowed while running. |
+| `regs.names` | — | `{names}` | Cached per program. **Empty entries are preserved.** |
+| `regs.values` | `{thread?, format?, stopSeq?}` | `{stopSeq, threadId, format, registers}` | `format` is one of `x d o t N r z`, default `x`. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is frequently blocked in a gdb round-trip, and that is
@@ -114,9 +121,8 @@ later. Requesting one today returns `unsupported`.
 
 `exe.unload` · `exec.stepi` `exec.nexti` `exec.until` `exec.return` ·
 `bp.setFunction` `bp.setAddress` `bp.setWatch` `bp.setCondition`
-`bp.setIgnoreCount` · `threads.list` `thread.select` · `vars.locals`
-`vars.expand` `vars.setFormat` `vars.assign` · `eval.expr` · `watch.add`
-`watch.remove` `watch.list` · `regs.names` `regs.values` · `disasm.function`
+`bp.setIgnoreCount` · `threads.list` `thread.select` · `vars.setFormat`
+`vars.assign` · `eval.expr` · `disasm.function`
 `disasm.range` · `mem.read` · `console.exec` `console.complete` ·
 `inferior.stdin` `inferior.signal` `inferior.resize` · `path.substitute`
 `path.addDir` `path.list`
@@ -132,6 +138,8 @@ later. Requesting one today returns `unsupported`.
 | `exeLoaded` | A program was loaded. | `{path, runState}` |
 | `breakpointsChanged` | The breakpoint mirror changed. | `{breakpoints}` |
 | `selectionChanged` | The selected thread or frame changed. | [`Selection`](#selection) |
+| `varsInvalidated` | Every variable node the client holds is dead. | `{}` |
+| `watchesChanged` | The watch list or its values changed. | [`WatchList`](#watches) |
 | `console` | gdb or the inferior wrote output. | `{text, stream}` |
 | `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
 | `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
@@ -247,6 +255,68 @@ defence against a 100k-element array: nothing was fetched.
 ```jsonc
 {"threadId": 1, "frame": 1, "stopSeq": 4, "locals": [], "source": {}}
 ```
+
+### VarNode
+
+One row of the variables tree.
+
+```jsonc
+{
+  "path": "local:cfg.items[0].name",  // stable identity — the client keys on this
+  "id": "r17.items.0.name",           // gdb varobj name, absent until created
+  "name": "name",
+  "expr": "cfg.items[0].name",
+  "type": "char [16]",
+  "value": "\"item-0\"",               // absent for aggregates
+  "numChild": 16,
+  "expandable": true,
+  "hasMore": false,
+  "inScope": true,
+  "changed": true,                    // differs from the previous stop
+  "arg": false,                       // a function argument
+  "optimizedOut": false
+}
+```
+
+**Clients key on `path`, never on `id`.** The varobj behind a row is deleted and
+recreated on every re-run and on LRU eviction; the path survives that, so the
+user's expansion state survives stepping — which is exactly when they care.
+
+**`expandable` comes from the absence of `value`,** not from a type guess. The
+server asks gdb with `--simple-values`, which omits the value for aggregates
+precisely so a 100k-element array costs nothing until somebody opens it. The
+same rule makes `vars.locals` free: it creates no varobjs at all, and one is
+created only when a row is expanded.
+
+`optimizedOut` is derived from `value == "<optimized out>"`. At `-O2` this is
+normal, not an error, and should be rendered as what it is rather than hidden.
+
+Expansion pages 200 children at a time; `hasMore` says there are more, and
+`numChild` is the total, so a UI can say "200 of 4096". `char buf[1<<20]` is a
+real declaration and fetching it whole would be a 40 MB message.
+
+### Watches
+
+```jsonc
+{"stopSeq": 4, "watches": [ /* VarNode, path "watch:1" */ ]}
+```
+
+Watches are **floating** varobjs, created with `@`, so they follow the current
+frame rather than being pinned to whichever one was selected when the
+expression was typed. The expressions are kept independently of the varobjs
+behind them: a re-run deletes every varobj, and the watches are recreated at the
+next stop, so the panel survives.
+
+### Registers
+
+```jsonc
+{"number": 0, "name": "rax", "value": "0x1", "changed": true}
+```
+
+**Registers are identified by number, never by name.** gdb's name list contains
+empty strings at stable indices, so position in the list is the only reliable
+identity and `regs.names` preserves the blanks. `changed` comes from gdb's own
+`-data-list-changed-registers` rather than a diff computed here.
 
 ### Breakpoints
 

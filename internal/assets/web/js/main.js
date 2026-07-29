@@ -15,6 +15,8 @@ import { createSource } from "./panels/source.js";
 import { createStack } from "./panels/stack.js";
 import { createBreakpoints } from "./panels/breakpoints.js";
 import { createLog } from "./panels/log.js";
+import { createVariables } from "./panels/variables.js";
+import { createRegisters } from "./panels/registers.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -25,6 +27,8 @@ const ui = {
   sourceMeta: el("source-meta"),
   stack: el("stack"),
   breakpoints: el("breakpoints"),
+  variables: el("variables"),
+  registers: el("registers"),
   log: el("log"),
   conn: el("conn"),
   runState: el("run-state"),
@@ -36,6 +40,7 @@ const ui = {
   logHint: el("log-hint"),
   buttons: {
     run: el("btn-run"),
+    runMain: el("btn-run-main"),
     continue: el("btn-continue"),
     pause: el("btn-pause"),
     next: el("btn-next"),
@@ -100,6 +105,19 @@ const breakpoints = createBreakpoints({
   },
 });
 
+const variables = createVariables({
+  element: ui.variables,
+  onExpand: (req) => send("vars.expand", req),
+  onRemoveWatch: (path) => send("watch.remove", { path }).catch(reportError),
+  onError: reportError,
+});
+
+const registers = createRegisters({
+  element: ui.registers,
+  onFetch: (req) => send("regs.values", req),
+  onError: reportError,
+});
+
 const tree = createTree({
   element: ui.tree,
   onOpenFile(path) {
@@ -149,6 +167,7 @@ function handleEvent(msg) {
       store.patch({ "session.runState": msg.payload.runState });
       source.clearExecLine();
       stack.clear();
+      variables.clear();
       break;
     case "exited":
       execBusy = false;
@@ -158,6 +177,8 @@ function handleEvent(msg) {
       });
       source.clearExecLine();
       stack.clear();
+      variables.clear();
+      registers.clear();
       log.system(exitText(msg.payload));
       break;
     case "exeLoaded":
@@ -173,6 +194,13 @@ function handleEvent(msg) {
       break;
     case "selectionChanged":
       applySelection(msg.payload);
+      break;
+    case "watchesChanged":
+      variables.setWatches(msg.payload.watches, msg.payload.stopSeq);
+      break;
+    case "varsInvalidated":
+      variables.invalidate();
+      registers.clear();
       break;
     case "console":
       log.console(msg.payload.text, msg.payload.stream);
@@ -228,6 +256,14 @@ function applySnapshot(hello) {
     "selection.frame": selectedFrame,
   });
 
+  variables.setLocals(localsToNodes(hello.locals), hello.stopSeq ?? 0);
+  registers.onStop(hello.stopSeq ?? 0);
+  if (hello.runState === "stopped") {
+    send("watch.list", {})
+      .then((out) => variables.setWatches(out.watches, out.stopSeq))
+      .catch(() => {});
+  }
+
   const frame = frames.find((f) => f.level === selectedFrame);
   if (frame?.source?.available) {
     source.setExecLine(frame.source.path, frame.source.line).catch(reportError);
@@ -247,6 +283,10 @@ function applyStopped(stopped) {
   });
 
   stack.set(stopped.frames ?? [], 0);
+  // The stop event already carries frame-0 locals, so the panel repaints with
+  // no round-trip; only open subtrees need re-fetching.
+  variables.onStop(localsToNodes(stopped.locals), stopped.stopSeq);
+  registers.onStop(stopped.stopSeq);
   const frame = (stopped.frames ?? [])[0];
   if (frame?.source?.available) {
     source.setExecLine(frame.source.path, frame.source.line).catch(reportError);
@@ -300,6 +340,7 @@ function applySelection(sel) {
   if (!sel) return;
   store.patch({ "selection.thread": sel.threadId, "selection.frame": sel.frame });
   stack.select(sel.frame);
+  if (sel.locals) variables.setLocals(localsToNodes(sel.locals), sel.stopSeq);
   const frame = stack.frameAt(sel.frame);
   if (frame?.source?.available) {
     source.setExecLine(frame.source.path, frame.source.line).catch(reportError);
@@ -338,10 +379,23 @@ function loadAndRun() {
     setStatus("No program loaded. Click an executable in the tree to load it.");
     return;
   }
+  // No stopAtMain: the user set breakpoints and expects to hit them. Stopping
+  // at main regardless would make Run mean something different depending on
+  // whether main happens to be where they put a breakpoint. Ctrl+Shift+F5
+  // exists for "run and stop at main".
+  exec("exec.run", {});
+}
+
+function runToMain() {
+  if (!store.get("session.exePath")) {
+    setStatus("No program loaded.");
+    return;
+  }
   exec("exec.run", { stopAtMain: true });
 }
 
 ui.buttons.run.addEventListener("click", loadAndRun);
+el("btn-run-main").addEventListener("click", runToMain);
 ui.buttons.continue.addEventListener("click", () => exec("exec.continue"));
 ui.buttons.pause.addEventListener("click", () => exec("exec.pause"));
 ui.buttons.next.addEventListener("click", () => exec("exec.next"));
@@ -376,6 +430,7 @@ createKeymap({
   bindings: {
     F5: () => exec("exec.continue"),
     "Ctrl+F5": () => loadAndRun(),
+    "Ctrl+Shift+F5": () => runToMain(),
     F6: () => exec("exec.pause"),
     F9: () => {
       const path = source.path;
@@ -393,6 +448,47 @@ function currentLine() {
   const frame = stack.frameAt(store.get("selection.frame"));
   return frame?.source?.line ?? 0;
 }
+
+// localsToNodes lifts the flat locals carried by a stop event into tree rows.
+// The server sends the same shape from vars.locals; doing it here as well means
+// the panel repaints from the stop event with no extra round-trip.
+function localsToNodes(locals) {
+  return (locals ?? []).map((v) => ({
+    path: `local:${v.name}`,
+    name: v.name,
+    expr: v.name,
+    type: v.type,
+    value: v.value,
+    expandable: Boolean(v.expandable),
+    inScope: true,
+    arg: Boolean(v.arg),
+    optimizedOut: Boolean(v.optimizedOut),
+  }));
+}
+
+// Tabs. Hidden panels do no work: registers only fetch once shown, which is
+// what keeps a stop from costing a register read nobody asked for.
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.addEventListener("click", () => {
+    const name = tab.dataset.tab;
+    for (const other of document.querySelectorAll(".tab")) {
+      other.classList.toggle("is-active", other === tab);
+    }
+    for (const panel of document.querySelectorAll("[data-panel]")) {
+      panel.classList.toggle("is-hidden", panel.dataset.panel !== name);
+    }
+    if (name === "registers") registers.onShow();
+    else registers.onHide();
+  });
+}
+
+el("btn-add-watch").addEventListener("click", () => {
+  const expr = window.prompt("Watch expression:");
+  if (!expr) return;
+  send("watch.add", { expr })
+    .then((out) => variables.setWatches(out.watches, out.stopSeq))
+    .catch(reportError);
+});
 
 // --- rendering -------------------------------------------------------------
 
@@ -421,6 +517,7 @@ store.subscribe("session", (state) => {
   const running = s.runState === "running";
   const loaded = Boolean(s.exePath);
   ui.buttons.run.disabled = !loaded || running;
+  ui.buttons.runMain.disabled = !loaded || running;
   ui.buttons.continue.disabled = !stopped;
   ui.buttons.next.disabled = !stopped;
   ui.buttons.step.disabled = !stopped;

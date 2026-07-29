@@ -19,9 +19,9 @@ body {
 /* Track sizes are custom properties so the splitters in M8 can mutate them
  * without touching the rule. */
 #app {
-  --tree-w: 240px;
-  --right-w: 320px;
-  --bottom-h: 180px;
+  --tree-w: 220px;
+  --right-w: 380px;
+  --bottom-h: 150px;
 
   height: 100%;
   display: grid;
@@ -61,8 +61,13 @@ body {
   min-height: 0;
 }
 
-/* The right column stacks two lists; each gets half and scrolls on its own. */
-.panel-right > .panel-body { flex: 1 1 50%; }
+/* The right column stacks the value panels over the stack and breakpoints.
+ * Values get the most room because they are what a debugging session is
+ * actually about; the others are navigation. */
+.panel-right > .panel-body { flex: 1 1 25%; }
+.panel-right > #variables,
+.panel-right > #registers { flex: 2 2 50%; }
+.is-hidden { display: none !important; }
 
 .toolbar, .statusbar {
   display: flex;

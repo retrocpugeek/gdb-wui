@@ -198,6 +198,17 @@ func (s *Session) onStopped(rec mi.Record) {
 		s.logf("-stack-list-variables after stop: %s", werr.Message)
 	}
 
+	// One -var-update for every live varobj. gdb returns only what actually
+	// changed, which is both cheap and exactly the change-highlighting signal
+	// the variables panel wants.
+	s.refreshVarobjs(ctx)
+	// A watch whose varobj went away — first stop after a re-run — is
+	// recreated here, so the panel is populated by the time the event lands.
+	s.recreateWatches(ctx)
+	if watches := s.watchList(); len(watches.Watches) > 0 {
+		s.cfg.Events.Broadcast(wire.EventWatchesChanged, watches)
+	}
+
 	s.publish()
 	s.cfg.Events.Broadcast(wire.EventStopped, out)
 }

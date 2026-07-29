@@ -128,6 +128,16 @@ var RequestTypes = []string{
 
 	TypeStackList,
 	TypeFrameSelect,
+
+	TypeVarsLocals,
+	TypeVarsExpand,
+
+	TypeWatchAdd,
+	TypeWatchRemove,
+	TypeWatchList,
+
+	TypeRegsNames,
+	TypeRegsValues,
 }
 
 // SessionRequestTypes is the subset the hub answers with no debugger attached.
@@ -161,6 +171,9 @@ var EventNames = []string{
 	EventSelectionChanged,
 	EventGDBDead,
 	EventMI,
+
+	EventVarsInvalidated,
+	EventWatchesChanged,
 }
 
 // Hello is pushed to every connection the moment it opens, before anything is

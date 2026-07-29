@@ -88,6 +88,8 @@ type Session struct {
 	// srcCache memoises path resolution. A deep stack asks about the same few
 	// files over and over, and every miss is a stat.
 	srcCache map[string]wire.SourceRef
+	// vars is the varobj registry; see varobj.go.
+	vars *varRegistry
 }
 
 // state is the actor's private world.
@@ -116,6 +118,14 @@ type state struct {
 
 	gdbVersion string
 	features   []string
+
+	// watches are the user's expressions. They outlive the varobjs behind
+	// them, which are deleted wholesale on every re-run.
+	watches  []watch
+	watchSeq int
+
+	// registerNames is cached per program; it never changes within one.
+	registerNames []string
 }
 
 // request is one browser request awaiting the actor.
@@ -167,6 +177,7 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	}
 	s.client = client
 
+	s.vars = newVarRegistry()
 	s.st = state{
 		runState:    wire.RunStateNoProgram,
 		breakpoints: map[int]wire.Breakpoint{},
@@ -320,6 +331,23 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.stackList(r)
 	case wire.TypeFrameSelect:
 		return s.frameSelect(r)
+
+	case wire.TypeVarsLocals:
+		return s.varsLocals(r)
+	case wire.TypeVarsExpand:
+		return s.varsExpand(r)
+
+	case wire.TypeWatchAdd:
+		return s.watchAdd(r)
+	case wire.TypeWatchRemove:
+		return s.watchRemove(r)
+	case wire.TypeWatchList:
+		return s.watchListRequest(r)
+
+	case wire.TypeRegsNames:
+		return s.regsNames(r)
+	case wire.TypeRegsValues:
+		return s.regsValues(r)
 	}
 	return nil, wire.NewError(wire.CodeUnsupported,
 		fmt.Sprintf("%q is not supported by this server", r.req.Type))
@@ -340,7 +368,11 @@ func (s *Session) gate(typ string) *wire.Error {
 	switch typ {
 	// Always allowed, whatever the inferior is doing.
 	case wire.TypeSessionHello, wire.TypeSessionInfo, wire.TypeSessionPing,
-		wire.TypeExecPause, wire.TypeExecKill, wire.TypeBpList:
+		wire.TypeExecPause, wire.TypeExecKill, wire.TypeBpList,
+		// Listing and removing watches is bookkeeping over expressions the
+		// user typed; neither needs the inferior to be stopped, and refusing
+		// them while running would strand the panel.
+		wire.TypeWatchList, wire.TypeWatchRemove:
 		return nil
 	}
 
@@ -351,7 +383,9 @@ func (s *Session) gate(typ string) *wire.Error {
 
 	switch typ {
 	case wire.TypeExecContinue, wire.TypeExecStep, wire.TypeExecNext,
-		wire.TypeExecFinish, wire.TypeStackList, wire.TypeFrameSelect:
+		wire.TypeExecFinish, wire.TypeStackList, wire.TypeFrameSelect,
+		wire.TypeVarsLocals, wire.TypeVarsExpand, wire.TypeWatchAdd,
+		wire.TypeRegsNames, wire.TypeRegsValues:
 		if s.st.runState != wire.RunStateStopped {
 			return wire.NewError(wire.CodeNotReady,
 				"no stopped inferior; load a program and run it first")

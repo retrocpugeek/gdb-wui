@@ -14,7 +14,8 @@
   <header class="toolbar" role="toolbar" aria-label="Debugger controls">
     <span class="brand">gdb-wui</span>
     <span class="exec-group">
-      <button id="btn-run"      class="btn" title="Run (Ctrl+F5)">Run</button>
+      <button id="btn-run"      class="btn" title="Run to the first breakpoint (Ctrl+F5)">Run</button>
+      <button id="btn-run-main" class="btn" title="Run and stop at main (Ctrl+Shift+F5)">Run→main</button>
       <button id="btn-continue" class="btn" title="Continue (F5)">▶</button>
       <button id="btn-pause"    class="btn" title="Pause (F6)">⏸</button>
       <button id="btn-next"     class="btn" title="Step over (F10)">⤼</button>
@@ -45,7 +46,16 @@
   </main>
 
   <aside class="panel panel-right" aria-label="Debug state">
-    <div class="panel-head">
+    <div class="panel-head tabs" role="tablist">
+      <button class="tab is-active" data-tab="variables" role="tab">Variables</button>
+      <button class="tab" data-tab="registers" role="tab">Registers</button>
+      <span class="toolbar-gap"></span>
+      <button id="btn-add-watch" class="btn btn-small" title="Add a watch expression">+ watch</button>
+    </div>
+    <div id="variables" class="panel-body vars" data-panel="variables" role="tree"></div>
+    <div id="registers" class="panel-body regs is-hidden" data-panel="registers" role="list"></div>
+
+    <div class="panel-head panel-head-split">
       <span class="panel-title">Call stack</span>
     </div>
     <div id="stack" class="panel-body list" role="list"></div>
