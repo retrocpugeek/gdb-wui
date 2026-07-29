@@ -303,6 +303,98 @@ func TestBootstrapRejectsWrongToken(t *testing.T) {
 
 // TestSecurityHeaders checks the headers that limit the damage of anything that
 // does get through.
+// TestMintEndpoint covers the -print-url path: a caller holding the secret from
+// the 0600 run file can get a fresh login link without a cookie.
+func TestMintEndpoint(t *testing.T) {
+	f := newFixture(t, stubWS{})
+
+	mint := func(mutate ...func(*http.Request)) *http.Response {
+		return f.do("POST", httpapi.MintPath, append([]func(*http.Request){
+			header("Origin", f.origin),
+		}, mutate...)...)
+	}
+
+	t.Run("no credential", func(t *testing.T) {
+		if got := mint().StatusCode; got != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", got)
+		}
+	})
+
+	t.Run("wrong credential", func(t *testing.T) {
+		res := mint(header(httpapi.MintHeader, "not-the-secret"))
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", res.StatusCode)
+		}
+	})
+
+	t.Run("session cookie is not enough", func(t *testing.T) {
+		// The cookie authenticates ordinary requests but must not substitute
+		// for the mint secret: a compromised browser tab should not be able to
+		// mint fresh credentials.
+		if got := mint(withCookie(f)).StatusCode; got != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", got)
+		}
+	})
+
+	t.Run("cross-origin", func(t *testing.T) {
+		res := mint(
+			header(httpapi.MintHeader, f.api.MintSecret()),
+			header("Origin", "http://evil.example"),
+		)
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", res.StatusCode)
+		}
+	})
+
+	t.Run("valid credential", func(t *testing.T) {
+		res := mint(header(httpapi.MintHeader, f.api.MintSecret()))
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", res.StatusCode)
+		}
+		var body struct {
+			URL string `json:"url"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		token := bootstrapToken(t, body.URL)
+
+		// The minted token must actually work, and only once.
+		first := f.do("GET", "/?t="+url.QueryEscape(token))
+		if first.StatusCode != http.StatusSeeOther {
+			t.Errorf("minted token: status = %d, want 303", first.StatusCode)
+		}
+		second := f.do("GET", "/?t="+url.QueryEscape(token))
+		if second.StatusCode != http.StatusUnauthorized {
+			t.Errorf("minted token reuse: status = %d, want 401", second.StatusCode)
+		}
+	})
+
+	t.Run("invalidates the previous token", func(t *testing.T) {
+		fresh := newFixture(t, stubWS{})
+		original := bootstrapToken(t, fresh.api.BootstrapURL())
+
+		res := fresh.do("POST", httpapi.MintPath,
+			header("Origin", fresh.origin),
+			header(httpapi.MintHeader, fresh.api.MintSecret()))
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("mint: status = %d", res.StatusCode)
+		}
+		// Minting replaces the outstanding token rather than adding a second
+		// valid one, so a URL someone screenshotted stops working.
+		if got := fresh.do("GET", "/?t="+url.QueryEscape(original)).StatusCode; got != http.StatusUnauthorized {
+			t.Errorf("the superseded token still works: status = %d, want 401", got)
+		}
+	})
+
+	t.Run("GET is refused", func(t *testing.T) {
+		res := f.do("GET", httpapi.MintPath, header(httpapi.MintHeader, f.api.MintSecret()))
+		if res.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("status = %d, want 405", res.StatusCode)
+		}
+	})
+}
+
 func TestSecurityHeaders(t *testing.T) {
 	f := newFixture(t, stubWS{})
 	res := f.do("GET", "/api/tree", withCookie(f))

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 	"github.com/retrocpugeek/gdb-wui/internal/httpapi"
 	"github.com/retrocpugeek/gdb-wui/internal/hub"
 	"github.com/retrocpugeek/gdb-wui/internal/mi"
+	"github.com/retrocpugeek/gdb-wui/internal/runfile"
 	"github.com/retrocpugeek/gdb-wui/internal/srcfs"
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
@@ -42,10 +44,11 @@ type options struct {
 	verbose        bool
 	showVersion    bool
 
-	gdbPath string
-	exe     string
-	noGDB   bool
-	miLog   bool
+	gdbPath  string
+	exe      string
+	noGDB    bool
+	miLog    bool
+	printURL bool
 }
 
 func main() {
@@ -64,11 +67,18 @@ func main() {
 	flag.StringVar(&opt.exe, "exe", "", "program to load at startup, relative to -project")
 	flag.BoolVar(&opt.noGDB, "no-gdb", false, "browse the project without starting a debugger")
 	flag.BoolVar(&opt.miLog, "mi-log", false, "stream raw MI traffic to the browser's log pane")
+	flag.BoolVar(&opt.printURL, "print-url", false, "print a fresh login URL for an already-running gdb-wui and exit")
 	flag.Usage = usage
 	flag.Parse()
 
 	if opt.showVersion {
 		fmt.Println("gdb-wui", version)
+		return
+	}
+	if opt.printURL {
+		if err := printURL(opt.addr); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 	if err := run(opt); err != nil {
@@ -151,6 +161,22 @@ func run(opt options) error {
 		return err
 	}
 
+	// Record where this server can be reached so `gdb-wui -print-url` can ask
+	// it for a fresh link. The file is 0600 and holds the mint secret.
+	runPath, err := runfile.Write(runfile.Entry{
+		PID:        os.Getpid(),
+		Addr:       listener.Addr().String(),
+		Project:    files.Abs(),
+		MintSecret: api.MintSecret(),
+		Started:    time.Now(),
+	})
+	if err != nil {
+		// Not fatal: the server works fine, -print-url just will not find it.
+		log.Printf("could not record the run file: %v", err)
+	} else {
+		defer func() { _ = runfile.Remove(runPath) }()
+	}
+
 	srv := httpapi.NewHTTPServer(api)
 	url := api.BootstrapURL()
 
@@ -159,6 +185,8 @@ func run(opt options) error {
 	// desktop session — and the tool must remain usable when it does.
 	fmt.Println(url)
 	log.Printf("serving %s on %s", files.Abs(), listener.Addr())
+	log.Printf("the link above is single-use and expires in 60s; "+
+		"run `gdb-wui -print-url%s` for another", addrHint(listener.Addr().String()))
 	if assetTree.Dev() {
 		log.Printf("assets from %s (no caching)", opt.assetsDir)
 	}
@@ -235,6 +263,81 @@ func startDebugger(opt options, files *srcfs.FS, h *hub.Hub, logf func(string, .
 		}
 	}
 	return session, nil
+}
+
+// printURL asks a running server for a fresh login link.
+//
+// It exists because the bootstrap token is deliberately single-use with a
+// 60-second TTL — it ends up in argv and browser history, so a long-lived one
+// would be a standing credential in `ps` output. Making a new one cheap is the
+// right answer to "the link expired"; making the old one last longer is not.
+func printURL(addr string) error {
+	entry, err := runfile.Find(addrForLookup(addr))
+	if err != nil {
+		if errors.Is(err, runfile.ErrNoServer) {
+			return fmt.Errorf("%w — start one with `gdb-wui -project <dir>`", err)
+		}
+		return err
+	}
+
+	target := "http://" + entry.Addr + httpapi.MintPath
+	req, err := http.NewRequest(http.MethodPost, target, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set(httpapi.MintHeader, entry.MintSecret)
+	// The server requires an Origin on non-GET requests, and it must be one of
+	// its own; a browser could not forge this, and neither can a hostile page.
+	req.Header.Set("Origin", "http://"+entry.Addr)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		// A live pid whose port refuses connections means the run file is
+		// stale in a way the liveness check cannot see.
+		_ = runfile.Remove(entry.Path())
+		return fmt.Errorf("could not reach the server at %s: %w", entry.Addr, err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		return fmt.Errorf("server refused to issue a link (%s): %s",
+			res.Status, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return fmt.Errorf("decoding the reply: %w", err)
+	}
+	if out.URL == "" {
+		return errors.New("server returned an empty URL")
+	}
+
+	fmt.Println(out.URL)
+	log.Printf("serving %s; this link is single-use and expires in 60s", entry.Project)
+	return nil
+}
+
+// addrForLookup treats the default -addr as "unspecified", so -print-url with
+// no arguments finds the only running server rather than looking for one bound
+// to port 0.
+func addrForLookup(addr string) string {
+	if addr == "" || addr == "127.0.0.1:0" {
+		return ""
+	}
+	return addr
+}
+
+// addrHint suggests the -addr argument only when it would be needed.
+func addrHint(addr string) string {
+	entries, err := runfile.List()
+	if err != nil || len(entries) <= 1 {
+		return ""
+	}
+	return " -addr " + addr
 }
 
 // gdbVersion reads the banner. It is display-only, so a failure is not an

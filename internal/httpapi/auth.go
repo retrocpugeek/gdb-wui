@@ -48,6 +48,10 @@ type tokens struct {
 	bootstrapUsed bool
 
 	session string
+
+	// mint authorises /api/bootstrap-url. It is held only in the run file,
+	// which is mode 0600, and never appears in a URL, in argv, or in a log.
+	mint string
 }
 
 func newTokens() (*tokens, error) {
@@ -59,10 +63,15 @@ func newTokens() (*tokens, error) {
 	if err != nil {
 		return nil, err
 	}
+	mint, err := randomToken()
+	if err != nil {
+		return nil, err
+	}
 	return &tokens{
 		bootstrap:    boot,
 		bootstrapExp: time.Now().Add(bootstrapTTL),
 		session:      sess,
+		mint:         mint,
 	}, nil
 }
 
@@ -112,6 +121,40 @@ func (t *tokens) sessionToken() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.session
+}
+
+func (t *tokens) mintSecret() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.mint
+}
+
+func (t *tokens) checkMint(candidate string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if candidate == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(candidate), []byte(t.mint)) == 1
+}
+
+// newBootstrap issues a fresh single-use token, invalidating any previous one.
+//
+// The 60-second TTL only has to cover the gap between printing a URL and a
+// browser opening it. When that gap turns out to be longer — the operator
+// walked away, or started the server with -open=false — the answer is a new
+// token, not a longer-lived one.
+func (t *tokens) newBootstrap() (string, error) {
+	tok, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bootstrap = tok
+	t.bootstrapExp = time.Now().Add(bootstrapTTL)
+	t.bootstrapUsed = false
+	return tok, nil
 }
 
 // redact keeps a token out of the logs while leaving enough to correlate.

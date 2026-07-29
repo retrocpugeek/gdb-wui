@@ -81,12 +81,15 @@ func New(cfg Config) (*Server, error) {
 
 // BootstrapURL is the one-shot URL to open in a browser.
 func (s *Server) BootstrapURL() string {
-	host := "127.0.0.1"
-	if len(s.allowedHosts) > 0 {
-		host = s.allowedHosts[0]
-	}
-	return fmt.Sprintf("http://%s/?t=%s", host, s.tokens.bootstrapToken())
+	return fmt.Sprintf("http://%s/?t=%s", s.primaryHost(), s.tokens.bootstrapToken())
 }
+
+// MintSecret is the credential for /api/bootstrap-url. The caller writes it to
+// the run file, which is mode 0600; it must not be logged or put in a URL.
+func (s *Server) MintSecret() string { return s.tokens.mintSecret() }
+
+// MintPath is the endpoint that issues a fresh bootstrap URL.
+const MintPath = "/api/bootstrap-url"
 
 // SessionCookie returns a cookie that authenticates as this session. Tests use
 // it; nothing in the running program does.
@@ -120,10 +123,56 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The mint endpoint carries its own credential instead of the session
+	// cookie — the whole point of it is to hand out a way to *get* a cookie.
+	// It still passes the Host and Origin checks first.
+	if r.URL.Path == MintPath {
+		if !s.checkHost(w, r) || !s.checkOrigin(w, r) {
+			return
+		}
+		s.handleMint(w, r)
+		return
+	}
+
 	if !s.authorize(w, r) {
 		return
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// handleMint issues a fresh single-use bootstrap URL to a caller that can prove
+// it is the same local user, by presenting the secret from the 0600 run file.
+func (s *Server) handleMint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		s.writeError(w, http.StatusMethodNotAllowed, wire.CodeBadRequest, "use POST")
+		return
+	}
+	if !s.tokens.checkMint(r.Header.Get(MintHeader)) {
+		s.deny(w, r, http.StatusUnauthorized, "unauthorized",
+			"missing or invalid mint credential")
+		return
+	}
+	token, err := s.tokens.newBootstrap()
+	if err != nil {
+		s.logf("minting a bootstrap token: %v", err)
+		s.writeError(w, http.StatusInternalServerError, wire.CodeInternal, "could not mint a token")
+		return
+	}
+	s.logf("issued a fresh bootstrap token %s", redact(token))
+	s.writeJSON(w, http.StatusOK, map[string]string{
+		"url": fmt.Sprintf("http://%s/?t=%s", s.primaryHost(), token),
+	})
+}
+
+// MintHeader carries the mint credential.
+const MintHeader = "X-Gdb-Wui-Mint"
+
+func (s *Server) primaryHost() string {
+	if len(s.allowedHosts) > 0 {
+		return s.allowedHosts[0]
+	}
+	return "127.0.0.1"
 }
 
 // setSecurityHeaders applies headers to every response, including errors.

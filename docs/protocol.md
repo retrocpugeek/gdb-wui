@@ -365,6 +365,21 @@ any local user via `ps`), in browser history, and potentially in a `Referer`.
 `Set-Cookie: gdbwui=…; HttpOnly; SameSite=Strict`, and redirects (303) to `/`.
 The session token never appears in a URL or in argv.
 
+**Getting another link.** The bootstrap token is single-use and short-lived, so
+"the link expired" needs an answer that is not "restart the server". A running
+server records its address and a *mint secret* in a run file under
+`$XDG_RUNTIME_DIR/gdb-wui/`, mode 0600, and `POST /api/bootstrap-url` with that
+secret in an `X-Gdb-Wui-Mint` header issues a fresh token, invalidating the
+previous one. `gdb-wui -print-url` is the client for it.
+
+The file permission *is* the authentication, and that is sufficient here: only
+the same uid can read it, and the same uid is already fully trusted — it can run
+anything as the user, which is what gdb-wui does for a living. What the scheme
+protects against is the case the threat model actually names: another local user
+or an unprivileged process reaching the loopback port. The session cookie is
+deliberately **not** accepted here, so a compromised browser tab cannot mint
+fresh credentials for itself.
+
 **One gate, applied to every route including the WebSocket upgrade.**
 Authorization runs *before* `websocket.Accept`, because Accept writes the 101
 response and it cannot be retracted afterwards.
