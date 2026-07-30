@@ -248,10 +248,17 @@ type FrameSelectRequest struct {
 }
 
 // Selection is the current thread and frame.
+//
+// Frames is included because a selection change can change the stack: picking a
+// different thread means a different stack entirely. Leaving it out means the
+// client either keeps rendering the previous thread's frames — which looks
+// exactly like a working UI showing the wrong data — or has to make a second
+// round-trip for something the server already has in hand.
 type Selection struct {
 	ThreadID int        `json:"threadId"`
 	Frame    int        `json:"frame"`
 	StopSeq  uint64     `json:"stopSeq"`
+	Frames   []Frame    `json:"frames,omitempty"`
 	Locals   []Variable `json:"locals,omitempty"`
 	Source   *SourceRef `json:"source,omitempty"`
 }

@@ -17,6 +17,9 @@ import { createBreakpoints } from "./panels/breakpoints.js";
 import { createLog } from "./panels/log.js";
 import { createVariables } from "./panels/variables.js";
 import { createRegisters } from "./panels/registers.js";
+import { createThreads } from "./panels/threads.js";
+import { createGdbConsole } from "./panels/gdbconsole.js";
+import { createTerminal, decodeBase64, encodeBase64 } from "./core/terminal.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -29,6 +32,9 @@ const ui = {
   breakpoints: el("breakpoints"),
   variables: el("variables"),
   registers: el("registers"),
+  threads: el("threads"),
+  gdbconsole: el("gdbconsole"),
+  inferior: el("inferior"),
   log: el("log"),
   conn: el("conn"),
   runState: el("run-state"),
@@ -118,6 +124,36 @@ const registers = createRegisters({
   onError: reportError,
 });
 
+const threads = createThreads({
+  element: ui.threads,
+  onSelect(id) {
+    send("thread.select", { thread: id, stopSeq: store.get("session.stopSeq") })
+      .then((sel) => applySelection(sel))
+      .catch(reportError);
+  },
+});
+
+const gdbConsole = createGdbConsole({
+  element: ui.gdbconsole,
+  onSubmit: (line) => send("console.exec", { line }),
+  onComplete: (prefix) => send("console.complete", { prefix }),
+});
+
+// The program's terminal is separate from gdb's on purpose: interleaving the
+// two is the most confusing thing in existing web debuggers, because "what did
+// my program print" and "what did the debugger say" answer different questions.
+const inferiorTerm = createTerminal({
+  element: ui.inferior,
+  onData(data) {
+    send("inferior.stdin", { dataB64: encodeBase64(data) }).catch((err) => {
+      if (err?.code !== "not_ready") reportError(err);
+    });
+  },
+  onResize(rows, cols) {
+    send("inferior.resize", { rows, cols }).catch(() => {});
+  },
+});
+
 const tree = createTree({
   element: ui.tree,
   onOpenFile(path) {
@@ -179,6 +215,7 @@ function handleEvent(msg) {
       stack.clear();
       variables.clear();
       registers.clear();
+      threads.clear();
       log.system(exitText(msg.payload));
       break;
     case "exeLoaded":
@@ -204,6 +241,13 @@ function handleEvent(msg) {
       break;
     case "console":
       log.console(msg.payload.text, msg.payload.stream);
+      gdbConsole.output(msg.payload.text);
+      break;
+    case "inferiorOutput":
+      inferiorTerm.write(decodeBase64(msg.payload.dataB64));
+      break;
+    case "threadsChanged":
+      threads.set(msg.payload.threads, msg.payload.selected);
       break;
     case "mi":
       log.mi(msg.payload.direction, msg.payload.text);
@@ -256,6 +300,7 @@ function applySnapshot(hello) {
     "selection.frame": selectedFrame,
   });
 
+  threads.set(hello.threads ?? [], hello.selection?.threadId ?? 0);
   variables.setLocals(localsToNodes(hello.locals), hello.stopSeq ?? 0);
   registers.onStop(hello.stopSeq ?? 0);
   if (hello.runState === "stopped") {
@@ -283,6 +328,7 @@ function applyStopped(stopped) {
   });
 
   stack.set(stopped.frames ?? [], 0);
+  threads.set(stopped.threads ?? [], stopped.threadId);
   // The stop event already carries frame-0 locals, so the panel repaints with
   // no round-trip; only open subtrees need re-fetching.
   variables.onStop(localsToNodes(stopped.locals), stopped.stopSeq);
@@ -339,8 +385,13 @@ function describeReason(reason) {
 function applySelection(sel) {
   if (!sel) return;
   store.patch({ "selection.thread": sel.threadId, "selection.frame": sel.frame });
-  stack.select(sel.frame);
+  // Frames arrive when the selection changed the stack — switching threads.
+  // Without this the panel keeps rendering the previous thread's frames, which
+  // looks exactly like a working UI showing the wrong data.
+  if (sel.frames?.length) stack.set(sel.frames, sel.frame);
+  else stack.select(sel.frame);
   if (sel.locals) variables.setLocals(localsToNodes(sel.locals), sel.stopSeq);
+  if (sel.threadId) threads.select(sel.threadId);
   const frame = stack.frameAt(sel.frame);
   if (frame?.source?.available) {
     source.setExecLine(frame.source.path, frame.source.line).catch(reportError);
@@ -402,7 +453,11 @@ ui.buttons.next.addEventListener("click", () => exec("exec.next"));
 ui.buttons.step.addEventListener("click", () => exec("exec.step"));
 ui.buttons.finish.addEventListener("click", () => exec("exec.finish"));
 ui.buttons.kill.addEventListener("click", () => exec("exec.kill"));
-el("btn-clear-log").addEventListener("click", () => log.clear());
+el("btn-clear-log").addEventListener("click", () => {
+  log.clear();
+  gdbConsole.clear();
+  inferiorTerm.clear();
+});
 
 // Clicking a file does one of two quite different things, and which one is
 // decided by the server's `kind` rather than by guessing from the filename: a
@@ -482,6 +537,27 @@ for (const tab of document.querySelectorAll(".tab")) {
   });
 }
 
+// The bottom pane's tabs. xterm cannot measure a hidden element, so a terminal
+// has to be refitted when its tab becomes visible.
+for (const tab of document.querySelectorAll(".tab[data-bottom]")) {
+  tab.addEventListener("click", () => {
+    const name = tab.dataset.bottom;
+    for (const other of document.querySelectorAll(".tab[data-bottom]")) {
+      other.classList.toggle("is-active", other === tab);
+    }
+    for (const panel of document.querySelectorAll("[data-bottom]:not(.tab)")) {
+      panel.classList.toggle("is-hidden", panel.dataset.bottom !== name);
+    }
+    if (name === "gdb") {
+      gdbConsole.resize();
+      gdbConsole.focus();
+    } else if (name === "inferior") {
+      inferiorTerm.resize();
+      inferiorTerm.focus();
+    }
+  });
+}
+
 el("btn-add-watch").addEventListener("click", () => {
   const expr = window.prompt("Watch expression:");
   if (!expr) return;
@@ -525,6 +601,8 @@ store.subscribe("session", (state) => {
   ui.buttons.pause.disabled = !running;
   ui.buttons.kill.disabled = !running && !stopped;
 });
+
+gdbConsole.ready("gdb console — type a command, Tab completes, ↑ recalls history");
 
 conn.connect();
 tree.start();

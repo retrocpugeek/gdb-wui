@@ -431,3 +431,17 @@
 .reg-value { color: var(--tok-number); overflow: hidden; text-overflow: ellipsis; }
 
 .reg-row.is-changed .reg-value { color: var(--warn); font-weight: 600; }
+
+/* --- terminals ------------------------------------------------------------ */
+
+/* xterm measures its container, so the container must have a real size and no
+ * padding that xterm cannot see. */
+.term {
+  padding: 2px 4px;
+  overflow: hidden;
+  background: var(--bg-1);
+}
+
+.term .xterm { height: 100%; }
+
+.list-row.is-running .list-sub { color: var(--warn); }

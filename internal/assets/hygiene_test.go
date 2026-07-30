@@ -1,6 +1,8 @@
 package assets_test
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -79,7 +81,10 @@ func TestColourLiteralsOnlyInTokens(t *testing.T) {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".css") {
 			return err
 		}
-		if p == "css/tokens.css" {
+		// tokens.css is the one file allowed colours; vendored code is exempt
+		// because it is byte-identical third-party source and rewriting it
+		// would break the hash manifest that keeps it honest.
+		if p == "css/tokens.css" || strings.HasPrefix(p, "vendor/") {
 			return nil
 		}
 		body, err := fs.ReadFile(fsys, p)
@@ -127,6 +132,9 @@ func TestModuleImportsResolve(t *testing.T) {
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".js") {
 			return err
+		}
+		if strings.HasPrefix(p, "vendor/") {
+			return nil // checked by TestVendoredModulesAreBrowserLoadable
 		}
 		body, err := fs.ReadFile(fsys, p)
 		if err != nil {
@@ -250,5 +258,98 @@ func repoRoot(t *testing.T) string {
 			t.Fatal("no go.mod above the test directory")
 		}
 		dir = parent
+	}
+}
+
+// TestVendoredHashes is the supply-chain check for a repository with no
+// lockfile.
+//
+// Every vendored file's sha256 is recorded in VENDOR.md, and this recomputes
+// them. A file edited in place — by a well-meaning fix, a patch, or something
+// worse — fails here rather than shipping inside the binary. It is about forty
+// lines and it is the entire story.
+func TestVendoredHashes(t *testing.T) {
+	fsys := embedded(t)
+
+	manifest, err := fs.ReadFile(fsys, "vendor/VENDOR.md")
+	if err != nil {
+		t.Fatalf("reading VENDOR.md: %v", err)
+	}
+	recorded := map[string]string{}
+	// Table rows look like: | `xterm-6.0.0/xterm.mjs` | … | `<sha256>` |
+	row := regexp.MustCompile("\\|\\s*`([^`]+)`\\s*\\|.*\\|\\s*`([0-9a-f]{64})`\\s*\\|")
+	for _, m := range row.FindAllStringSubmatch(string(manifest), -1) {
+		recorded[m[1]] = m[2]
+	}
+	if len(recorded) == 0 {
+		t.Fatal("VENDOR.md lists no hashes; the manifest or this regex is wrong")
+	}
+
+	var checked int
+	err = fs.WalkDir(fsys, "vendor", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel := strings.TrimPrefix(p, "vendor/")
+		if rel == "VENDOR.md" {
+			return nil
+		}
+		body, err := fs.ReadFile(fsys, p)
+		if err != nil {
+			return err
+		}
+		sum := fmt.Sprintf("%x", sha256.Sum256(body))
+
+		want, ok := recorded[rel]
+		if !ok {
+			t.Errorf("%s is vendored but not listed in VENDOR.md (sha256 %s)", rel, sum)
+			return nil
+		}
+		if sum != want {
+			t.Errorf("%s has changed:\n  have %s\n  want %s\n"+
+				"A vendored file must be byte-identical to what the registry published. "+
+				"If this was deliberate, update VENDOR.md.", rel, sum, want)
+		}
+		delete(recorded, rel)
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking vendor: %v", err)
+	}
+	for rel := range recorded {
+		t.Errorf("VENDOR.md lists %s, which is not vendored", rel)
+	}
+	if checked == 0 {
+		t.Error("no vendored files were checked")
+	}
+}
+
+// TestVendoredModulesAreBrowserLoadable guards the trap the plan calls out: an
+// ESM build that turns out to be a CommonJS wrapper loads fine in Node and not
+// at all in a browser, and the symptom is a blank page.
+func TestVendoredModulesAreBrowserLoadable(t *testing.T) {
+	fsys := embedded(t)
+	bare := regexp.MustCompile(`(?m)(?:^|[;\s])(?:import|export)\s*(?:[^'"\n]*\sfrom\s*)?["']([^."'/][^"']*)["']`)
+
+	err := fs.WalkDir(fsys, "vendor", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".mjs") {
+			return err
+		}
+		body, err := fs.ReadFile(fsys, p)
+		if err != nil {
+			return err
+		}
+		for _, m := range bare.FindAllStringSubmatch(string(body), -1) {
+			t.Errorf("%s imports the bare specifier %q; a browser cannot resolve that "+
+				"without an import map, and the page would be blank", p, m[1])
+		}
+		if !strings.Contains(string(body), "export") {
+			t.Errorf("%s has no export; is it really an ES module?", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking vendor: %v", err)
 	}
 }

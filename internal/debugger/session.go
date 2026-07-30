@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/retrocpugeek/gdb-wui/internal/mi"
+	"github.com/retrocpugeek/gdb-wui/internal/ptyio"
 	"github.com/retrocpugeek/gdb-wui/internal/srcfs"
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
@@ -90,6 +91,12 @@ type Session struct {
 	srcCache map[string]wire.SourceRef
 	// vars is the varobj registry; see varobj.go.
 	vars *varRegistry
+
+	// term is the inferior's terminal, actor-owned. termPtr is the same
+	// pointer published for the two request paths that bypass the actor —
+	// keystrokes and resizes, which must not wait for a gdb round-trip.
+	term    *ptyio.Terminal
+	termPtr atomic.Pointer[*ptyio.Terminal]
 }
 
 // state is the actor's private world.
@@ -126,6 +133,10 @@ type state struct {
 
 	// registerNames is cached per program; it never changes within one.
 	registerNames []string
+
+	// inferiorPID is the debuggee's process id, from =thread-group-started. It
+	// is what inferior.signal targets.
+	inferiorPID int
 }
 
 // request is one browser request awaiting the actor.
@@ -202,6 +213,7 @@ func (s *Session) Close(ctx context.Context) error {
 	s.closeOne.Do(func() {
 		close(s.done)
 		<-s.stopped
+		s.closeTerminal()
 		err = s.client.Close(ctx)
 	})
 	return err
@@ -256,8 +268,16 @@ func (s *Session) Handle(ctx context.Context, req wire.Request) (any, *wire.Erro
 	// blocked in a gdb round-trip, and while the inferior is running that is
 	// exactly when the user presses Pause — routing it through the loop would
 	// mean the button only works when it is not needed.
-	if req.Type == wire.TypeExecPause {
+	switch req.Type {
+	case wire.TypeExecPause:
 		return s.pause(ctx)
+	case wire.TypeInferiorStdin:
+		// A keystroke must not queue behind a gdb round-trip: the actor is
+		// frequently blocked, and typing that waits for it feels like a hang.
+		// Writing to the pty touches no session state.
+		return s.inferiorStdin(ctx, req)
+	case wire.TypeInferiorResize:
+		return s.inferiorResize(ctx, req)
 	}
 
 	r := &request{ctx: ctx, req: req, reply: make(chan result, 1)}
@@ -348,6 +368,19 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.regsNames(r)
 	case wire.TypeRegsValues:
 		return s.regsValues(r)
+
+	case wire.TypeConsoleExec:
+		return s.consoleExec(r)
+	case wire.TypeConsoleComplete:
+		return s.consoleComplete(r)
+
+	case wire.TypeInferiorSignal:
+		return s.inferiorSignal(r)
+
+	case wire.TypeThreadsList:
+		return s.threadsList(r)
+	case wire.TypeThreadSelect:
+		return s.threadSelect(r)
 	}
 	return nil, wire.NewError(wire.CodeUnsupported,
 		fmt.Sprintf("%q is not supported by this server", r.req.Type))
@@ -372,7 +405,13 @@ func (s *Session) gate(typ string) *wire.Error {
 		// Listing and removing watches is bookkeeping over expressions the
 		// user typed; neither needs the inferior to be stopped, and refusing
 		// them while running would strand the panel.
-		wire.TypeWatchList, wire.TypeWatchRemove:
+		wire.TypeWatchList, wire.TypeWatchRemove,
+		// The console is the escape hatch: refusing it while running would
+		// remove the one way out of a situation the UI does not model.
+		wire.TypeConsoleExec, wire.TypeConsoleComplete,
+		// Typing into the program and signalling it are the whole point of
+		// having a terminal, and both only make sense while it runs.
+		wire.TypeInferiorStdin, wire.TypeInferiorSignal, wire.TypeInferiorResize:
 		return nil
 	}
 
@@ -385,7 +424,8 @@ func (s *Session) gate(typ string) *wire.Error {
 	case wire.TypeExecContinue, wire.TypeExecStep, wire.TypeExecNext,
 		wire.TypeExecFinish, wire.TypeStackList, wire.TypeFrameSelect,
 		wire.TypeVarsLocals, wire.TypeVarsExpand, wire.TypeWatchAdd,
-		wire.TypeRegsNames, wire.TypeRegsValues:
+		wire.TypeRegsNames, wire.TypeRegsValues,
+		wire.TypeThreadsList, wire.TypeThreadSelect:
 		if s.st.runState != wire.RunStateStopped {
 			return wire.NewError(wire.CodeNotReady,
 				"no stopped inferior; load a program and run it first")

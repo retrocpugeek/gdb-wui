@@ -85,6 +85,13 @@ Everything below needs a debugger session except the `session.*` group; with
 | `watch.list` | — | [`WatchList`](#watches) | Allowed while running. |
 | `regs.names` | — | `{names}` | Cached per program. **Empty entries are preserved.** |
 | `regs.values` | `{thread?, format?, stopSeq?}` | `{stopSeq, threadId, format, registers}` | `format` is one of `x d o t N r z`, default `x`. |
+| `console.exec` | `{line}` | `{resynced, runState, stopSeq}` | Allowed while running. A gdb error is shown as console output, not a failed request. |
+| `console.complete` | `{prefix}` | `{completion, matches, truncated}` | gdb does the completion. |
+| `inferior.stdin` | `{dataB64}` | `{written}` | Bypasses the command queue. Allowed while running. |
+| `inferior.signal` | `{signal}` | `{sent}` | Name such as `INT`. Sent to the process group. |
+| `inferior.resize` | `{rows, cols}` | `{resized}` | Bypasses the command queue. |
+| `threads.list` | `{stopSeq?}` | [`ThreadsList`](#threads) | |
+| `thread.select` | `{thread, stopSeq?}` | [`Selection`](#selection) | Also sets gdb's own selection, for the console's benefit. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is frequently blocked in a gdb round-trip, and that is
@@ -121,10 +128,8 @@ later. Requesting one today returns `unsupported`.
 
 `exe.unload` · `exec.stepi` `exec.nexti` `exec.until` `exec.return` ·
 `bp.setFunction` `bp.setAddress` `bp.setWatch` `bp.setCondition`
-`bp.setIgnoreCount` · `threads.list` `thread.select` · `vars.setFormat`
-`vars.assign` · `eval.expr` · `disasm.function`
-`disasm.range` · `mem.read` · `console.exec` `console.complete` ·
-`inferior.stdin` `inferior.signal` `inferior.resize` · `path.substitute`
+`bp.setIgnoreCount` · `vars.setFormat` `vars.assign` · `eval.expr` ·
+`disasm.function` `disasm.range` · `mem.read` · `path.substitute`
 `path.addDir` `path.list`
 
 ## Events
@@ -140,7 +145,9 @@ later. Requesting one today returns `unsupported`.
 | `selectionChanged` | The selected thread or frame changed. | [`Selection`](#selection) |
 | `varsInvalidated` | Every variable node the client holds is dead. | `{}` |
 | `watchesChanged` | The watch list or its values changed. | [`WatchList`](#watches) |
-| `console` | gdb or the inferior wrote output. | `{text, stream}` |
+| `console` | gdb wrote console or log output. | `{text, stream}` |
+| `inferiorOutput` | The debuggee wrote to its terminal. | `{dataB64}` |
+| `threadsChanged` | Threads appeared or disappeared. | [`ThreadsList`](#threads) |
 | `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
 | `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
@@ -317,6 +324,59 @@ next stop, so the panel survives.
 empty strings at stable indices, so position in the list is the only reliable
 identity and `regs.names` preserves the blanks. `changed` comes from gdb's own
 `-data-list-changed-registers` rather than a diff computed here.
+
+### The console
+
+`console.exec` runs a line as if typed at gdb's prompt. It is the escape hatch
+that keeps the semantic command set honest: anything the UI does not model, gdb
+still can. It is allowed while the program runs, because refusing it would
+remove the only way out of a state the UI has no button for.
+
+The cost is that a typed command can change anything — `b main.c:12`, `next`
+and `thread 2` are all ordinary things to type — so the server **resyncs**
+afterwards and reports what it re-read in `resynced`. Without that the
+breakpoint mirror and the selection would drift quietly out of true.
+
+A gdb error (a typo, an unknown command) arrives as a `console` event and the
+request still succeeds. Mistyping at a console is normal and should not raise a
+dialog.
+
+`console.complete` forwards to gdb's `-complete`, so the frontend carries no
+command table and cannot drift from the debugger it is driving — including
+commands added by a user's Python extensions.
+
+### The inferior's terminal
+
+The debuggee gets its own pty, set with `-inferior-tty-set` before the first
+run. That buys three things a pipe cannot: the program can be typed into, its
+output is separated from gdb's rather than interleaved into the MI stream as
+unparseable lines, and libc line-buffers instead of block-buffering — so a
+prompt written without a trailing newline actually appears.
+
+`inferiorOutput` and `inferior.stdin` carry **base64**, because the bytes are
+arbitrary: a debuggee may emit invalid UTF-8 or raw control sequences, and JSON
+strings cannot hold those losslessly.
+
+Send `\r` for Enter — that is what a terminal sends, and the line discipline
+turns it into a newline. Echo is on, so typed characters come back as output
+and the UI does not have to render local echo itself.
+
+`inferior.stdin` and `inferior.resize` bypass the command queue. The server's
+actor loop is frequently blocked in a gdb round-trip, and a keystroke that
+waits for it is a keystroke the user experiences as a hang; neither touches
+session state, so there is nothing to serialise.
+
+### Threads
+
+```jsonc
+{"stopSeq": 4, "selected": 1, "threads": [
+  {"id": 1, "targetId": "Thread 0x7ffff7d68b00 (LWP 126406)",
+   "name": "worker", "state": "stopped", "core": "3", "frame": { /* Frame */ }}
+]}
+```
+
+`state` is `running` or `stopped`. While the program runs, `-thread-info` is the
+one query gdb still answers, and it reports `state: "running"` with no frame.
 
 ### Breakpoints
 

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>gdb-wui</title>
+<link rel="stylesheet" href="/vendor/xterm-6.0.0/xterm.css">
 <link rel="stylesheet" href="/css/tokens.css">
 <link rel="stylesheet" href="/css/layout.css">
 <link rel="stylesheet" href="/css/panels.css">
@@ -63,16 +64,24 @@
       <span class="panel-title">Breakpoints</span>
     </div>
     <div id="breakpoints" class="panel-body list" role="list"></div>
+    <div class="panel-head panel-head-split">
+      <span class="panel-title">Threads</span>
+    </div>
+    <div id="threads" class="panel-body list" role="list"></div>
   </aside>
 
   <section class="panel panel-bottom" aria-label="Console">
-    <div class="panel-head">
-      <span class="panel-title">Log</span>
-      <span class="panel-sub" id="log-hint"></span>
+    <div class="panel-head tabs" role="tablist">
+      <button class="tab is-active" data-bottom="gdb" role="tab">gdb console</button>
+      <button class="tab" data-bottom="inferior" role="tab">Program</button>
+      <button class="tab" data-bottom="log" role="tab">Log</button>
       <span class="toolbar-gap"></span>
+      <span id="log-hint" class="panel-sub"></span>
       <button id="btn-clear-log" class="btn btn-small" title="Clear">clear</button>
     </div>
-    <div id="log" class="panel-body log" tabindex="0"></div>
+    <div id="gdbconsole" class="panel-body term" data-bottom="gdb"></div>
+    <div id="inferior" class="panel-body term is-hidden" data-bottom="inferior"></div>
+    <div id="log" class="panel-body log is-hidden" data-bottom="log" tabindex="0"></div>
   </section>
 
   <footer class="statusbar">

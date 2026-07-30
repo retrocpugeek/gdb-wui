@@ -97,6 +97,7 @@ func (s *Session) setRunning(thread int) {
 // means the UI sees one event with everything, instead of a codeless exit
 // followed by a redundant second one.
 func (s *Session) setExited(code *int, signal string) {
+	s.st.inferiorPID = 0
 	already := s.st.runState == wire.RunStateExited
 	if code == nil {
 		code = s.st.exitCode
@@ -253,6 +254,13 @@ func (s *Session) onNotify(rec mi.Record) {
 			s.broadcastBreakpoints()
 		}
 
+	case "thread-group-started":
+		// The pid inferior.signal needs. gdb reports it here and nowhere else
+		// that is convenient.
+		if pid, ok := rec.Results.Int("pid"); ok {
+			s.st.inferiorPID = pid
+		}
+
 	case "thread-group-exited":
 		if s.st.runState == wire.RunStateNoProgram {
 			return
@@ -267,8 +275,19 @@ func (s *Session) onNotify(rec mi.Record) {
 		s.setExited(code, "")
 
 	case "thread-created", "thread-exited":
-		// Thread bookkeeping proper is M5. The stop path already re-reads
-		// -thread-info, which is where the UI's thread list comes from.
+		// Only meaningful while stopped: mid-run gdb refuses -thread-info's
+		// details, and the stop that follows re-reads everything anyway.
+		if s.st.runState != wire.RunStateStopped {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.CommandTimeout)
+		defer cancel()
+		if threads, werr := s.fetchThreads(ctx); werr == nil {
+			s.st.threads = threads
+			s.cfg.Events.Broadcast(wire.EventThreadsChanged, wire.ThreadsList{
+				StopSeq: s.st.stopSeq, Threads: threads, Selected: s.st.selThread,
+			})
+		}
 
 	case "library-loaded", "library-unloaded":
 		// Suppressed: one per shared object, dozens per run, and nothing in

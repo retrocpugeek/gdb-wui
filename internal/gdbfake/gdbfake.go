@@ -9,6 +9,7 @@
 // A transcript is a sequence of lines:
 //
 //	> -exec-continue          expect this command (trailing * matches a prefix)
+//	>? -inferior-tty-set*     consume it only if that is what arrives
 //	< ^running                send this record; a leading ^ gets the request's token
 //	< *stopped,reason="…"     out-of-band records are sent verbatim
 //	< 0^done                  an explicit token, for orphan-result tests
@@ -36,12 +37,13 @@ import (
 type StepKind int
 
 const (
-	StepExpect  StepKind = iota // wait for a command from the client
-	StepSend                    // send a record
-	StepPrompt                  // send "(gdb) "
-	StepDelay                   // sleep
-	StepPartial                 // send an unterminated line, then EOF
-	StepEOF                     // close the output stream
+	StepExpect         StepKind = iota // wait for a command from the client
+	StepExpectOptional                 // consume a command only if it matches
+	StepSend                           // send a record
+	StepPrompt                         // send "(gdb) "
+	StepDelay                          // sleep
+	StepPartial                        // send an unterminated line, then EOF
+	StepEOF                            // close the output stream
 )
 
 // Step is one transcript entry.
@@ -54,6 +56,16 @@ type Step struct {
 // Expect builds a step that waits for a command. A trailing "*" matches any
 // suffix.
 func Expect(cmd string) Step { return Step{Kind: StepExpect, Text: cmd} }
+
+// ExpectOptional builds a step that consumes a command only if it matches, and
+// is skipped otherwise.
+//
+// It exists so a transcript can tolerate setup commands that the code under
+// test issues once and conditionally — the inferior terminal is set up before
+// the first run and not before later ones. Spelling that out with a strict
+// expectation would mean two nearly identical transcripts per test, and the
+// wrong one would break whenever the setup changed.
+func ExpectOptional(cmd string) Step { return Step{Kind: StepExpectOptional, Text: cmd} }
 
 // Send builds a step that emits a record. A leading '^' is prefixed with the
 // token of the most recent command.
@@ -152,6 +164,8 @@ func Parse(transcript string) ([]Step, error) {
 		switch verb {
 		case ">":
 			steps = append(steps, Expect(rest))
+		case ">?":
+			steps = append(steps, ExpectOptional(rest))
 		case "<":
 			steps = append(steps, Send(rest))
 		case "!":
@@ -174,7 +188,7 @@ func Parse(transcript string) ([]Step, error) {
 				return nil, fmt.Errorf("line %d: unknown directive %q", lineno, directive)
 			}
 		default:
-			return nil, fmt.Errorf("line %d: expected '>', '<' or '!', got %q", lineno, line)
+			return nil, fmt.Errorf("line %d: expected '>', '>?', '<' or '!', got %q", lineno, line)
 		}
 	}
 	return steps, nil
@@ -184,20 +198,52 @@ func (f *Fake) run(steps []Step) {
 	defer close(f.done)
 	br := bufio.NewReaderSize(f.inR, 64*1024)
 	token := ""
+	// pushback holds a command read for an optional step that did not match,
+	// so the next step sees it.
+	var pushback string
+	var havePushback bool
+
+	readCommand := func() (string, error) {
+		if havePushback {
+			havePushback = false
+			return pushback, nil
+		}
+		line, err := br.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimRight(line, "\r\n"), nil
+	}
 
 	for _, st := range steps {
 		switch st.Kind {
+		case StepExpectOptional:
+			line, err := readCommand()
+			if err != nil {
+				_ = f.outW.Close()
+				return
+			}
+			tok, cmd := splitToken(line)
+			if !matches(st.Text, cmd) {
+				// Not ours: hand it to the next step untouched.
+				pushback, havePushback = line, true
+				continue
+			}
+			token = tok
+			f.mu.Lock()
+			f.received = append(f.received, cmd)
+			f.mu.Unlock()
+
 		case StepExpect:
-			line, err := br.ReadString('\n')
+			line, err := readCommand()
 			if err != nil {
 				f.fail("expected %q but the client closed its stdin: %v", st.Text, err)
 				_ = f.outW.Close()
 				return
 			}
-			line = strings.TrimRight(line, "\r\n")
 			// Checked before the reply is sent: at this instant a
 			// correctly-serialised client cannot have written anything more.
-			overlapped := f.StrictSerialisation && br.Buffered() > 0
+			overlapped := f.StrictSerialisation && !havePushback && br.Buffered() > 0
 			tok, cmd := splitToken(line)
 			token = tok
 			f.mu.Lock()
@@ -248,12 +294,12 @@ func (f *Fake) run(steps []Step) {
 	// its Close sends -exec-interrupt, kill and -gdb-exit, and a fake that
 	// stops responding would turn every test teardown into a timeout.
 	for {
-		line, err := br.ReadString('\n')
+		line, err := readCommand()
 		if err != nil {
 			_ = f.outW.Close()
 			return
 		}
-		tok, cmd := splitToken(strings.TrimRight(line, "\r\n"))
+		tok, cmd := splitToken(line)
 		f.mu.Lock()
 		f.received = append(f.received, cmd)
 		unexpected := !f.DefaultDone && !isShutdown(cmd)

@@ -281,6 +281,9 @@ func TestExeLoadSucceeds(t *testing.T) {
 // rejection as well as clearer.
 func TestRunStateGate(t *testing.T) {
 	h := start(t, loadTranscript+`
+# the inferior terminal is allocated before the first run only
+>? -inferior-tty-set*
+< ^done
 > -exec-run
 < ^running
 < *running,thread-id="all"
@@ -325,6 +328,9 @@ func TestNotReadyBeforeRun(t *testing.T) {
 // stopTranscript drives a full run-to-breakpoint, including everything the fat
 // stopped event fetches.
 const stopTranscript = `
+# the inferior terminal is allocated before the first run only
+>? -inferior-tty-set*
+< ^done
 > -exec-run
 < ^running
 < *running,thread-id="all"
@@ -432,6 +438,9 @@ func TestSourceResolutionInsideProject(t *testing.T) {
 // pane.
 func TestSourceOutsideProjectDegrades(t *testing.T) {
 	h := start(t, loadTranscript+`
+# the inferior terminal is allocated before the first run only
+>? -inferior-tty-set*
+< ^done
 > -exec-run
 < ^running
 < *stopped,reason="signal-received",signal-name="SIGINT",frame={addr="0x7ffff7aa05ae",func="__internal_syscall_cancel",file="./nptl/cancellation.c",fullname="./nptl/./nptl/cancellation.c",line="44"},thread-id="1"
@@ -464,6 +473,9 @@ func TestSourceOutsideProjectDegrades(t *testing.T) {
 // line, func="??" — addr is the only identity, and nothing may crash.
 func TestStrippedBinaryFrameSurvives(t *testing.T) {
 	h := start(t, loadTranscript+`
+# the inferior terminal is allocated before the first run only
+>? -inferior-tty-set*
+< ^done
 > -exec-run
 < ^running
 < *stopped,reason="end-stepping-range",frame={addr="0x555555555129",func="??"},thread-id="1"
@@ -497,6 +509,9 @@ func TestStrippedBinaryFrameSurvives(t *testing.T) {
 
 func TestExitedClearsState(t *testing.T) {
 	h := start(t, loadTranscript+`
+# the inferior terminal is allocated before the first run only
+>? -inferior-tty-set*
+< ^done
 > -exec-run
 < ^running
 < *stopped,reason="exited-normally"
@@ -523,6 +538,9 @@ func TestExitedClearsState(t *testing.T) {
 
 func TestExitCodeIsOctal(t *testing.T) {
 	h := start(t, loadTranscript+`
+# the inferior terminal is allocated before the first run only
+>? -inferior-tty-set*
+< ^done
 > -exec-run
 < ^running
 < *stopped,reason="exited",exit-code="012"

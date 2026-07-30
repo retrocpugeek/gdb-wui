@@ -21,7 +21,7 @@ body {
 #app {
   --tree-w: 220px;
   --right-w: 380px;
-  --bottom-h: 150px;
+  --bottom-h: 220px;
 
   height: 100%;
   display: grid;

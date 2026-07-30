@@ -98,6 +98,10 @@ func (s *Session) execRun(r *request) (any, *wire.Error) {
 	if werr != nil {
 		return nil, werr
 	}
+	// -inferior-tty-set only affects the next run, so the terminal has to exist
+	// before this one starts.
+	s.ensureTerminal(r.ctx)
+
 	// Every varobj refers to a frame in a process that is about to be replaced.
 	// Keeping them would mean serving values from a program that no longer
 	// exists; a test asserts the registry is empty after this.
@@ -333,6 +337,7 @@ func (s *Session) frameSelect(r *request) (any, *wire.Error) {
 		ThreadID: thread,
 		Frame:    req.Frame,
 		StopSeq:  s.st.stopSeq,
+		Frames:   s.st.frames,
 		Locals:   locals,
 	}
 	if f, ok := s.frameAt(req.Frame); ok {
