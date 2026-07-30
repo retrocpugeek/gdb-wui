@@ -154,6 +154,9 @@ var RequestTypes = []string{
 
 	TypeExecStepI,
 	TypeExecNextI,
+
+	TypeMemRead,
+	TypeEvalExpr,
 }
 
 // SessionRequestTypes is the subset the hub answers with no debugger attached.

@@ -96,6 +96,8 @@ Everything below needs a debugger session except the `session.*` group; with
 | `disasm.range` | `{start, end, stopSeq?}` | [`Disassembly`](#disassembly) | Capped at 1 MiB of address space. |
 | `exec.stepi` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction. |
 | `exec.nexti` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction, over calls. |
+| `mem.read` | `{address, offset?, count, stopSeq?}` | [`Memory`](#memory) | `address` is any gdb expression. Capped at 64 KiB per read. |
+| `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is frequently blocked in a gdb round-trip, and that is
@@ -132,7 +134,7 @@ later. Requesting one today returns `unsupported`.
 
 `exe.unload` · `exec.stepi` `exec.nexti` `exec.until` `exec.return` ·
 `bp.setFunction` `bp.setAddress` `bp.setWatch` `bp.setCondition`
-`bp.setIgnoreCount` · `vars.setFormat` `vars.assign` · `eval.expr` ·
+`bp.setIgnoreCount` · `vars.setFormat` `vars.assign` ·
 `mem.read` · `path.substitute`
 `path.addDir` `path.list`
 
@@ -424,6 +426,43 @@ Replies are capped at 4000 instructions with `truncated` set.
 gdb's `starti`. `stopAtMain` cannot work: `--start` sets a temporary breakpoint
 on `main`, and a stripped binary has no such symbol, so the program runs to
 completion instead. Without `starti` there is no way to stop it at all.
+
+### Memory
+
+```jsonc
+{
+  "stopSeq": 4,
+  "requested": "&cfg",
+  "addr": 140737488349088,
+  "count": 32,
+  "unreadable": false,
+  "ranges": [
+    {"start": "0x00007fffffffe9b0", "addr": 140737488349104,
+     "dataHex": "030000008d000000109055555555000"}
+  ]
+}
+```
+
+`address` is **any gdb expression** — `&cfg`, `$sp`, `buf+16` — resolved
+server-side, because that is what a user has in their head rather than a hex
+number they would have to look up first. A plain address is parsed locally, so
+paging through a region already on screen costs no extra round-trip. `offset`
+shifts a read without re-evaluating the expression.
+
+**Ranges, not one buffer.** A region can be partly unmapped, and the gap has to
+be visible: the viewer renders bytes it does not have as `??` rather than as
+zeros, which would look exactly like data.
+
+`unreadable` is an ordinary answer, not an error. gdb fails the *whole* read
+when any of the range is unmapped — verified against 17.1 — so a viewer must
+read in chunks and mark the failing ones, which is what pointing a hex viewer at
+an unmapped page is for in the first place.
+
+The viewer computes rows rather than storing them: row N is `base + N*16`. That
+is what makes a gigabyte-wide region free — only the bytes for visible rows are
+ever fetched, into a sparse cache of 4 KiB chunks with an LRU bound. The cache
+is dropped on every stop, because memory is precisely the thing that changes
+while a program runs.
 
 ### Breakpoints
 

@@ -519,3 +519,43 @@
 .asm-imm { color: var(--tok-number); }
 .asm-sym { color: var(--tok-func); }
 .asm-plain { color: var(--tok-punct); }
+
+/* --- memory viewer -------------------------------------------------------- */
+
+.mem {
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  line-height: var(--line-h);
+  white-space: pre;
+  position: relative;
+}
+
+.mem-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--line-h);
+  padding: 0 10px;
+}
+
+.mem-addr { color: var(--fg-2); flex: 0 0 auto; }
+.mem-hex { color: var(--tok-number); flex: 0 0 auto; }
+.mem-ascii { color: var(--fg-1); flex: 0 0 auto; }
+
+/* A row with unreadable bytes is dimmed, so "??" reads as absent rather than
+ * as a value. */
+.mem-row.has-holes .mem-hex { color: var(--fg-2); }
+
+.addr-input {
+  font: inherit;
+  font-family: var(--font-mono);
+  min-width: 22ch;
+  flex: 0 1 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  color: var(--fg-0);
+}
+
+.addr-input::placeholder { color: var(--fg-2); }

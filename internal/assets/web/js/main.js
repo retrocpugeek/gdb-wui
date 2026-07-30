@@ -19,6 +19,7 @@ import { createVariables } from "./panels/variables.js";
 import { createRegisters } from "./panels/registers.js";
 import { createThreads } from "./panels/threads.js";
 import { createDisasm } from "./panels/disasm.js";
+import { createMemory } from "./panels/memory.js";
 import { createGdbConsole } from "./panels/gdbconsole.js";
 import { createTerminal, decodeBase64, encodeBase64 } from "./core/terminal.js";
 
@@ -35,6 +36,8 @@ const ui = {
   registers: el("registers"),
   threads: el("threads"),
   disasm: el("disasm"),
+  memory: el("memory"),
+  memAddr: el("mem-addr"),
   gdbconsole: el("gdbconsole"),
   inferior: el("inferior"),
   log: el("log"),
@@ -140,6 +143,12 @@ const disasm = createDisasm({
   },
 });
 
+const memory = createMemory({
+  element: ui.memory,
+  onRead: (req) => send("mem.read", req),
+  onError: reportError,
+});
+
 const threads = createThreads({
   element: ui.threads,
   onSelect(id) {
@@ -233,6 +242,7 @@ function handleEvent(msg) {
       registers.clear();
       threads.clear();
       disasm.clear();
+      memory.clear();
       log.system(exitText(msg.payload));
       break;
     case "exeLoaded":
@@ -348,6 +358,8 @@ function applyStopped(stopped) {
   stack.set(stopped.frames ?? [], 0);
   threads.set(stopped.threads ?? [], stopped.threadId);
   refreshDisasm(stopped.frames?.[0]?.address);
+  // Memory is the thing most likely to have changed, so the cache goes.
+  memory.onStop(stopped.stopSeq);
   // The stop event already carries frame-0 locals, so the panel repaints with
   // no round-trip; only open subtrees need re-fetching.
   variables.onStop(localsToNodes(stopped.locals), stopped.stopSeq);
@@ -476,6 +488,24 @@ el("btn-run-entry").addEventListener("click", () => {
   // stripped binary does not have, so it would run to completion instead.
   exec("exec.run", { stopAtEntry: true });
   showCenter("disasm");
+});
+
+// The address bar. Any gdb expression is accepted — "&cfg", "$sp", "buf+16" —
+// because that is what a user has in their head, not a hex number they would
+// have to look up first.
+ui.memAddr.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  const expr = ui.memAddr.value.trim();
+  if (!expr) return;
+  send("mem.read", { address: expr, count: 16, stopSeq: store.get("session.stopSeq") })
+    .then((res) => {
+      if (res.unreadable) {
+        setStatus(`${expr} → 0x${res.addr.toString(16)} is not readable`);
+      }
+      memory.show(res.addr, { expr, seq: store.get("session.stopSeq") });
+      ui.sourceMeta.textContent = memory.summary();
+    })
+    .catch(reportError);
 });
 
 // showCenter switches the centre tab programmatically.
@@ -616,16 +646,23 @@ for (const tab of document.querySelectorAll(".tab[data-center]")) {
     for (const panel of document.querySelectorAll("[data-center]:not(.tab)")) {
       panel.classList.toggle("is-hidden", panel.dataset.center !== centerTab);
     }
-    if (centerTab === "disasm") {
-      // The source path is meaningless here, and "No file open" beside a
-      // screenful of instructions reads as a broken panel.
-      ui.sourcePath.dataset.saved = ui.sourcePath.textContent;
-      ui.sourcePath.textContent = "";
-      const frame = stack.frameAt(store.get("selection.frame"));
-      refreshDisasm(frame?.address);
-    } else {
+    ui.memAddr.classList.toggle("is-hidden", centerTab !== "memory");
+    if (centerTab === "source") {
       ui.sourcePath.textContent = ui.sourcePath.dataset.saved ?? "";
       ui.sourceMeta.textContent = "";
+      return;
+    }
+    // The source path is meaningless in the other views, and "No file open"
+    // beside a screenful of instructions reads as a broken panel.
+    if (ui.sourcePath.textContent) ui.sourcePath.dataset.saved = ui.sourcePath.textContent;
+    ui.sourcePath.textContent = "";
+
+    if (centerTab === "disasm") {
+      const frame = stack.frameAt(store.get("selection.frame"));
+      refreshDisasm(frame?.address);
+    } else if (centerTab === "memory") {
+      ui.sourceMeta.textContent = memory.summary();
+      ui.memAddr.focus();
     }
   });
 }
