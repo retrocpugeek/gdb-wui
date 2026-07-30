@@ -445,3 +445,77 @@
 .term .xterm { height: 100%; }
 
 .list-row.is-running .list-sub { color: var(--warn); }
+
+/* --- disassembly ---------------------------------------------------------- */
+
+.asm {
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  line-height: var(--line-h);
+  white-space: pre;
+  position: relative;
+}
+
+.asm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--line-h);
+  padding-right: 10px;
+}
+
+/* A rule above the first instruction of each source line: src+asm reading
+ * without interleaving whole source lines into the instruction stream. */
+.asm-row.starts-line { border-top: 1px solid var(--border); }
+
+.asm-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px 0 4px;
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.asm-gutter:hover { background: var(--bg-2); }
+
+.asm-bp {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+}
+.asm-row.has-bp .asm-bp { background: var(--bp-fill); }
+.asm-gutter:hover .asm-bp { border-color: var(--fg-2); }
+
+.asm-pc { width: 8px; color: var(--ok); }
+
+.asm-addr { color: var(--fg-2); flex: 0 0 auto; }
+.asm-offset { color: var(--fg-2); font-size: 11px; min-width: 6ch; }
+
+.asm-bytes {
+  color: var(--fg-2);
+  font-size: 11px;
+  min-width: 20ch;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+
+.asm-text { color: var(--tok-plain); }
+
+.asm-row.is-pc { background: var(--exec-line); }
+.asm-row.is-pc .asm-gutter { background: var(--exec-line); }
+
+.asm-mnemonic { color: var(--tok-keyword); }
+.asm-reg { color: var(--tok-type); }
+.asm-imm { color: var(--tok-number); }
+.asm-sym { color: var(--tok-func); }
+.asm-plain { color: var(--tok-punct); }

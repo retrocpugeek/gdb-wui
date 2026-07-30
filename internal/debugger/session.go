@@ -381,6 +381,16 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.threadsList(r)
 	case wire.TypeThreadSelect:
 		return s.threadSelect(r)
+
+	case wire.TypeDisasmFunction:
+		return s.disasmFunction(r)
+	case wire.TypeDisasmRange:
+		return s.disasmRange(r)
+
+	case wire.TypeExecStepI:
+		return s.execStepI(r)
+	case wire.TypeExecNextI:
+		return s.execNextI(r)
 	}
 	return nil, wire.NewError(wire.CodeUnsupported,
 		fmt.Sprintf("%q is not supported by this server", r.req.Type))
@@ -425,7 +435,9 @@ func (s *Session) gate(typ string) *wire.Error {
 		wire.TypeExecFinish, wire.TypeStackList, wire.TypeFrameSelect,
 		wire.TypeVarsLocals, wire.TypeVarsExpand, wire.TypeWatchAdd,
 		wire.TypeRegsNames, wire.TypeRegsValues,
-		wire.TypeThreadsList, wire.TypeThreadSelect:
+		wire.TypeThreadsList, wire.TypeThreadSelect,
+		wire.TypeDisasmFunction, wire.TypeDisasmRange,
+		wire.TypeExecStepI, wire.TypeExecNextI:
 		if s.st.runState != wire.RunStateStopped {
 			return wire.NewError(wire.CodeNotReady,
 				"no stopped inferior; load a program and run it first")

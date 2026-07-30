@@ -18,6 +18,7 @@ import { createLog } from "./panels/log.js";
 import { createVariables } from "./panels/variables.js";
 import { createRegisters } from "./panels/registers.js";
 import { createThreads } from "./panels/threads.js";
+import { createDisasm } from "./panels/disasm.js";
 import { createGdbConsole } from "./panels/gdbconsole.js";
 import { createTerminal, decodeBase64, encodeBase64 } from "./core/terminal.js";
 
@@ -33,6 +34,7 @@ const ui = {
   variables: el("variables"),
   registers: el("registers"),
   threads: el("threads"),
+  disasm: el("disasm"),
   gdbconsole: el("gdbconsole"),
   inferior: el("inferior"),
   log: el("log"),
@@ -52,6 +54,8 @@ const ui = {
     next: el("btn-next"),
     step: el("btn-step"),
     finish: el("btn-finish"),
+    stepi: el("btn-stepi"),
+    nexti: el("btn-nexti"),
     kill: el("btn-kill"),
   },
 };
@@ -122,6 +126,18 @@ const registers = createRegisters({
   element: ui.registers,
   onFetch: (req) => send("regs.values", req),
   onError: reportError,
+});
+
+// centerTab tracks which of source/disassembly is showing, because the
+// disassembly is only fetched while visible — most stops are a source-level
+// step and nobody is looking at machine code.
+let centerTab = "source";
+
+const disasm = createDisasm({
+  element: ui.disasm,
+  onGutterClick(address) {
+    setStatus(`${address} — address breakpoints arrive with bp.setAddress`);
+  },
 });
 
 const threads = createThreads({
@@ -216,6 +232,7 @@ function handleEvent(msg) {
       variables.clear();
       registers.clear();
       threads.clear();
+      disasm.clear();
       log.system(exitText(msg.payload));
       break;
     case "exeLoaded":
@@ -228,6 +245,7 @@ function handleEvent(msg) {
     case "breakpointsChanged":
       breakpoints.set(msg.payload.breakpoints);
       source.setBreakpoints(msg.payload.breakpoints);
+      disasm.setBreakpoints(msg.payload.breakpoints);
       break;
     case "selectionChanged":
       applySelection(msg.payload);
@@ -329,6 +347,7 @@ function applyStopped(stopped) {
 
   stack.set(stopped.frames ?? [], 0);
   threads.set(stopped.threads ?? [], stopped.threadId);
+  refreshDisasm(stopped.frames?.[0]?.address);
   // The stop event already carries frame-0 locals, so the panel repaints with
   // no round-trip; only open subtrees need re-fetching.
   variables.onStop(localsToNodes(stopped.locals), stopped.stopSeq);
@@ -339,11 +358,12 @@ function applyStopped(stopped) {
   } else {
     source.clearExecLine();
     if (frame) {
-      setStatus(
-        frame.source?.gdbPath
-          ? `No source for ${frame.source.gdbPath} — disassembly arrives in M6.`
-          : `Stopped at ${frame.address} with no source — disassembly arrives in M6.`,
-      );
+      // No source: the machine view is the only one there is, so switch to it
+      // rather than leaving a blank pane and an explanation.
+      const where = frame.from ? ` in ${frame.from}` : "";
+      setStatus(`Stopped at ${frame.address}${where} with no source — showing disassembly.`);
+      if (centerTab !== "disasm") showCenter("disasm");
+      else refreshDisasm(frame.address);
     }
   }
 }
@@ -447,11 +467,28 @@ function runToMain() {
 
 ui.buttons.run.addEventListener("click", loadAndRun);
 el("btn-run-main").addEventListener("click", runToMain);
+el("btn-run-entry").addEventListener("click", () => {
+  if (!store.get("session.exePath")) {
+    setStatus("No program loaded.");
+    return;
+  }
+  // The only way into a stripped binary: --start needs a main symbol, which a
+  // stripped binary does not have, so it would run to completion instead.
+  exec("exec.run", { stopAtEntry: true });
+  showCenter("disasm");
+});
+
+// showCenter switches the centre tab programmatically.
+function showCenter(name) {
+  document.querySelector(`.tab[data-center="${name}"]`)?.click();
+}
 ui.buttons.continue.addEventListener("click", () => exec("exec.continue"));
 ui.buttons.pause.addEventListener("click", () => exec("exec.pause"));
 ui.buttons.next.addEventListener("click", () => exec("exec.next"));
 ui.buttons.step.addEventListener("click", () => exec("exec.step"));
 ui.buttons.finish.addEventListener("click", () => exec("exec.finish"));
+ui.buttons.stepi.addEventListener("click", () => exec("exec.stepi"));
+ui.buttons.nexti.addEventListener("click", () => exec("exec.nexti"));
 ui.buttons.kill.addEventListener("click", () => exec("exec.kill"));
 el("btn-clear-log").addEventListener("click", () => {
   log.clear();
@@ -494,6 +531,8 @@ createKeymap({
     F10: () => exec("exec.next"),
     F11: () => exec("exec.step"),
     "Shift+F11": () => exec("exec.finish"),
+    "Alt+F11": () => exec("exec.stepi"),
+    "Alt+F10": () => exec("exec.nexti"),
   },
 });
 
@@ -502,6 +541,35 @@ createKeymap({
 function currentLine() {
   const frame = stack.frameAt(store.get("selection.frame"));
   return frame?.source?.line ?? 0;
+}
+
+// refreshDisasm keeps the machine view in step with the program counter.
+//
+// Three cases, cheapest first: the panel is hidden, so do nothing; the new PC
+// is already in the window, so move the marker; otherwise fetch. Refetching on
+// every instruction step would make stepping through a loop far slower than it
+// needs to be.
+function refreshDisasm(pc) {
+  if (centerTab !== "disasm") return;
+  if (pc && disasm.has(pc)) {
+    disasm.setPC(pc);
+    updateCenterMeta();
+    return;
+  }
+  send("disasm.function", { stopSeq: store.get("session.stopSeq") })
+    .then((out) => {
+      disasm.set(out);
+      disasm.setBreakpoints(breakpoints.all());
+      updateCenterMeta();
+    })
+    .catch((err) => {
+      if (err?.code !== "busy" && err?.code !== "not_ready") reportError(err);
+    });
+}
+
+function updateCenterMeta() {
+  if (centerTab !== "disasm") return;
+  ui.sourceMeta.textContent = disasm.summary();
 }
 
 // localsToNodes lifts the flat locals carried by a stop event into tree rows.
@@ -534,6 +602,31 @@ for (const tab of document.querySelectorAll(".tab")) {
     }
     if (name === "registers") registers.onShow();
     else registers.onHide();
+  });
+}
+
+// The centre pane's tabs. A stripped binary has no source at all, so the
+// disassembly is not an advanced view here — it is the only one.
+for (const tab of document.querySelectorAll(".tab[data-center]")) {
+  tab.addEventListener("click", () => {
+    centerTab = tab.dataset.center;
+    for (const other of document.querySelectorAll(".tab[data-center]")) {
+      other.classList.toggle("is-active", other === tab);
+    }
+    for (const panel of document.querySelectorAll("[data-center]:not(.tab)")) {
+      panel.classList.toggle("is-hidden", panel.dataset.center !== centerTab);
+    }
+    if (centerTab === "disasm") {
+      // The source path is meaningless here, and "No file open" beside a
+      // screenful of instructions reads as a broken panel.
+      ui.sourcePath.dataset.saved = ui.sourcePath.textContent;
+      ui.sourcePath.textContent = "";
+      const frame = stack.frameAt(store.get("selection.frame"));
+      refreshDisasm(frame?.address);
+    } else {
+      ui.sourcePath.textContent = ui.sourcePath.dataset.saved ?? "";
+      ui.sourceMeta.textContent = "";
+    }
   });
 }
 
@@ -598,6 +691,8 @@ store.subscribe("session", (state) => {
   ui.buttons.next.disabled = !stopped;
   ui.buttons.step.disabled = !stopped;
   ui.buttons.finish.disabled = !stopped;
+  ui.buttons.stepi.disabled = !stopped;
+  ui.buttons.nexti.disabled = !stopped;
   ui.buttons.pause.disabled = !running;
   ui.buttons.kill.disabled = !running && !stopped;
 });

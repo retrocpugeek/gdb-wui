@@ -65,7 +65,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `session.info` | — | [`Hello`](#hello) | Alias of `session.hello`. |
 | `session.ping` | — | `{"pong": true}` | Liveness check. |
 | `exe.load` | `{path, args?}` | `{path, runState}` | Root-relative path; refused unless the file starts with the ELF magic. |
-| `exec.run` | `{stopAtMain?}` | [`ExecAck`](#execack) | `stopAtMain` uses `-exec-run --start`. |
+| `exec.run` | `{stopAtMain?, stopAtEntry?}` | [`ExecAck`](#execack) | `stopAtMain` uses `-exec-run --start`; `stopAtEntry` uses gdb's `starti`. |
 | `exec.continue` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | |
 | `exec.step` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | Step into. |
 | `exec.next` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | Step over. |
@@ -92,6 +92,10 @@ Everything below needs a debugger session except the `session.*` group; with
 | `inferior.resize` | `{rows, cols}` | `{resized}` | Bypasses the command queue. |
 | `threads.list` | `{stopSeq?}` | [`ThreadsList`](#threads) | |
 | `thread.select` | `{thread, stopSeq?}` | [`Selection`](#selection) | Also sets gdb's own selection, for the console's benefit. |
+| `disasm.function` | `{address?, thread?, frame?, stopSeq?}` | [`Disassembly`](#disassembly) | The function containing the address, or a window around it. |
+| `disasm.range` | `{start, end, stopSeq?}` | [`Disassembly`](#disassembly) | Capped at 1 MiB of address space. |
+| `exec.stepi` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction. |
+| `exec.nexti` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction, over calls. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is frequently blocked in a gdb round-trip, and that is
@@ -129,7 +133,7 @@ later. Requesting one today returns `unsupported`.
 `exe.unload` · `exec.stepi` `exec.nexti` `exec.until` `exec.return` ·
 `bp.setFunction` `bp.setAddress` `bp.setWatch` `bp.setCondition`
 `bp.setIgnoreCount` · `vars.setFormat` `vars.assign` · `eval.expr` ·
-`disasm.function` `disasm.range` · `mem.read` · `path.substitute`
+`mem.read` · `path.substitute`
 `path.addDir` `path.list`
 
 ## Events
@@ -377,6 +381,49 @@ session state, so there is nothing to serialise.
 
 `state` is `running` or `stopped`. While the program runs, `-thread-info` is the
 one query gdb still answers, and it reports `state: "running"` with no frame.
+
+### Disassembly
+
+```jsonc
+{
+  "stopSeq": 4,
+  "func": "main",
+  "start": "0x0000555555555167",
+  "end":   "0x00005555555551c4",
+  "pc":    "0x000055555555517a",
+  "hasSource": true,
+  "truncated": false,
+  "instructions": [
+    {"address": "0x000055555555517a", "addr": 93824992235898,
+     "func": "main", "offset": 19,
+     "opcodes": "c7 45 fc 00 00 00 00",
+     "text": "movl   $0x0,-0x4(%rbp)",
+     "line": 12, "source": { /* SourceRef */ }}
+  ]
+}
+```
+
+`-data-disassemble` returns two different shapes and both are handled: a flat
+list, and instructions grouped under `src_and_asm_line` when gdb can attribute
+them to source. Which arrives is not a choice the caller makes — the server
+always asks for mode 5, and gdb groups only if there is debug info. **A stripped
+binary yields the flat form, and `hasSource` is false.** That is not a
+degraded path to be tolerated; it is the case instruction-level debugging exists
+for, and a client must render those instructions with no line and no file.
+
+`disasm.function` uses gdb's `-a` option, which asks for "the function
+containing this address". It is capability-gated on the
+`data-disassemble-a-option` feature and falls back to a window around the PC —
+64 bytes back, 256 forward. Backwards is a guess, because x86 instructions are
+variable-length and there is no way to know where the previous one began; gdb
+resynchronises quickly in practice.
+
+Replies are capped at 4000 instructions with `truncated` set.
+
+**Stopping a stripped binary** needs `exec.run {stopAtEntry: true}`, which runs
+gdb's `starti`. `stopAtMain` cannot work: `--start` sets a temporary breakpoint
+on `main`, and a stripped binary has no such symbol, so the program runs to
+completion instead. Without `starti` there is no way to stop it at all.
 
 ### Breakpoints
 

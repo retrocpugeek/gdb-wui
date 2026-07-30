@@ -425,6 +425,7 @@ func (s *Session) parseFrame(t mi.Results) wire.Frame {
 		Level:   level,
 		Address: t.Str("addr"),
 		Func:    t.Str("func"),
+		From:    t.Str("from"),
 	}
 	if args, ok := t.List("args"); ok {
 		for _, a := range args {

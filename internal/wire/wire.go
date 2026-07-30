@@ -148,6 +148,12 @@ var RequestTypes = []string{
 
 	TypeThreadsList,
 	TypeThreadSelect,
+
+	TypeDisasmFunction,
+	TypeDisasmRange,
+
+	TypeExecStepI,
+	TypeExecNextI,
 }
 
 // SessionRequestTypes is the subset the hub answers with no debugger attached.

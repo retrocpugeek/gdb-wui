@@ -108,7 +108,14 @@ func (s *Session) execRun(r *request) (any, *wire.Error) {
 	s.deleteAllVarobjs(r.ctx)
 
 	cmd := "-exec-run"
-	if req.StopAtMain {
+	switch {
+	case req.StopAtEntry:
+		// starti has no MI form, and --start is not a substitute: it stops at
+		// main, which a stripped binary has no symbol for, so the program would
+		// run to completion instead. This is the only way to get an
+		// instruction-level session started on stripped code.
+		cmd = `-interpreter-exec console "starti"`
+	case req.StopAtMain:
 		// --start injects a temporary breakpoint at main, which shows up in
 		// -break-list with disp="del". The mirror filters it; see
 		// reconcileBreakpoints.

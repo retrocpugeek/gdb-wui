@@ -17,11 +17,14 @@
     <span class="exec-group">
       <button id="btn-run"      class="btn" title="Run to the first breakpoint (Ctrl+F5)">Run</button>
       <button id="btn-run-main" class="btn" title="Run and stop at main (Ctrl+Shift+F5)">Run→main</button>
+      <button id="btn-run-entry" class="btn" title="Run and stop at the first instruction — the only way into a stripped binary">Run→entry</button>
       <button id="btn-continue" class="btn" title="Continue (F5)">▶</button>
       <button id="btn-pause"    class="btn" title="Pause (F6)">⏸</button>
       <button id="btn-next"     class="btn" title="Step over (F10)">⤼</button>
       <button id="btn-step"     class="btn" title="Step into (F11)">↳</button>
       <button id="btn-finish"   class="btn" title="Step out (Shift+F11)">↰</button>
+      <button id="btn-stepi"    class="btn" title="Step one instruction (Alt+F11)">↓i</button>
+      <button id="btn-nexti"    class="btn" title="Step over one instruction (Alt+F10)">⤼i</button>
       <button id="btn-kill"     class="btn btn-danger" title="Kill">■</button>
     </span>
     <span id="exe-name" class="toolbar-exe"></span>
@@ -39,11 +42,14 @@
   </aside>
 
   <main class="panel panel-source" aria-label="Source">
-    <div class="panel-head">
-      <span id="source-path" class="panel-title">No file open</span>
+    <div class="panel-head tabs" role="tablist">
+      <button class="tab is-active" data-center="source" role="tab">Source</button>
+      <button class="tab" data-center="disasm" role="tab">Disassembly</button>
+      <span id="source-path" class="panel-title"></span>
       <span id="source-meta" class="panel-sub"></span>
     </div>
-    <div id="source" class="panel-body source" tabindex="0"></div>
+    <div id="source" class="panel-body source" data-center="source" tabindex="0"></div>
+    <div id="disasm" class="panel-body asm is-hidden" data-center="disasm" tabindex="0"></div>
   </main>
 
   <aside class="panel panel-right" aria-label="Debug state">

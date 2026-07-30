@@ -52,6 +52,10 @@ type ExecRequest struct {
 	Frame  int `json:"frame,omitempty"`
 	// StopAtMain uses -exec-run --start. Only exec.run reads it.
 	StopAtMain bool `json:"stopAtMain,omitempty"`
+	// StopAtEntry stops at the program's very first instruction, via gdb's
+	// `starti`. It is the only way to stop a stripped binary before it runs to
+	// completion: --start needs a `main` symbol, and there is none.
+	StopAtEntry bool `json:"stopAtEntry,omitempty"`
 	// StopSeq is the stop the client believed it was acting on. A mismatch
 	// means the user clicked twice, or clicked while a stop was in flight, and
 	// the request is dropped rather than applied to the wrong state.
@@ -137,6 +141,10 @@ type Frame struct {
 	Func    string    `json:"func,omitempty"`
 	Args    []Arg     `json:"args,omitempty"`
 	Source  SourceRef `json:"source"`
+	// From is the shared object a frame belongs to, which gdb reports when it
+	// has no source. It is the only useful thing to show for a libc or loader
+	// frame, and beats a bare address.
+	From string `json:"from,omitempty"`
 }
 
 // Arg is one function argument as reported with the frame.
