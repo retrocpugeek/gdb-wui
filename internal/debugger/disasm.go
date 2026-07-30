@@ -144,7 +144,7 @@ func (s *Session) disassemble(ctx context.Context, cmd string) (wire.Disassembly
 		out.HasSource = true
 		for _, g := range groups {
 			line, _ := g.Int("line")
-			ref := s.resolveSource(g.Results().Str("fullname"), g.Results().Str("file"), line)
+			ref := s.resolveSourceFull(g.Results().Str("fullname"), g.Results().Str("file"), line)
 			insns, ok := g.List("line_asm_insn")
 			if !ok {
 				continue

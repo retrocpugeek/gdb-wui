@@ -436,44 +436,6 @@ func (s *Session) parseFrame(t mi.Results) wire.Frame {
 		}
 	}
 	line, _ := t.Int("line")
-	f.Source = s.resolveSource(t.Str("fullname"), t.Str("file"), line)
+	f.Source = s.resolveSourceFull(t.Str("fullname"), t.Str("file"), line)
 	return f
-}
-
-// resolveSource maps a path gdb reported onto something the browser can fetch.
-//
-// M3 handles the case that covers ordinary use: the program was built here, so
-// gdb reports an absolute path inside the project. Anything else — a libc frame
-// with "./nptl/cancellation.c", or a binary built in a container whose paths do
-// not exist on this machine — comes back unavailable, and the UI says so rather
-// than showing a blank pane. Suffix matching against the project index and
-// teaching gdb via substitute-path is M8.
-func (s *Session) resolveSource(fullname, file string, line int) wire.SourceRef {
-	ref := wire.SourceRef{Line: line}
-	gdbPath := fullname
-	if gdbPath == "" {
-		gdbPath = file
-	}
-	ref.GDBPath = gdbPath
-	if gdbPath == "" || s.files == nil {
-		return ref
-	}
-	// Cached: a deep stack asks about the same handful of files repeatedly, and
-	// each miss is a stat.
-	if cached, ok := s.srcCache[gdbPath]; ok {
-		cached.Line = line
-		return cached
-	}
-	resolved := ref
-	if rel, ok := s.files.RelPath(gdbPath); ok {
-		resolved.Available = true
-		resolved.Path = rel
-		resolved.GDBPath = gdbPath
-	}
-	if s.srcCache == nil {
-		s.srcCache = map[string]wire.SourceRef{}
-	}
-	s.srcCache[gdbPath] = resolved
-	resolved.Line = line
-	return resolved
 }

@@ -125,6 +125,13 @@ type BreakpointList struct {
 type SourceRef struct {
 	// Available reports whether Path names a file the browser can fetch.
 	Available bool `json:"available"`
+	// Stale is set when the source file is newer than the binary. The line
+	// numbers are then almost certainly lying, and saying so beats letting the
+	// user chase a discrepancy between the code they see and the code running.
+	Stale bool `json:"stale,omitempty"`
+	// Candidates are local files sharing the basename, offered when the path
+	// could not be resolved unambiguously so the user can pick.
+	Candidates []string `json:"candidates,omitempty"`
 	// Path is root-relative, set only when Available.
 	Path string `json:"path,omitempty"`
 	// GDBPath is the path gdb reported, set when it could not be resolved

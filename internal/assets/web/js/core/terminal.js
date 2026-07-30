@@ -13,6 +13,26 @@ function token(name, fallback) {
   return value || fallback;
 }
 
+// buildTheme reads the current token values. Called again on a theme change:
+// xterm needs concrete colours, not var() references, so it cannot follow CSS
+// on its own.
+function buildTheme() {
+  return {
+    background: token("--bg-1", "#000"),
+    foreground: token("--fg-0", "#fff"),
+    cursor: token("--accent", "#fff"),
+    selectionBackground: token("--accent-dim", "#444"),
+    black: token("--bg-0", "#000"),
+    red: token("--danger", "#f00"),
+    green: token("--ok", "#0f0"),
+    yellow: token("--warn", "#ff0"),
+    blue: token("--accent", "#00f"),
+    magenta: token("--tok-keyword", "#f0f"),
+    cyan: token("--tok-type", "#0ff"),
+    white: token("--fg-0", "#fff"),
+  };
+}
+
 export function createTerminal({ element, onData, onResize, scrollback = 5000 }) {
   const term = new Terminal({
     fontFamily: token("--font-mono", "monospace"),
@@ -23,20 +43,7 @@ export function createTerminal({ element, onData, onResize, scrollback = 5000 })
     // read-only log is a distraction that reads as an invitation.
     cursorBlink: Boolean(onData),
     convertEol: false,
-    theme: {
-      background: token("--bg-1", "#000"),
-      foreground: token("--fg-0", "#fff"),
-      cursor: token("--accent", "#fff"),
-      selectionBackground: token("--accent-dim", "#444"),
-      black: token("--bg-0", "#000"),
-      red: token("--danger", "#f00"),
-      green: token("--ok", "#0f0"),
-      yellow: token("--warn", "#ff0"),
-      blue: token("--accent", "#00f"),
-      magenta: token("--tok-keyword", "#f0f"),
-      cyan: token("--tok-type", "#0ff"),
-      white: token("--fg-0", "#fff"),
-    },
+    theme: buildTheme(),
   });
 
   const fit = new FitAddon();
@@ -67,6 +74,12 @@ export function createTerminal({ element, onData, onResize, scrollback = 5000 })
     clear: () => term.clear(),
     focus: () => term.focus(),
     resize,
+    // retheme re-reads the tokens after a theme switch. Without it the
+    // terminals keep the palette they were built with, which in a light UI
+    // leaves two black rectangles that look like a rendering failure.
+    retheme() {
+      term.options.theme = buildTheme();
+    },
     get rows() {
       return term.rows;
     },

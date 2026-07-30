@@ -64,6 +64,10 @@ Everything below needs a debugger session except the `session.*` group; with
 | `session.hello` | — | [`Hello`](#hello) | The snapshot, on demand. |
 | `session.info` | — | [`Hello`](#hello) | Alias of `session.hello`. |
 | `session.ping` | — | `{"pong": true}` | Liveness check. |
+| `session.restart` | — | `{restarted, exePath, breakpointsRestored}` | **Only** when gdb has died; refused while it is healthy. |
+| `path.substitute` | `{from, to}` or `{gdbPath, path}` | [`PathList`](#source-paths) | Allowed whenever gdb is alive. |
+| `path.addDir` | `{dir}` | [`PathList`](#source-paths) | `dir` is root-relative. |
+| `path.list` | — | [`PathList`](#source-paths) | |
 | `exe.load` | `{path, args?}` | `{path, runState}` | Root-relative path; refused unless the file starts with the ELF magic. |
 | `exec.run` | `{stopAtMain?, stopAtEntry?}` | [`ExecAck`](#execack) | `stopAtMain` uses `-exec-run --start`; `stopAtEntry` uses gdb's `starti`. |
 | `exec.continue` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | |
@@ -463,6 +467,49 @@ is what makes a gigabyte-wide region free — only the bytes for visible rows ar
 ever fetched, into a sparse cache of 4 KiB chunks with an LRU bound. The cache
 is dropped on every stop, because memory is precisely the thing that changes
 while a program runs.
+
+### Source paths
+
+```jsonc
+{
+  "substitutions": [{"from": "/build/agent/work", "to": "/home/user/project"}],
+  "directories": ["src"],
+  "indexed": 412,
+  "indexTruncated": false
+}
+```
+
+A program built anywhere but this machine records paths that do not exist
+locally. Resolution tries, in order: the path as reported; then the project's
+basename index, matched by **longest trailing path-component count**.
+
+Basename alone is not enough. Any real project has several files called
+`util.c`, and picking the wrong one shows the wrong code with line numbers that
+look right — worse than showing nothing, because nothing is obviously nothing.
+**A tie is therefore a refusal**, and the unresolved [`SourceRef`](#frame)
+carries `candidates` so the UI can ask.
+
+On a clear match the server tells gdb the *prefix* with `substitute-path`, once
+per mapping. That fixes every later frame in that tree at the source, plus
+`list`, `info line` and anything typed at the console. Rewriting paths per file
+in the UI is a losing game: gdb keeps reporting the originals.
+
+`path.substitute` accepts either two prefixes or the pair of files that should
+match — the "locate this file" affordance knows the files, not the prefixes, so
+the server derives them.
+
+`SourceRef.stale` is set when the source is newer than the binary. The code
+shown is real; the line numbers are what have drifted, and saying so beats
+letting someone chase the discrepancy.
+
+### Restarting gdb
+
+`session.restart` is refused while gdb is healthy and is the only request that
+works when it is dead. Restarting is **never automatic**: gdb dying means
+something went wrong — a crash, an OOM kill, an external `kill -9` — and
+silently starting another would hide that while discarding the user's state. The
+program is re-loaded and breakpoints re-created from the mirror, because those
+are the user's work; run state is not, because it cannot be.
 
 ### Breakpoints
 

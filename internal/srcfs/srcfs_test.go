@@ -408,3 +408,171 @@ func TestClassify(t *testing.T) {
 		}
 	}
 }
+
+// --- the basename index -----------------------------------------------------
+
+// indexProject builds a tree with the ambiguity that makes basename matching
+// unsafe: two files called util.c.
+func indexProject(t *testing.T) *FS {
+	t.Helper()
+	dir := t.TempDir()
+	for _, rel := range []string{
+		"src/main.c",
+		"src/util.c",
+		"vendor/lib/util.c",
+		"src/deep/nested/parser.c",
+		"include/api.h",
+		"README.md",
+		"build/main.o",
+	} {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("// "+rel+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
+}
+
+func TestIndexLocateUnique(t *testing.T) {
+	f := indexProject(t)
+	ix := f.Index()
+
+	// A basename that appears once resolves however wrong the prefix is.
+	for _, gdbPath := range []string{
+		"/build/somewhere/src/main.c",
+		"/completely/different/main.c",
+		"./src/main.c",
+	} {
+		rel, ok := ix.Locate(gdbPath)
+		if !ok {
+			t.Errorf("Locate(%q) found nothing", gdbPath)
+			continue
+		}
+		if rel != "src/main.c" {
+			t.Errorf("Locate(%q) = %q, want src/main.c", gdbPath, rel)
+		}
+	}
+}
+
+// TestIndexLocatePrefersLongerSuffix is why matching counts components rather
+// than just basenames.
+func TestIndexLocatePrefersLongerSuffix(t *testing.T) {
+	f := indexProject(t)
+	ix := f.Index()
+
+	// Both candidates end in util.c; only one also has "lib" before it.
+	rel, ok := ix.Locate("/build/vendor/lib/util.c")
+	if !ok {
+		t.Fatal("no match")
+	}
+	if rel != "vendor/lib/util.c" {
+		t.Errorf("got %q, want vendor/lib/util.c — the longer suffix wins", rel)
+	}
+
+	rel, ok = ix.Locate("/elsewhere/src/util.c")
+	if !ok {
+		t.Fatal("no match")
+	}
+	if rel != "src/util.c" {
+		t.Errorf("got %q, want src/util.c", rel)
+	}
+}
+
+// TestIndexRefusesAmbiguousMatch is the important negative case. Showing one of
+// two equally plausible files means debugging the wrong code with line numbers
+// that look right, which is worse than showing nothing.
+func TestIndexRefusesAmbiguousMatch(t *testing.T) {
+	f := indexProject(t)
+	ix := f.Index()
+
+	// Nothing but the basename agrees, and two files share it.
+	if rel, ok := ix.Locate("/nowhere/util.c"); ok {
+		t.Errorf("Locate resolved an ambiguous path to %q; it must refuse", rel)
+	}
+
+	// But it should still offer both, so the user can choose.
+	candidates := ix.Candidates("/nowhere/util.c")
+	if len(candidates) != 2 {
+		t.Errorf("Candidates = %v, want both util.c files", candidates)
+	}
+}
+
+func TestIndexSkipsNonSource(t *testing.T) {
+	f := indexProject(t)
+	ix := f.Index()
+	if _, ok := ix.Locate("/x/main.o"); ok {
+		t.Error("an object file was indexed")
+	}
+	if _, ok := ix.Locate("/x/README.md"); ok {
+		t.Error("a markdown file was indexed")
+	}
+	if _, ok := ix.Locate("/x/api.h"); !ok {
+		t.Error("a header was not indexed")
+	}
+}
+
+func TestIndexUnnormalisedPaths(t *testing.T) {
+	f := indexProject(t)
+	ix := f.Index()
+	// The shape glibc reports: repeated and redundant components.
+	rel, ok := ix.Locate("./src/./deep/../deep/nested/parser.c")
+	if !ok {
+		t.Fatal("an unnormalised path found nothing")
+	}
+	if rel != "src/deep/nested/parser.c" {
+		t.Errorf("got %q", rel)
+	}
+}
+
+func TestSubstitutionFor(t *testing.T) {
+	f := indexProject(t)
+	root := f.Abs()
+
+	from, to, ok := f.SubstitutionFor("/build/agent/work/src/util.c", "src/util.c")
+	if !ok {
+		t.Fatal("no substitution derived")
+	}
+	if from != "/build/agent/work" {
+		t.Errorf("from = %q, want /build/agent/work", from)
+	}
+	if to != root {
+		t.Errorf("to = %q, want %q", to, root)
+	}
+
+	// A nested local path shifts the target prefix too.
+	from, to, ok = f.SubstitutionFor("/ci/util.c", "vendor/lib/util.c")
+	if !ok {
+		t.Fatal("no substitution derived for a nested match")
+	}
+	if from != "/ci" || to != root+"/vendor/lib" {
+		t.Errorf("got %q -> %q", from, to)
+	}
+
+	// Nothing shared means nothing to map.
+	if _, _, ok := f.SubstitutionFor("/a/b.c", "src/util.c"); ok {
+		t.Error("a substitution was derived from paths that share nothing")
+	}
+	// A path already inside the root needs no mapping.
+	if _, _, ok := f.SubstitutionFor(root+"/src/util.c", "src/util.c"); ok {
+		t.Error("a substitution was derived for a path already in place")
+	}
+}
+
+func TestIndexStats(t *testing.T) {
+	f := indexProject(t)
+	files, truncated := f.Index().Stats()
+	if files != 5 {
+		t.Errorf("indexed %d files, want the 5 source files", files)
+	}
+	if truncated {
+		t.Error("a tiny project reported a truncated index")
+	}
+}

@@ -1,0 +1,30 @@
+# Fuzzing on a schedule, not on every push. The MI parser is hand-written over
+# C escaping fed by a stream that provably contains arbitrary bytes, which is
+# exactly what fuzzing is for — but a minute of it per commit would buy nothing
+# that the seed corpus does not already cover.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Fuzz the MI parser
+        run: go test ./internal/mi/ -run FuzzParseRecord -fuzz FuzzParseRecord -fuzztime 10m
+      - name: Upload any crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers
+          path: internal/mi/testdata/fuzz/

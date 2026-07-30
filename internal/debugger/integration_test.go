@@ -58,9 +58,15 @@ func realProject(t *testing.T, fixture string) *srcfs.FS {
 // startReal brings up a session against a real gdb.
 func startReal(t *testing.T, fixture string) *harness {
 	t.Helper()
+	return startRealWithFiles(t, realProject(t, fixture))
+}
+
+// startRealWithFiles is startReal over a project the caller prepared, for tests
+// that need a particular on-disk arrangement.
+func startRealWithFiles(t *testing.T, files *srcfs.FS) *harness {
+	t.Helper()
 	testutil.RequireGDB(t, 10)
 
-	files := realProject(t, fixture)
 	rec := newRecorder()
 
 	sess, err := debugger.New(t.Context(), debugger.Config{

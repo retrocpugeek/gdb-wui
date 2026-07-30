@@ -11,6 +11,7 @@ package debugger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -137,6 +138,11 @@ type state struct {
 	// inferiorPID is the debuggee's process id, from =thread-group-started. It
 	// is what inferior.signal targets.
 	inferiorPID int
+
+	// substitutions and sourceDirs are what gdb has been told about where
+	// source lives, so the UI can show it and duplicates can be avoided.
+	substitutions []wire.Substitution
+	sourceDirs    []string
 }
 
 // request is one browser request awaiting the actor.
@@ -321,6 +327,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.buildSnapshot(), nil
 	case wire.TypeSessionPing:
 		return map[string]any{"pong": true}, nil
+	case wire.TypeSessionRestart:
+		return s.restartGDB(r)
 
 	case wire.TypeExeLoad:
 		return s.exeLoad(r)
@@ -396,6 +404,13 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.memRead(r)
 	case wire.TypeEvalExpr:
 		return s.evalExpr(r)
+
+	case wire.TypePathSubstitute:
+		return s.pathSubstitute(r)
+	case wire.TypePathAddDir:
+		return s.pathAddDir(r)
+	case wire.TypePathList:
+		return s.pathList(r)
 	}
 	return nil, wire.NewError(wire.CodeUnsupported,
 		fmt.Sprintf("%q is not supported by this server", r.req.Type))
@@ -409,6 +424,10 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 // an error in the UI; refusing them here turns an undocumented behaviour into a
 // documented contract, and costs a round-trip less.
 func (s *Session) gate(typ string) *wire.Error {
+	// Restarting is the one thing that must work *because* gdb is dead.
+	if typ == wire.TypeSessionRestart {
+		return nil
+	}
 	if s.client.DeadErr() != nil {
 		return wire.NewError(wire.CodeGDBDead, "gdb is not running")
 	}
@@ -416,6 +435,7 @@ func (s *Session) gate(typ string) *wire.Error {
 	switch typ {
 	// Always allowed, whatever the inferior is doing.
 	case wire.TypeSessionHello, wire.TypeSessionInfo, wire.TypeSessionPing,
+		wire.TypeSessionRestart,
 		wire.TypeExecPause, wire.TypeExecKill, wire.TypeBpList,
 		// Listing and removing watches is bookkeeping over expressions the
 		// user typed; neither needs the inferior to be stopped, and refusing
@@ -426,7 +446,10 @@ func (s *Session) gate(typ string) *wire.Error {
 		wire.TypeConsoleExec, wire.TypeConsoleComplete,
 		// Typing into the program and signalling it are the whole point of
 		// having a terminal, and both only make sense while it runs.
-		wire.TypeInferiorStdin, wire.TypeInferiorSignal, wire.TypeInferiorResize:
+		wire.TypeInferiorStdin, wire.TypeInferiorSignal, wire.TypeInferiorResize,
+		// Telling gdb where source lives is configuration, not a state query,
+		// and is exactly what a user reaches for when a frame has no source.
+		wire.TypePathSubstitute, wire.TypePathAddDir, wire.TypePathList:
 		return nil
 	}
 
@@ -606,4 +629,101 @@ func (q *recordQueue) drain() []mi.Record {
 	items := q.items
 	q.items = nil
 	return items
+}
+
+// restartGDB replaces a dead gdb with a fresh one.
+//
+// Explicit, never automatic. gdb dying means something went wrong — a crash, an
+// OOM kill, a `kill -9` — and silently starting another would hide that while
+// throwing away the breakpoints and program state the user had. So the UI
+// offers a button and this is what it calls.
+//
+// Breakpoints and watches are re-created from the mirror, because those are the
+// user's work and re-typing them is the part that would actually hurt.
+func (s *Session) restartGDB(r *request) (any, *wire.Error) {
+	if s.client.DeadErr() == nil {
+		return nil, wire.NewError(wire.CodeBadRequest,
+			"gdb is still running; kill the program instead of restarting the debugger")
+	}
+
+	// Remember the user's work before the old state is discarded.
+	oldBreakpoints := s.breakpointList()
+	oldWatches := append([]watch(nil), s.st.watches...)
+	exePath := s.st.exePath
+
+	opts := s.cfg.MI
+	opts.Handler = s.HandleRecord
+	if opts.Logf == nil {
+		opts.Logf = s.logf
+	}
+	client, err := mi.Start(r.ctx, opts)
+	if err != nil {
+		return nil, wire.NewError(wire.CodeGDBDead, "could not start gdb: "+err.Error())
+	}
+
+	old := s.client
+	s.client = client
+	go func() {
+		// The old process is already gone; this only reaps its goroutines.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = old.Close(ctx)
+	}()
+
+	// A brand-new gdb knows nothing: reset everything derived from the old one.
+	s.vars = newVarRegistry()
+	s.srcCache = nil
+	s.st.runState = wire.RunStateNoProgram
+	s.st.threads, s.st.frames, s.st.locals = nil, nil, nil
+	s.st.breakpoints = map[int]wire.Breakpoint{}
+	s.st.ours = map[int]bool{}
+	s.st.registerNames = nil
+	s.st.substitutions, s.st.sourceDirs = nil, nil
+	s.st.inferiorPID = 0
+	s.st.features = client.Features()
+	s.st.watches = oldWatches
+	// The terminal belonged to the old process group.
+	if s.term != nil {
+		_ = s.term.Close()
+		s.term = nil
+		s.termPtr.Store(nil)
+	}
+
+	// Re-load the program, then re-create the breakpoints the user had.
+	var restored int
+	if exePath != "" {
+		payload, _ := json.Marshal(wire.ExeLoadRequest{Path: exePath})
+		if _, werr := s.dispatch(&request{
+			ctx: r.ctx,
+			req: wire.Request{Type: wire.TypeExeLoad, Payload: payload},
+		}); werr != nil {
+			s.logf("re-loading %s after restart: %s", exePath, werr.Message)
+		} else {
+			for _, bp := range oldBreakpoints {
+				if bp.Path == "" || bp.Line == 0 {
+					continue
+				}
+				payload, _ := json.Marshal(wire.BreakpointRequest{
+					Path: bp.Path, Line: bp.Line, Condition: bp.Condition,
+				})
+				if _, werr := s.dispatch(&request{
+					ctx: r.ctx,
+					req: wire.Request{Type: wire.TypeBpSetSource, Payload: payload},
+				}); werr == nil {
+					restored++
+				}
+			}
+		}
+	}
+
+	s.publish()
+	s.cfg.Events.Broadcast(wire.EventVarsInvalidated, map[string]any{})
+	s.broadcastBreakpoints()
+	go s.watchGDB()
+
+	return map[string]any{
+		"restarted":           true,
+		"exePath":             exePath,
+		"breakpointsRestored": restored,
+	}, nil
 }

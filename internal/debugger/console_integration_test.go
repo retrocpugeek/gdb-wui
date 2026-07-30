@@ -326,3 +326,53 @@ func TestConsoleWorksWhileRunning(t *testing.T) {
 		t.Errorf("console.exec while running: %s: %s", werr.Code, werr.Message)
 	}
 }
+
+// TestRestartAfterGDBDies covers the recovery path. Restarting is explicit, not
+// automatic: gdb dying means something went wrong, and silently starting
+// another would hide that while throwing away the user's breakpoints.
+func TestRestartAfterGDBDies(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+	h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "hello.c", Line: lineMainInit})
+	if n := len(h.sess.Snapshot().Breakpoints); n != 1 {
+		t.Fatalf("%d breakpoints before the kill, want 1", n)
+	}
+
+	// Restarting while gdb is alive is refused: it would be a confusing way to
+	// kill the program.
+	if _, werr := h.do(wire.TypeSessionRestart, nil); werr == nil {
+		t.Error("restart was accepted while gdb was healthy")
+	}
+
+	// Kill gdb from inside itself.
+	_, _ = h.do(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "shell kill -9 $PPID"})
+	h.rec.wait(t, wire.EventGDBDead)
+
+	// Ordinary requests must now fail...
+	if _, werr := h.do(wire.TypeBpList, nil); werr == nil || werr.Code != wire.CodeGDBDead {
+		t.Errorf("bp.list after death = %v, want gdb_dead", werr)
+	}
+	// ...but restart must work, precisely because gdb is dead.
+	out, werr := h.do(wire.TypeSessionRestart, nil)
+	if werr != nil {
+		t.Fatalf("restart: %s: %s", werr.Code, werr.Message)
+	}
+	result, _ := out.(map[string]any)
+	t.Logf("restart: %+v", result)
+
+	snap := h.sess.Snapshot()
+	if snap.ExePath != "hello" {
+		t.Errorf("exePath = %q after restart, want the program re-loaded", snap.ExePath)
+	}
+	if len(snap.Breakpoints) != 1 {
+		t.Errorf("%d breakpoints after restart, want the one the user had restored",
+			len(snap.Breakpoints))
+	}
+
+	// And the session must actually work again.
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	stopped := h.rec.wait(t, wire.EventStopped).(wire.Stopped)
+	if stopped.Reason != "breakpoint-hit" {
+		t.Errorf("reason = %q; the restored breakpoint did not fire", stopped.Reason)
+	}
+}

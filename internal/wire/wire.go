@@ -96,9 +96,10 @@ var ErrorCodes = []string{
 // Request types. M2 implements the session group; the rest arrive with the
 // milestones that need them.
 const (
-	TypeSessionHello = "session.hello"
-	TypeSessionPing  = "session.ping"
-	TypeSessionInfo  = "session.info"
+	TypeSessionHello   = "session.hello"
+	TypeSessionPing    = "session.ping"
+	TypeSessionInfo    = "session.info"
+	TypeSessionRestart = "session.restart"
 )
 
 // RequestTypes is every type the server answers today.
@@ -110,6 +111,7 @@ var RequestTypes = []string{
 	TypeSessionHello,
 	TypeSessionInfo,
 	TypeSessionPing,
+	TypeSessionRestart,
 
 	TypeExeLoad,
 
@@ -157,6 +159,10 @@ var RequestTypes = []string{
 
 	TypeMemRead,
 	TypeEvalExpr,
+
+	TypePathSubstitute,
+	TypePathAddDir,
+	TypePathList,
 }
 
 // SessionRequestTypes is the subset the hub answers with no debugger attached.

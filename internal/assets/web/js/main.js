@@ -20,6 +20,7 @@ import { createRegisters } from "./panels/registers.js";
 import { createThreads } from "./panels/threads.js";
 import { createDisasm } from "./panels/disasm.js";
 import { createMemory } from "./panels/memory.js";
+import { initLayout, initTheme } from "./core/layout.js";
 import { createGdbConsole } from "./panels/gdbconsole.js";
 import { createTerminal, decodeBase64, encodeBase64 } from "./core/terminal.js";
 
@@ -38,6 +39,11 @@ const ui = {
   disasm: el("disasm"),
   memory: el("memory"),
   memAddr: el("mem-addr"),
+  locate: el("locate"),
+  locateText: el("locate-text"),
+  locatePick: el("locate-pick"),
+  locateApply: el("locate-apply"),
+  restart: el("btn-restart"),
   gdbconsole: el("gdbconsole"),
   inferior: el("inferior"),
   log: el("log"),
@@ -283,6 +289,9 @@ function handleEvent(msg) {
     case "gdbDead":
       execBusy = false;
       store.patch({ "session.runState": "noProgram" });
+      // A button, not an automatic restart: gdb dying means something went
+      // wrong, and quietly starting another would hide it.
+      ui.restart.classList.remove("is-hidden");
       setStatus(`gdb died: ${msg.payload.reason}`, true);
       log.system(`gdb died: ${msg.payload.reason}`);
       for (const line of msg.payload.stderr ?? []) log.system(`gdb stderr: ${line}`);
@@ -345,6 +354,47 @@ function applySnapshot(hello) {
   }
 }
 
+// showLocate offers to find a file gdb named but we could not resolve. It is an
+// offer rather than an error: the file is usually present under a different
+// prefix, and one substitution fixes every later frame in that tree.
+function showLocate(src) {
+  if (!src || src.available || !src.gdbPath) {
+    ui.locate.classList.add("is-hidden");
+    return;
+  }
+  ui.locate.classList.remove("is-hidden");
+  ui.locateText.textContent = `No local source for ${src.gdbPath}`;
+  ui.locatePick.replaceChildren();
+  const candidates = src.candidates ?? [];
+  for (const path of candidates) {
+    const option = document.createElement("option");
+    option.value = path;
+    option.textContent = path;
+    ui.locatePick.append(option);
+  }
+  const usable = candidates.length > 0;
+  ui.locatePick.classList.toggle("is-hidden", !usable);
+  ui.locateApply.classList.toggle("is-hidden", !usable);
+  ui.locateApply.dataset.gdbPath = src.gdbPath;
+  if (!usable) {
+    ui.locateText.textContent =
+      `No local source for ${src.gdbPath}, and no file here shares its name.`;
+  }
+}
+
+ui.locateApply.addEventListener("click", () => {
+  const gdbPath = ui.locateApply.dataset.gdbPath;
+  const path = ui.locatePick.value;
+  if (!gdbPath || !path) return;
+  send("path.substitute", { gdbPath, path })
+    .then((out) => {
+      ui.locate.classList.add("is-hidden");
+      const count = out.substitutions?.length ?? 0;
+      setStatus(`gdb taught where source lives (${count} mapping${count === 1 ? "" : "s"})`);
+    })
+    .catch(reportError);
+});
+
 function applyStopped(stopped) {
   execBusy = false;
   store.patch({
@@ -365,8 +415,12 @@ function applyStopped(stopped) {
   variables.onStop(localsToNodes(stopped.locals), stopped.stopSeq);
   registers.onStop(stopped.stopSeq);
   const frame = (stopped.frames ?? [])[0];
+  showLocate(frame?.source);
   if (frame?.source?.available) {
     source.setExecLine(frame.source.path, frame.source.line).catch(reportError);
+    if (frame.source.stale) {
+      setStatus(`${frame.source.path} is newer than the program — line numbers may be wrong.`);
+    }
   } else {
     source.clearExecLine();
     if (frame) {
@@ -735,6 +789,32 @@ store.subscribe("session", (state) => {
 });
 
 gdbConsole.ready("gdb console — type a command, Tab completes, ↑ recalls history");
+
+ui.restart.addEventListener("click", () => {
+  send("session.restart", {})
+    .then((out) => {
+      ui.restart.classList.add("is-hidden");
+      setStatus(`gdb restarted; ${out.breakpointsRestored ?? 0} breakpoint(s) restored`);
+      log.system("gdb restarted");
+    })
+    .catch(reportError);
+});
+
+initLayout({
+  app: document.getElementById("app"),
+  onResize() {
+    // The terminals measure their container, so a splitter drag has to tell
+    // them; nothing else in the layout needs to know.
+    gdbConsole.resize();
+    inferiorTerm.resize();
+  },
+});
+initTheme({ toggle: el("btn-theme") });
+document.addEventListener("gdb-wui:theme", () => {
+  // The terminals were built with the old palette, so they have to be told.
+  gdbConsole.retheme();
+  inferiorTerm.retheme();
+});
 
 conn.connect();
 tree.start();

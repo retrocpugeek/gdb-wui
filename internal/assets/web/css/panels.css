@@ -559,3 +559,32 @@
 }
 
 .addr-input::placeholder { color: var(--fg-2); }
+
+/* --- locate-source bar ---------------------------------------------------- */
+
+/* Shown when a frame's source could not be resolved. It is an offer, not an
+ * error: the file is usually present under a different prefix. */
+.locate-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--pad);
+  padding: 4px var(--pad);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--warn);
+  color: var(--fg-1);
+  flex: 0 0 auto;
+}
+
+.locate-pick {
+  font: inherit;
+  font-family: var(--font-mono);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  max-width: 40ch;
+}
+
+/* A stale source is a warning, not a failure: the code shown is real, the line
+ * numbers are what have drifted. */
+.is-stale-source { border-bottom: 1px solid var(--warn); }

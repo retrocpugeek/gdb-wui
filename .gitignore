@@ -4,5 +4,6 @@ coverage.out
 /e2e/node_modules
 .mi-log*
 
-# compiled fixtures
+# compiled fixtures and the Makefile's scratch output
 /testdata/fixtures/*.bin
+/build/

@@ -63,9 +63,11 @@ var skipDirs = map[string]bool{
 // FS is a rooted view of the project directory.
 type FS struct {
 	root *os.Root
-	// abs is the resolved absolute path, for display and for source resolution
-	// in M8. It is never used to build paths for opening.
+	// abs is the resolved absolute path, for display and for the source-path
+	// matching in index.go. It is never used to build paths for opening.
 	abs string
+	// index is the lazily built basename index; see index.go.
+	index Index
 }
 
 // Open roots a filesystem at dir.
@@ -388,6 +390,10 @@ func (f *FS) RelPath(abs string) (string, bool) {
 	}
 	return rel, true
 }
+
+// Root exposes the underlying os.Root, for the index walk. Callers outside
+// this package have no business with it.
+func (f *FS) rootFS() *os.Root { return f.root }
 
 // Stat reports on one path.
 func (f *FS) Stat(p string) (fs.FileInfo, error) {

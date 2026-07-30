@@ -25,14 +25,33 @@ body {
 
   height: 100%;
   display: grid;
-  grid-template-columns: var(--tree-w) minmax(0, 1fr) var(--right-w);
-  grid-template-rows: auto minmax(0, 1fr) var(--bottom-h) auto;
+  /* Splitters are grid columns and rows of their own, so dragging one writes a
+   * single custom property and the layout rules never learn they exist. */
+  grid-template-columns:
+    var(--tree-w) 4px minmax(0, 1fr) 4px var(--right-w);
+  grid-template-rows: auto minmax(0, 1fr) 4px var(--bottom-h) auto;
   grid-template-areas:
-    "toolbar toolbar toolbar"
-    "tree    source  right"
-    "tree    bottom  right"
-    "status  status  status";
+    "toolbar toolbar toolbar toolbar toolbar"
+    "tree    sp-tree source   sp-right right"
+    "tree    sp-tree sp-bot   sp-right right"
+    "tree    sp-tree bottom   sp-right right"
+    "status  status  status   status   status";
 }
+
+#split-tree   { grid-area: sp-tree; }
+#split-right  { grid-area: sp-right; }
+#split-bottom { grid-area: sp-bot; }
+
+.splitter { background: var(--border); touch-action: none; }
+.splitter:hover, .splitter:focus-visible { background: var(--accent); }
+.splitter-v { cursor: col-resize; }
+.splitter-h { cursor: row-resize; }
+
+/* While dragging, nothing else should react to the pointer — a text selection
+ * that starts mid-drag makes the whole gesture feel broken. */
+body.is-dragging { user-select: none; cursor: inherit; }
+body.is-dragging * { pointer-events: none; }
+body.is-dragging .splitter { pointer-events: auto; }
 
 .toolbar      { grid-area: toolbar; }
 .panel-tree   { grid-area: tree; }

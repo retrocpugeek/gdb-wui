@@ -30,7 +30,10 @@
     <span id="exe-name" class="toolbar-exe"></span>
     <span class="toolbar-gap"></span>
     <span id="stop-reason" class="toolbar-reason"></span>
-    <span id="run-state" class="pill" data-state="noProgram">no program</span>
+    <button id="btn-restart" class="btn btn-small is-hidden"
+            title="gdb has died — start a fresh one and restore breakpoints">restart gdb</button>
+    <button id="btn-theme" class="btn btn-small" title="Switch theme" aria-label="Switch theme">◑</button>
+    <span id="run-state" class="pill" data-state="noProgram" role="status" aria-live="polite">no program</span>
   </header>
 
   <aside class="panel panel-tree" aria-label="Project files">
@@ -40,6 +43,8 @@
     </div>
     <div id="tree" class="panel-body tree" role="tree" tabindex="0"></div>
   </aside>
+  <div id="split-tree" class="splitter splitter-v" role="separator"
+       aria-orientation="vertical" aria-label="Resize the file tree" tabindex="0"></div>
 
   <main class="panel panel-source" aria-label="Source">
     <div class="panel-head tabs" role="tablist">
@@ -51,10 +56,18 @@
       <span id="source-path" class="panel-title"></span>
       <span id="source-meta" class="panel-sub"></span>
     </div>
+    <div id="locate" class="locate-bar is-hidden" role="alert">
+      <span id="locate-text"></span>
+      <select id="locate-pick" class="locate-pick" aria-label="Choose the matching local file"></select>
+      <button id="locate-apply" class="btn btn-small">use this file</button>
+    </div>
     <div id="source" class="panel-body source" data-center="source" tabindex="0"></div>
     <div id="disasm" class="panel-body asm is-hidden" data-center="disasm" tabindex="0"></div>
     <div id="memory" class="panel-body mem is-hidden" data-center="memory" tabindex="0"></div>
   </main>
+
+  <div id="split-right" class="splitter splitter-v" role="separator"
+       aria-orientation="vertical" aria-label="Resize the debug panel" tabindex="0"></div>
 
   <aside class="panel panel-right" aria-label="Debug state">
     <div class="panel-head tabs" role="tablist">
@@ -79,6 +92,9 @@
     </div>
     <div id="threads" class="panel-body list" role="list"></div>
   </aside>
+
+  <div id="split-bottom" class="splitter splitter-h" role="separator"
+       aria-orientation="horizontal" aria-label="Resize the console" tabindex="0"></div>
 
   <section class="panel panel-bottom" aria-label="Console">
     <div class="panel-head tabs" role="tablist">

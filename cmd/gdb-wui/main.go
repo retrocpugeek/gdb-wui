@@ -49,6 +49,7 @@ type options struct {
 	noGDB    bool
 	miLog    bool
 	printURL bool
+	idleExit time.Duration
 }
 
 func main() {
@@ -68,6 +69,8 @@ func main() {
 	flag.BoolVar(&opt.noGDB, "no-gdb", false, "browse the project without starting a debugger")
 	flag.BoolVar(&opt.miLog, "mi-log", false, "stream raw MI traffic to the browser's log pane")
 	flag.BoolVar(&opt.printURL, "print-url", false, "print a fresh login URL for an already-running gdb-wui and exit")
+	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
+		"exit after this long with no browser connected (0 disables)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -206,6 +209,9 @@ func run(opt options) error {
 	if opt.open {
 		go openBrowser(url, logf)
 	}
+	if opt.idleExit > 0 {
+		go watchIdle(ctx, h, opt.idleExit, stop, logf)
+	}
 
 	select {
 	case err := <-serveErr:
@@ -263,6 +269,50 @@ func startDebugger(opt options, files *srcfs.FS, h *hub.Hub, logf func(string, .
 		}
 	}
 	return session, nil
+}
+
+// watchIdle shuts the server down once nobody has been connected for a while.
+//
+// A debugger left running holds a gdb process and an inferior, which can be
+// holding a lock, a port or a device. The grace period starts only after the
+// first client has connected and gone: exiting because nobody arrived in the
+// first thirty seconds would kill a server whose browser was slow to start.
+func watchIdle(ctx context.Context, h *hub.Hub, after time.Duration,
+	stop func(), logf func(string, ...any)) {
+
+	const tick = 5 * time.Second
+	var everConnected bool
+	var idleSince time.Time
+
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		if h.Count() > 0 {
+			everConnected = true
+			idleSince = time.Time{}
+			continue
+		}
+		if !everConnected {
+			continue
+		}
+		if idleSince.IsZero() {
+			idleSince = time.Now()
+			continue
+		}
+		if time.Since(idleSince) >= after {
+			log.Printf("no browser connected for %s; exiting", after)
+			logf("idle exit after %s", after)
+			stop()
+			return
+		}
+	}
 }
 
 // printURL asks a running server for a fresh login link.

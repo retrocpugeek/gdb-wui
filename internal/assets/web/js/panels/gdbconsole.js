@@ -183,6 +183,7 @@ export function createGdbConsole({ element, onSubmit, onComplete }) {
     },
     focus: () => term.focus(),
     resize: () => term.resize(),
+    retheme: () => term.retheme(),
     clear() {
       term.clear();
       redraw();

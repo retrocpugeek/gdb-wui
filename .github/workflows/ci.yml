@@ -1,0 +1,73 @@
+# One workflow, one runner. The selling point of this repository is `go build`
+# and done, and CI that needs more than that would undercut it.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # From go.mod, so the workflow cannot drift from what the module
+          # actually requires.
+          go-version-file: go.mod
+
+      # Installed explicitly rather than assumed. Runners do ship gdb, but
+      # relying on that makes the workflow silently skip its most valuable
+      # tests the day an image changes — and it costs seconds.
+      - name: Install gdb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdb
+
+      - name: Versions
+        run: |
+          go version
+          gdb --version | head -1
+          gcc --version | head -1
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: |
+          go vet ./...
+          go vet -tags integration ./...
+
+      - name: Unit tests
+        run: go test -race ./...
+
+      # ptrace_scope on the runners is 1, which permits tracing a *child*. That
+      # is what -exec-run does, so these work; attach-to-pid would not, which is
+      # one more reason it is out of scope.
+      - name: Integration tests against real gdb
+        run: go test -tags integration -race -timeout 10m ./...
+
+      # The frontend has no compiler, so this is what stands in for one: a typo
+      # in a module is otherwise a blank page with a green build.
+      - name: Frontend syntax
+        run: |
+          for f in $(find internal/assets/web -name '*.js' -not -path '*/vendor/*'); do
+            node --input-type=module --check < "$f" || { echo "FAIL $f"; exit 1; }
+          done
+
+      # Vendored code must be byte-identical to what the registry published.
+      - name: Vendored hashes
+        run: go test ./internal/assets/ -run TestVendored
+
+      - name: Build
+        run: go build ./...
