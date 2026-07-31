@@ -39,6 +39,8 @@ what you get is gdb's behaviour with a better view of it.
 
 - **Linux, x86-64.** The pty and process-group handling do not port for free.
 - **gdb ≥ 10** with the `mi3` interpreter (17.1 is what it is developed against).
+  A stock `gdb` only knows the host architecture; for a foreign target install
+  `gdb-multiarch` and point `-gdb` at it.
 - **Go ≥ 1.24** to build. Two dependencies, no npm, no bundler.
 
 ## Getting a link
@@ -60,7 +62,9 @@ breakpoints survive.
 | `-project DIR` | The directory to browse. Nothing outside it is served. |
 | `-exe PATH` | Load a program at startup, relative to `-project`. |
 | `-addr ADDR` | Listen address; must be loopback (default `127.0.0.1:0`). |
+| `-gdb PATH` | Which gdb to run (default `gdb`). Use `gdb-multiarch` for a foreign architecture. |
 | `-no-gdb` | Browse the project without starting a debugger. |
+| `-open` | Open a browser at the URL (default true; `-open=false` to suppress). |
 | `-assets-dir DIR` | Serve the frontend from disk — reload is the whole dev loop. |
 | `-mi-log` | Stream raw MI traffic to the browser's log pane. |
 | `-idle-exit DUR` | Exit after this long with no browser connected. |
