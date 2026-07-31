@@ -822,3 +822,94 @@ func TestVarobjsClearedOnRerun(t *testing.T) {
 	}
 	h.rec.wait(t, wire.EventVarsInvalidated)
 }
+
+// TestRemoteTargetIsDetachedNotKilled guards something destructive.
+//
+// gdb kills a `target remote` connection both on an explicit `kill` and on a
+// plain quit — verified against gdb 17.1 and a qemu stub. So a debugger UI that
+// tears down the way it would for a program it started will terminate somebody
+// else's emulator, gdbserver or hardware session when the browser tab closes.
+// Detaching first is the only way to leave it running.
+func TestRemoteTargetIsDetachedNotKilled(t *testing.T) {
+	h := start(t, `
+> -interpreter-exec console "target remote 127.0.0.1:9999"
+< ^done
+> -break-list
+< ^done,BreakpointTable={nr_rows="0",nr_cols="6",body=[]}
+> -thread-info
+< ^done,threads=[],current-thread-id="1"
+`)
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{
+		Line: "target remote 127.0.0.1:9999",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.sess.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var sawDetach, sawKill bool
+	for _, cmd := range h.fake.Received() {
+		switch {
+		case cmd == "-target-detach":
+			sawDetach = true
+		case strings.Contains(cmd, `console "kill"`):
+			sawKill = true
+		}
+	}
+	if !sawDetach {
+		t.Error("no -target-detach on shutdown; the remote target would be killed")
+	}
+	if sawKill {
+		t.Error("shutdown sent kill to a remote target — that terminates a process " +
+			"this server did not start")
+	}
+}
+
+// TestLocalTargetIsStillKilled is the other half: for a program gdb started,
+// killing is right, and the remote handling must not have disabled it.
+func TestLocalTargetIsStillKilled(t *testing.T) {
+	h := start(t, loadTranscript)
+	h.load()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.sess.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var sawKill, sawDetach bool
+	for _, cmd := range h.fake.Received() {
+		switch {
+		case strings.Contains(cmd, `console "kill"`):
+			sawKill = true
+		case cmd == "-target-detach":
+			sawDetach = true
+		}
+	}
+	if !sawKill {
+		t.Error("a locally started program was not killed on shutdown; it would outlive gdb")
+	}
+	if sawDetach {
+		t.Error("a local inferior was detached from; it should be killed")
+	}
+}
+
+// TestDetachClearsRemoteFlag: after the user disconnects by hand, shutdown
+// should go back to the ordinary path.
+func TestDetachClearsRemoteFlag(t *testing.T) {
+	h := start(t, ``, gdbfake.WithDefaultDone())
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "target remote :9999"})
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "disconnect"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = h.sess.Close(ctx)
+
+	for _, cmd := range h.fake.Received() {
+		if cmd == "-target-detach" {
+			t.Error("detached after the user had already disconnected")
+		}
+	}
+}

@@ -86,8 +86,31 @@ Inside a terminal panel only function keys and `Ctrl+Shift+…` are intercepted,
 | The gdb console, with tab completion | Core dumps, attach-to-pid |
 | A program with its own terminal | Full terminal emulation for curses programs |
 | Several browser tabs on one session | Multi-user, auth beyond loopback, TLS |
+| Remote stubs *by hand*, via the console | First-class remote/`gdbserver` support |
 | | Follow-fork, multi-inferior |
 | | Windows, macOS |
+
+**Remote targets** are not a supported feature, but they work if you drive them
+yourself. Start with a gdb that knows the architecture and a project containing
+the symbols, then type the usual commands into the gdb console:
+
+```sh
+gdb-wui -gdb gdb-multiarch -project ~/where/the/symbols/are
+```
+
+```
+set architecture mips:isa64r2
+set endian big
+file /path/to/symbols
+target remote 127.0.0.1:9999
+```
+
+Connecting emits a stop, so the stack, disassembly, registers and stepping all
+light up. **Run**, **Run→main** and **Run→entry** do not apply — the program is
+already running under the stub — but continue, pause, step and `stepi` do.
+Shutting gdb-wui down **detaches** rather than killing, so the far end survives;
+note that detaching resumes it, because that is what the remote protocol's
+detach does.
 
 A program built elsewhere reports source paths that do not exist here. gdb-wui
 matches them against your tree by longest trailing path component and teaches gdb

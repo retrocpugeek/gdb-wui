@@ -143,6 +143,13 @@ type state struct {
 	// source lives, so the UI can show it and duplicates can be avoided.
 	substitutions []wire.Substitution
 	sourceDirs    []string
+
+	// remoteTarget records that gdb is attached to something this server did
+	// not start — a gdbserver, an emulator's stub. It changes what shutdown is
+	// allowed to do: killing a target we merely connected to destroys somebody
+	// else's session.
+	remoteTarget bool
+	remoteAddr   string
 }
 
 // request is one browser request awaiting the actor.
@@ -220,6 +227,21 @@ func (s *Session) Close(ctx context.Context) error {
 		close(s.done)
 		<-s.stopped
 		s.closeTerminal()
+
+		// A remote target is somebody else's process. Detach so it survives us,
+		// and stop the client's teardown from killing it — gdb kills a
+		// `target remote` connection on plain quit, not only on an explicit
+		// kill.
+		if s.st.remoteTarget && s.client.DeadErr() == nil {
+			detach, cancel := context.WithTimeout(ctx, 3*time.Second)
+			if _, werr := s.send(detach, "-target-detach"); werr != nil {
+				s.logf("detaching from %s: %s", s.st.remoteAddr, werr.Message)
+			} else {
+				s.logf("detached from %s", s.st.remoteAddr)
+			}
+			cancel()
+			s.client.SetKillOnClose(false)
+		}
 		err = s.client.Close(ctx)
 	})
 	return err

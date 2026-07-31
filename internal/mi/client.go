@@ -154,6 +154,11 @@ type Client struct {
 	closeOnce sync.Once
 	closeErr  error
 	wg        sync.WaitGroup
+
+	// killOnClose decides whether shutdown kills the inferior. True is right
+	// for a program gdb started; it is destructive for a remote target we
+	// merely attached to. See SetKillOnClose.
+	killOnClose atomic.Bool
 }
 
 const maxTombstones = 1024
@@ -179,6 +184,7 @@ func Start(ctx context.Context, opts Options) (*Client, error) {
 	if c.logf == nil {
 		c.logf = func(string, ...any) {}
 	}
+	c.killOnClose.Store(true)
 
 	if opts.Stdin != nil && opts.Stdout != nil {
 		c.stdin, c.stdout = opts.Stdin, opts.Stdout
@@ -507,6 +513,15 @@ func (c *Client) deadError() error {
 	return ErrDead
 }
 
+// SetKillOnClose controls whether shutdown kills the inferior.
+//
+// It must be false for a remote target. gdb sends a kill packet to a
+// `target remote` connection both on an explicit `kill` and on plain quit —
+// verified against gdb 17.1 and a qemu stub — which terminates a process this
+// server did not start and has no business ending. Detaching first is the
+// caller's job; this stops the teardown from undoing it.
+func (c *Client) SetKillOnClose(kill bool) { c.killOnClose.Store(kill) }
+
 // Close shuts gdb down, escalating as needed, and waits for the process to be
 // gone.
 //
@@ -530,9 +545,11 @@ func (c *Client) doClose(ctx context.Context) error {
 		_, _ = c.SendUnlocked(step, "-exec-interrupt")
 		stepCancel()
 
-		step, stepCancel = context.WithTimeout(shutdown, 500*time.Millisecond)
-		_, _ = c.SendUnlocked(step, `-interpreter-exec console "kill"`)
-		stepCancel()
+		if c.killOnClose.Load() {
+			step, stepCancel = context.WithTimeout(shutdown, 500*time.Millisecond)
+			_, _ = c.SendUnlocked(step, `-interpreter-exec console "kill"`)
+			stepCancel()
+		}
 
 		step, stepCancel = context.WithTimeout(shutdown, 500*time.Millisecond)
 		_, _ = c.SendUnlocked(step, "-gdb-exit")

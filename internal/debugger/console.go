@@ -49,12 +49,45 @@ func (s *Session) consoleExec(r *request) (any, *wire.Error) {
 		})
 	}
 
+	s.noteTargetCommand(line)
 	resynced := s.resyncAfterConsole(r.ctx)
 	return wire.ConsoleExecResult{
 		Resynced: resynced,
 		RunState: s.st.runState,
 		StopSeq:  s.st.stopSeq,
 	}, nil
+}
+
+// noteTargetCommand watches for the user connecting to or leaving a remote
+// target.
+//
+// Reading the command text is a heuristic, and a deliberate one: there is no MI
+// query that answers "am I attached to something I did not start" without
+// parsing console output, which is worse. The cost of being wrong is bounded —
+// a false positive detaches a local inferior gdb would have killed anyway, and
+// a false negative is today's behaviour.
+func (s *Session) noteTargetCommand(line string) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return
+	}
+	switch fields[0] {
+	case "detach", "disconnect":
+		s.st.remoteTarget, s.st.remoteAddr = false, ""
+	case "target", "tar":
+		if len(fields) < 2 {
+			return
+		}
+		switch fields[1] {
+		case "remote", "extended-remote":
+			s.st.remoteTarget = true
+			if len(fields) > 2 {
+				s.st.remoteAddr = fields[2]
+			}
+			s.logf("attached to a remote target (%s); shutdown will detach, not kill",
+				s.st.remoteAddr)
+		}
+	}
 }
 
 // resyncAfterConsole re-reads the state a typed command may have changed.
