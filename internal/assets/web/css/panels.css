@@ -588,3 +588,13 @@
 /* A stale source is a warning, not a failure: the code shown is real, the line
  * numbers are what have drifted. */
 .is-stale-source { border-bottom: 1px solid var(--warn); }
+
+/* An outer frame being inspected is marked differently from the execution
+ * point. The program counter is one specific place; a selected caller is
+ * somewhere you are looking. Using one marker for both loses that. */
+.src-row.is-frame { background: var(--accent-dim); }
+.src-row.is-frame .src-gutter {
+  background: var(--accent-dim);
+  color: var(--fg-0);
+  box-shadow: inset 2px 0 0 var(--accent);
+}

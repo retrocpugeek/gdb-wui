@@ -11,7 +11,19 @@ import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
   let path = null;
   let lines = [];
+  // Two distinct markers, and the distinction matters. execLine is where the
+  // program counter actually is; frameLine is the line of an outer frame the
+  // user is inspecting. Conflating them means clicking a caller in the stack
+  // moves the "executing here" bar to code that is not executing, and the user
+  // loses sight of where the program really is.
+  //
+  // Both carry the file they belong to. A bare line number gets painted onto
+  // whatever file happens to be open, which produces a confident execution
+  // marker in a file that is not running.
   let execLine = 0;
+  let execPath = null;
+  let frameLine = 0;
+  let framePath = null;
   // The whole mirror is kept, not just this file's, because the order of
   // "which file is open" and "which breakpoints exist" is not fixed: a reload
   // delivers the snapshot's breakpoints before the source is fetched, and
@@ -80,7 +92,10 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
 
   function applyDecorations(row, line) {
     const bp = breakpoints.get(line);
-    row.classList.toggle("is-exec", line === execLine);
+    const isExec = line === execLine && path === execPath;
+    const isFrame = line === frameLine && path === framePath && !isExec;
+    row.classList.toggle("is-exec", isExec);
+    row.classList.toggle("is-frame", isFrame);
     row.classList.toggle("has-bp", Boolean(bp));
     row.classList.toggle("bp-disabled", Boolean(bp && !bp.enabled));
     row.classList.toggle("bp-pending", Boolean(bp && bp.pending));
@@ -185,21 +200,40 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
       metaLabel.textContent = "";
       showMessage("Choose a file from the tree, or load a program and run it.", "src-empty");
     },
-    // setExecLine moves the highlight. Same file: two class toggles. Different
-    // file: a fetch, then the highlight.
+    // setExecLine moves the program-counter marker. Same file: two class
+    // toggles. Different file: a fetch, then the highlight.
     async setExecLine(nextPath, line) {
+      execPath = nextPath ?? path;
+      execLine = line;
+      // A new stop supersedes whatever frame was being inspected.
+      frameLine = 0;
+      framePath = null;
       if (nextPath && nextPath !== path) {
         await open(nextPath, { line });
-        execLine = line;
         redecorate();
         return;
       }
-      execLine = line;
+      redecorate();
+      if (line) reveal(line);
+    },
+    // setFrameLine marks the line of an outer frame being inspected, leaving
+    // the execution marker where the program counter actually is.
+    async setFrameLine(nextPath, line) {
+      framePath = nextPath ?? path;
+      frameLine = line;
+      if (nextPath && nextPath !== path) {
+        await open(nextPath, { line });
+        redecorate();
+        return;
+      }
       redecorate();
       if (line) reveal(line);
     },
     clearExecLine() {
       execLine = 0;
+      execPath = null;
+      frameLine = 0;
+      framePath = null;
       redecorate();
     },
     // setBreakpoints takes the whole mirror; the server is authoritative.

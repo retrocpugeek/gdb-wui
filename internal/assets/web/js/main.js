@@ -478,10 +478,20 @@ function applySelection(sel) {
   else stack.select(sel.frame);
   if (sel.locals) variables.setLocals(localsToNodes(sel.locals), sel.stopSeq);
   if (sel.threadId) threads.select(sel.threadId);
+
   const frame = stack.frameAt(sel.frame);
   if (frame?.source?.available) {
-    source.setExecLine(frame.source.path, frame.source.line).catch(reportError);
+    // Frame 0 is where the program counter is; anything above it is a caller
+    // being inspected, and gets its own marker so the execution point stays
+    // visible and unambiguous.
+    if (sel.frame === 0) {
+      source.setExecLine(frame.source.path, frame.source.line).catch(reportError);
+    } else {
+      source.setFrameLine(frame.source.path, frame.source.line).catch(reportError);
+    }
   }
+  // The machine view follows the selected frame too, when it is showing.
+  refreshDisasm(frame?.address);
 }
 
 // --- actions ---------------------------------------------------------------
