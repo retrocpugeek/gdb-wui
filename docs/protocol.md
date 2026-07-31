@@ -757,6 +757,12 @@ project root, and it must start with the ELF magic. Both are allowed while the
 inferior runs — telling gdb what addresses mean is configuration, and it is
 precisely what someone does after attaching to a running target.
 
+**`symbols.load` does not set the architecture, and cannot.** Only `file`
+(`exe.load`) does, by reading the ELF header; `symbol-file` and
+`add-symbol-file` both leave gdb on the host's. Since `target remote` needs the
+architecture to parse the stub's register reply, a foreign target must have its
+ELF loaded — or `set architecture`/`set endian` typed — *before* connecting.
+
 Not covered here: shared libraries for an attached process need
 `set sysroot` (`target:` when the stub does file transfer, otherwise a local
 copy), which is a console command like any other.

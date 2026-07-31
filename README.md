@@ -129,16 +129,33 @@ file /path/to/symbols
 target remote 127.0.0.1:9999    ← or use the connect button
 ```
 
-Once connected, **+ load** in the Symbols pane installs a symbol table *without*
-declaring a program to run — which is what you want when the target already has
-the code. `replace` suits an image that runs where it was linked; `add` takes an
-offset, for one that does not, which is the usual bare-metal case. Loading with
-the file tree instead would set an exec file too, leaving Run offering to start
-a second, local copy of a program already running elsewhere.
+**Load the ELF before you connect.** `target remote` immediately reads the
+stub's registers, and how to interpret that reply depends on the architecture.
+Connect first and gdb assumes *this* machine's architecture, misparses
+everything, and can disrupt the far end badly enough to end the session. Only
+`file` — clicking the ELF in the file tree — establishes it, by reading the ELF
+header. Measured with gdb 17.1 on a MIPS64 image:
 
-Attaching to a running process may also need `set sysroot` so gdb can find the
-shared libraries — `target:` if the stub does file transfer, a local copy
-otherwise.
+| command | architecture | endianness |
+|---|---|---|
+| `file <elf>` — the file tree | `mips:octeon` | big |
+| `symbol-file <elf>` — **+ load**, replace | `i386` | little |
+| `add-symbol-file <elf>` — **+ load**, add | `i386` | little |
+
+So **loading symbols is not enough**, which is the trap: the symbols pane looks
+like it did the job. `set architecture` and `set endian` at the console work
+too, and stick. gdb-wui warns before connecting with no program loaded.
+
+Dropping the exec file afterwards does not help either — `exec-file` with no
+argument reverts the architecture to the host's while leaving the endianness
+where it was, which is worse than both.
+
+**+ load** in the Symbols pane is for the other case: a target that already
+describes itself, where you want symbols without declaring a program to run.
+`replace` suits an image that runs where it was linked; `add` takes an offset
+for one that does not. Attaching to a running process may also need
+`set sysroot` so gdb can find shared libraries — `target:` if the stub does
+file transfer, a local copy otherwise.
 
 Connecting emits a stop, so the stack, disassembly, registers and stepping all
 light up. **Run**, **Run→main** and **Run→entry** do not apply — the program is

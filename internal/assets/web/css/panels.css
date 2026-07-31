@@ -674,11 +674,12 @@
   flex: 0 0 auto;
 }
 
-#confirm-load-text { flex: 1 1 auto; }
+#confirm-text { flex: 1 1 auto; }
 
-/* The destructive choice is not the visually obvious one. Discarding a session
- * you spent ten minutes getting into should take a deliberate look. */
-#confirm-load-yes { border-color: var(--warn); }
+/* The risky choice is not the visually obvious one. Discarding a session you
+ * spent ten minutes getting into, or connecting in a way that can disrupt the
+ * far end, should take a deliberate look. */
+#confirm-yes { border-color: var(--warn); }
 
 /* --- remote target bar ----------------------------------------------------- */
 

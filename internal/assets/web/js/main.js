@@ -51,10 +51,10 @@ const ui = {
   disasm: el("disasm"),
   memory: el("memory"),
   memAddr: el("mem-addr"),
-  confirmLoad: el("confirm-load"),
-  confirmLoadText: el("confirm-load-text"),
-  confirmLoadYes: el("confirm-load-yes"),
-  confirmLoadNo: el("confirm-load-no"),
+  confirm: el("confirm"),
+  confirmText: el("confirm-text"),
+  confirmYes: el("confirm-yes"),
+  confirmNo: el("confirm-no"),
   locate: el("locate"),
   locateText: el("locate-text"),
   locatePick: el("locate-pick"),
@@ -277,7 +277,7 @@ function handleEvent(msg) {
     case "exited":
       execBusy = false;
       // The session the prompt was guarding has ended on its own.
-      hideConfirmLoad();
+      hideConfirm();
       store.patch({
         "session.runState": msg.payload.runState,
         "session.lastStopReason": exitText(msg.payload),
@@ -300,7 +300,7 @@ function handleEvent(msg) {
       symbols.refresh();
       // Whatever the prompt was protecting is already gone — possibly because
       // another browser tab loaded something.
-      hideConfirmLoad();
+      hideConfirm();
       break;
     case "breakpointsChanged":
       breakpoints.set(msg.payload.breakpoints);
@@ -688,36 +688,46 @@ function loadExe(path) {
     });
 }
 
+// askConfirm shows the inline confirmation bar. One bar, reused: two of these
+// stacked would compete for the same space and the same attention.
+//
+// Focus lands on the cancelling button. Enter and Space are how a keyboard
+// user dismisses something unexpected, and they should not detonate it.
+let confirmAction = null;
+
+function askConfirm(text, yesLabel, onYes) {
+  ui.confirmText.textContent = text;
+  ui.confirmYes.textContent = yesLabel;
+  confirmAction = onYes;
+  ui.confirm.classList.remove("is-hidden");
+  ui.confirmNo.focus();
+}
+
+function hideConfirm() {
+  ui.confirm.classList.add("is-hidden");
+  confirmAction = null;
+}
+
 function askBeforeLoad(path) {
   const current = store.get("session.exePath");
   const running = store.get("session.runState") === "running";
-  const what = current ? `${current} is still ${running ? "running" : "being debugged"}`
-                       : `a program is still ${running ? "running" : "being debugged"}`;
-  ui.confirmLoadText.textContent =
-    `${what}. Loading ${path} will end that session.`;
-  ui.confirmLoad.dataset.path = path;
-  ui.confirmLoad.classList.remove("is-hidden");
-  // Focus the cancelling button, not the destructive one: Enter and Space are
-  // how a keyboard user dismisses something unexpected, and they should not
-  // detonate it.
-  ui.confirmLoadNo.focus();
+  const what = current
+    ? `${current} is still ${running ? "running" : "being debugged"}`
+    : `a program is still ${running ? "running" : "being debugged"}`;
+  askConfirm(`${what}. Loading ${path} will end that session.`,
+    "load anyway", () => loadExe(path));
 }
 
-function hideConfirmLoad() {
-  ui.confirmLoad.classList.add("is-hidden");
-  delete ui.confirmLoad.dataset.path;
-}
-
-ui.confirmLoadYes.addEventListener("click", () => {
-  const path = ui.confirmLoad.dataset.path;
-  hideConfirmLoad();
-  if (path) loadExe(path);
+ui.confirmYes.addEventListener("click", () => {
+  const act = confirmAction;
+  hideConfirm();
+  act?.();
 });
-ui.confirmLoadNo.addEventListener("click", hideConfirmLoad);
-ui.confirmLoad.addEventListener("keydown", (ev) => {
+ui.confirmNo.addEventListener("click", hideConfirm);
+ui.confirm.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") {
     ev.preventDefault();
-    hideConfirmLoad();
+    hideConfirm();
   }
 });
 
@@ -835,6 +845,28 @@ function runRemoteCommand(line, pending) {
     });
 }
 
+// Connecting before gdb knows the architecture is the one ordering mistake
+// that matters, and it fails destructively rather than politely.
+//
+// `target remote` immediately asks the stub for its registers, and how to read
+// that reply depends on the architecture. Get it wrong and gdb misparses
+// everything — a MIPS64 target read as x86-64 reports a nonsense pc and can
+// upset the far end badly enough to end the session.
+//
+// Only `file` establishes the architecture, by reading it out of the ELF
+// header. Measured against gdb 17.1 with a MIPS64 image: `file` gives
+// mips:octeon/big, while `symbol-file` and `add-symbol-file` both leave it at
+// the host's i386/little. So loading *symbols* is not enough, which is exactly
+// the trap — the symbols pane looks like it did the job.
+//
+// exePath is the signal because it is set only by exe.load, which is the
+// tree click, which is `file`. Someone who set the architecture by hand at the
+// console will see this warning too; that is the wrong way round, but a
+// needless prompt is cheaper than a wrecked target.
+function connectRemote(addr) {
+  runRemoteCommand(`target remote ${addr}`, "connecting…");
+}
+
 ui.remoteConnect.addEventListener("click", () => {
   const addr = ui.remoteAddr.value.trim();
   if (!addr) {
@@ -842,7 +874,16 @@ ui.remoteConnect.addEventListener("click", () => {
     ui.remoteAddr.focus();
     return;
   }
-  runRemoteCommand(`target remote ${addr}`, "connecting…");
+  if (!store.get("session.exePath")) {
+    askConfirm(
+      "No program is loaded, so gdb will assume this machine's architecture. " +
+      "If the target is a different one, click its ELF in the file tree first — " +
+      "loading symbols does not set the architecture, and connecting with the " +
+      "wrong one can disrupt the target.",
+      "connect anyway", () => connectRemote(addr));
+    return;
+  }
+  connectRemote(addr);
 });
 
 ui.remoteDisconnect.addEventListener("click", () => {

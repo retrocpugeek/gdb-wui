@@ -48,7 +48,7 @@
       <span id="symbols-count" class="panel-sub"></span>
       <span class="toolbar-gap"></span>
       <button id="symbols-load-open" class="btn btn-small"
-              title="Load a symbol table without declaring a program to run">+ load</button>
+              title="Add a symbol table. Does NOT set the architecture — click the ELF in the file tree for that.">+ load</button>
     </div>
     <div class="symbols-filter">
       <input id="symbols-search" class="addr-input" type="search"
@@ -80,11 +80,11 @@
       <select id="locate-pick" class="locate-pick" aria-label="Choose the matching local file"></select>
       <button id="locate-apply" class="btn btn-small">use this file</button>
     </div>
-    <div id="confirm-load" class="confirm-bar is-hidden" role="alertdialog"
-         aria-labelledby="confirm-load-text">
-      <span id="confirm-load-text"></span>
-      <button id="confirm-load-yes" class="btn btn-small">load anyway</button>
-      <button id="confirm-load-no" class="btn btn-small">keep debugging</button>
+    <div id="confirm" class="confirm-bar is-hidden" role="alertdialog"
+         aria-labelledby="confirm-text">
+      <span id="confirm-text"></span>
+      <button id="confirm-yes" class="btn btn-small">yes</button>
+      <button id="confirm-no" class="btn btn-small">cancel</button>
     </div>
     <div id="symbols-load" class="confirm-bar is-hidden" role="group"
          aria-label="Load symbols">

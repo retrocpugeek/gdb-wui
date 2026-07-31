@@ -682,3 +682,19 @@ session persistence, and Windows/macOS (the pty and `/proc` assumptions won't po
     viewer at `&(name)`, and the address-of matters even for a variable that
     *does* have a type — a bare `LogType` holding 7 resolves to the address
     7, which is a readable-looking answer to the wrong question.
+
+23. **Only `file` sets the architecture; loading symbols does not.** Measured
+    with gdb 17.1 against a MIPS64 big-endian image: `file` leaves the
+    architecture at `mips:octeon` and endianness big, while `symbol-file` and
+    `add-symbol-file` both leave them at the host's `i386`/little. `exec-file`
+    with no argument, to drop the exec file afterwards, reverts the
+    architecture to the host's but leaves the endianness — a half-state worse
+    than either. `set architecture` and `set endian` do stick.
+
+    This matters because `target remote` immediately reads the stub's
+    registers, and the register layout is architecture-dependent. Connecting
+    before gdb knows the architecture is the same mistake that killed a Qiling
+    session earlier in this project via a 312-vs-576-byte `g` packet: it fails
+    destructively, not politely. So the ordering rule is real and the UI warns
+    about it — and the trap is specifically that the symbols pane *looks* like
+    it did the job.
