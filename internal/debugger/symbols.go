@@ -1,7 +1,9 @@
 package debugger
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -238,4 +240,92 @@ func normaliseSymbolAddr(addr string) string {
 		return addr
 	}
 	return "0x" + strconv.FormatUint(n, 16)
+}
+
+// symbolsLoad installs a symbol table without declaring a program to run.
+//
+// This is what the two remote cases need. Against a stub that cannot load an
+// ELF, and against a process someone else started, the code is already in the
+// target's memory: the only thing missing is what the addresses mean.
+// `exe.load` cannot express that — -file-exec-and-symbols sets both — and the
+// difference is not cosmetic, because an exec file leaves the UI offering to
+// Run a second, local copy of a program that is already running elsewhere.
+func (s *Session) symbolsLoad(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.SymbolsLoadRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+	if req.Path == "" {
+		return nil, wire.NewError(wire.CodeBadRequest, "path is required")
+	}
+	if s.files == nil {
+		return nil, wire.NewError(wire.CodeInternal, "no project is configured")
+	}
+
+	mode := req.Mode
+	if mode == "" {
+		mode = wire.SymbolsReplace
+	}
+	if mode != wire.SymbolsReplace && mode != wire.SymbolsAdd {
+		return nil, wire.NewError(wire.CodeBadRequest,
+			fmt.Sprintf("unknown mode %q; want %q or %q",
+				mode, wire.SymbolsReplace, wire.SymbolsAdd))
+	}
+
+	// Same containment and same ELF check as exe.load. A symbol file is an
+	// object file; anything else makes gdb complain in a way that reads like a
+	// gdb-wui bug.
+	head, err := s.files.Head(req.Path, 4)
+	if err != nil {
+		return nil, fsError(err)
+	}
+	if !bytes.Equal(head, elfMagic) {
+		return nil, wire.NewError(wire.CodeBadRequest,
+			fmt.Sprintf("%s is not an ELF object file", req.Path))
+	}
+	abs, err := s.files.AbsPath(req.Path)
+	if err != nil {
+		return nil, fsError(err)
+	}
+
+	var cmd string
+	switch mode {
+	case wire.SymbolsReplace:
+		cmd = "-file-symbol-file " + quote(abs)
+	case wire.SymbolsAdd:
+		// add-symbol-file has no MI form, so it goes through the console — the
+		// same route `starti` takes.
+		line := "add-symbol-file " + gdbQuote(abs)
+		if off := strings.TrimSpace(req.Offset); off != "" {
+			n, err := parseAddress(off)
+			if err != nil {
+				return nil, wire.NewError(wire.CodeBadRequest,
+					fmt.Sprintf("unparseable offset %q", off))
+			}
+			line += fmt.Sprintf(" -o 0x%x", n)
+		}
+		cmd = "-interpreter-exec console " + quote(line)
+	}
+
+	if _, werr := s.send(r.ctx, cmd); werr != nil {
+		return nil, werr
+	}
+
+	// Whatever was cached describes the previous table.
+	s.invalidateSymbols()
+	if werr := s.ensureSymbols(r.ctx); werr != nil {
+		return nil, werr
+	}
+	return wire.SymbolsLoaded{
+		Path:      req.Path,
+		Mode:      mode,
+		Available: len(s.st.symbols),
+	}, nil
+}
+
+// gdbQuote wraps a path for gdb's *console* parser, which splits on spaces.
+// MI quoting is a separate layer applied on top by quote().
+func gdbQuote(p string) string {
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + r.Replace(p) + `"`
 }

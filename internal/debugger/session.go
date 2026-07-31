@@ -446,6 +446,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 
 	case wire.TypeSymbolsList:
 		return s.symbolsList(r)
+	case wire.TypeSymbolsLoad:
+		return s.symbolsLoad(r)
 
 	case wire.TypePathSubstitute:
 		return s.pathSubstitute(r)
@@ -494,8 +496,10 @@ func (s *Session) gate(typ string) *wire.Error {
 		wire.TypePathSubstitute, wire.TypePathAddDir, wire.TypePathList,
 		// The symbol table is a property of the file, not of the inferior.
 		// Refusing to search it while the program runs would disable the one
-		// panel that has a useful answer at that moment.
-		wire.TypeSymbolsList:
+		// panel that has a useful answer at that moment. Loading is allowed
+		// then too: telling gdb what the addresses mean is configuration, and
+		// it is exactly what someone does after attaching to a running target.
+		wire.TypeSymbolsList, wire.TypeSymbolsLoad:
 		return nil
 	}
 

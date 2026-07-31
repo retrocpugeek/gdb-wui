@@ -6,6 +6,24 @@ package wire
 // Requests.
 const (
 	TypeSymbolsList = "symbols.list"
+	TypeSymbolsLoad = "symbols.load"
+)
+
+// Symbol-loading modes.
+//
+// These exist because loading a program and loading its symbols are different
+// acts that only coincide when gdb starts the program itself. `exe.load` uses
+// -file-exec-and-symbols, which declares both "these are the symbols" and
+// "this is the program to run". Against a target that is already running the
+// code — an emulator stub, a process someone else started — there is nothing
+// to run locally, and saying otherwise leaves Run offering to start a second
+// copy.
+const (
+	// SymbolsReplace discards the current symbol table and installs this one.
+	SymbolsReplace = "replace"
+	// SymbolsAdd adds a symbol table alongside the existing ones, optionally
+	// biased by an offset.
+	SymbolsAdd = "add"
 )
 
 // Events.
@@ -67,6 +85,28 @@ type SymbolsListRequest struct {
 	Kind string `json:"kind,omitempty"`
 	// Limit bounds the reply. Zero means the server's default.
 	Limit int `json:"limit,omitempty"`
+}
+
+// SymbolsLoadRequest loads symbols without touching the executable.
+type SymbolsLoadRequest struct {
+	// Path is root-relative, like every other path in the protocol.
+	Path string `json:"path"`
+	// Mode is SymbolsReplace or SymbolsAdd. Empty means replace.
+	Mode string `json:"mode,omitempty"`
+	// Offset biases every address in the file, for an image that does not run
+	// where it was linked — the ordinary case for bare metal. A string because
+	// a 64-bit address does not survive JSON's float64, and because "0x8000"
+	// is how people write one. Only meaningful with SymbolsAdd.
+	Offset string `json:"offset,omitempty"`
+}
+
+// SymbolsLoaded is the reply to symbols.load.
+type SymbolsLoaded struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+	// Available is the size of the symbol table afterwards, so the caller can
+	// tell "loaded, and found nothing" from "loaded".
+	Available int `json:"available"`
 }
 
 // SymbolsList is the reply to symbols.list.

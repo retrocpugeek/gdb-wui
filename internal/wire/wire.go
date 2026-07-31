@@ -165,6 +165,7 @@ var RequestTypes = []string{
 	TypePathList,
 
 	TypeSymbolsList,
+	TypeSymbolsLoad,
 }
 
 // SessionRequestTypes is the subset the hub answers with no debugger attached.

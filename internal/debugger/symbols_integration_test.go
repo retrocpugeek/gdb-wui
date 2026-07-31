@@ -438,3 +438,114 @@ func TestDisassembleMinimalSymbolFunction(t *testing.T) {
 		t.Fatal("no instructions for LogWrite")
 	}
 }
+
+// symbols.load exists because loading a program and loading its symbols are
+// different acts. Against a target already running the code, only the second
+// applies — and declaring an exec file would leave the UI offering to Run a
+// second, local copy.
+
+func TestSymbolsLoadReplaceSetsNoExecFile(t *testing.T) {
+	h := startReal(t, "hello")
+	out := h.mustDo(wire.TypeSymbolsLoad, wire.SymbolsLoadRequest{
+		Path: "hello", Mode: wire.SymbolsReplace,
+	}).(wire.SymbolsLoaded)
+	if out.Available == 0 {
+		t.Fatal("no symbols after loading a -g binary")
+	}
+
+	syms := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{}).(wire.SymbolsList)
+	if _, ok := findSymbol(syms.Symbols, "main"); !ok {
+		t.Error("main is missing; symbols were not installed")
+	}
+
+	// The point of the exercise: no program was declared, so there is nothing
+	// to run. exe.load would have set one.
+	if snap := h.sess.Snapshot(); snap.ExePath != "" {
+		t.Errorf("ExePath = %q; symbols.load must not declare a program to run",
+			snap.ExePath)
+	}
+	if werr := runShouldFail(h); werr == nil {
+		t.Error("exec.run succeeded after symbols.load; an exec file was set")
+	}
+}
+
+func runShouldFail(h *harness) *wire.Error {
+	_, werr := h.do(wire.TypeExecRun, wire.ExecRequest{})
+	return werr
+}
+
+// The bare-metal case: an image that does not run where it was linked. Every
+// address has to be biased, or the symbols point at the wrong code and the
+// debugger lies confidently.
+func TestSymbolsLoadAddAppliesOffset(t *testing.T) {
+	h := startReal(t, "hello")
+
+	base := h.mustDo(wire.TypeSymbolsLoad, wire.SymbolsLoadRequest{
+		Path: "hello", Mode: wire.SymbolsReplace,
+	}).(wire.SymbolsLoaded)
+	if base.Available == 0 {
+		t.Fatal("no symbols")
+	}
+	unbiased := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "_start", Limit: 5000}).(wire.SymbolsList)
+	before, ok := findSymbol(unbiased.Symbols, "_start")
+	if !ok {
+		t.Skip("no _start in this toolchain's output")
+	}
+	linkAddr, err := strconv.ParseUint(strings.TrimPrefix(before.Address, "0x"), 16, 64)
+	if err != nil {
+		t.Fatalf("parsing %q: %v", before.Address, err)
+	}
+
+	const bias = 0x80000000
+	h.mustDo(wire.TypeSymbolsLoad, wire.SymbolsLoadRequest{
+		Path: "hello", Mode: wire.SymbolsAdd, Offset: "0x80000000",
+	})
+
+	biased := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "_start", Limit: 5000}).(wire.SymbolsList)
+	var found bool
+	for _, s := range biased.Symbols {
+		if s.Name != "_start" || s.Address == "" {
+			continue
+		}
+		got, err := strconv.ParseUint(strings.TrimPrefix(s.Address, "0x"), 16, 64)
+		if err != nil {
+			continue
+		}
+		if got == linkAddr+bias {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no _start at the biased address 0x%x; -o was not applied",
+			linkAddr+bias)
+	}
+}
+
+// Containment still applies: a symbol file is opened through the project root
+// like every other path in the protocol.
+func TestSymbolsLoadRefusesEscapingPath(t *testing.T) {
+	h := startReal(t, "hello")
+	for _, p := range []string{"../../etc/hostname", "/etc/hostname"} {
+		if _, werr := h.do(wire.TypeSymbolsLoad, wire.SymbolsLoadRequest{Path: p}); werr == nil {
+			t.Errorf("symbols.load accepted %q, which is outside the project", p)
+		}
+	}
+}
+
+func TestSymbolsLoadRejectsNonELF(t *testing.T) {
+	h := startReal(t, "hello")
+	if _, werr := h.do(wire.TypeSymbolsLoad,
+		wire.SymbolsLoadRequest{Path: "hello.c"}); werr == nil {
+		t.Error("symbols.load accepted a C source file as a symbol table")
+	}
+}
+
+func TestSymbolsLoadRejectsBadMode(t *testing.T) {
+	h := startReal(t, "hello")
+	if _, werr := h.do(wire.TypeSymbolsLoad,
+		wire.SymbolsLoadRequest{Path: "hello", Mode: "sideways"}); werr == nil {
+		t.Error("symbols.load accepted an unknown mode")
+	}
+}

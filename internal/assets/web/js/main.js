@@ -33,6 +33,13 @@ const ui = {
   symbolsSearch: el("symbols-search"),
   symbolsKind: el("symbols-kind"),
   symbolsCount: el("symbols-count"),
+  symbolsLoadOpen: el("symbols-load-open"),
+  symbolsLoad: el("symbols-load"),
+  symbolsLoadPath: el("symbols-load-path"),
+  symbolsLoadMode: el("symbols-load-mode"),
+  symbolsLoadOffset: el("symbols-load-offset"),
+  symbolsLoadGo: el("symbols-load-go"),
+  symbolsLoadCancel: el("symbols-load-cancel"),
   source: el("source"),
   sourcePath: el("source-path"),
   sourceMeta: el("source-meta"),
@@ -711,6 +718,78 @@ ui.confirmLoad.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") {
     ev.preventDefault();
     hideConfirmLoad();
+  }
+});
+
+// --- loading symbols --------------------------------------------------------
+
+// Separate from loading a program, because they are separate acts that only
+// coincide when gdb starts the program itself. Against an emulator stub or a
+// process someone else started, the code is already in the target's memory and
+// the only thing missing is what the addresses mean. Declaring an exec file
+// there would leave Run offering to start a second, local copy.
+//
+// "add" with an offset is for an image that does not run where it was linked,
+// which is the ordinary case for bare metal.
+function showSymbolsLoad() {
+  // Prefill from the loaded program when there is one: reloading its symbols
+  // after connecting to a target is the common reason to open this.
+  if (!ui.symbolsLoadPath.value) {
+    ui.symbolsLoadPath.value = store.get("session.exePath") ?? "";
+  }
+  ui.symbolsLoad.classList.remove("is-hidden");
+  syncSymbolsLoadMode();
+  ui.symbolsLoadPath.focus();
+  ui.symbolsLoadPath.select();
+}
+
+function hideSymbolsLoad() {
+  ui.symbolsLoad.classList.add("is-hidden");
+}
+
+// The offset only means anything for "add" — symbol-file has nowhere to put
+// one — so showing it under "replace" would be an invitation to a silent no-op.
+function syncSymbolsLoadMode() {
+  const isAdd = ui.symbolsLoadMode.value === "add";
+  ui.symbolsLoadOffset.classList.toggle("is-hidden", !isAdd);
+}
+
+function submitSymbolsLoad() {
+  const path = ui.symbolsLoadPath.value.trim();
+  if (!path) {
+    setStatus("Give a path to an ELF file, relative to the project.", true);
+    ui.symbolsLoadPath.focus();
+    return;
+  }
+  const mode = ui.symbolsLoadMode.value;
+  const offset = mode === "add" ? ui.symbolsLoadOffset.value.trim() : "";
+  ui.symbolsLoadGo.disabled = true;
+  send("symbols.load", { path, mode, offset })
+    .then((out) => {
+      hideSymbolsLoad();
+      setStatus(out.available
+        ? `${out.mode === "add" ? "added" : "loaded"} symbols from ${out.path} — ${out.available} symbols`
+        : `${out.path} loaded, but it contains no symbols`);
+      symbols.refresh();
+    })
+    .catch(reportError)
+    .finally(() => { ui.symbolsLoadGo.disabled = false; });
+}
+
+ui.symbolsLoadOpen.addEventListener("click", () => {
+  if (ui.symbolsLoad.classList.contains("is-hidden")) showSymbolsLoad();
+  else hideSymbolsLoad();
+});
+ui.symbolsLoadMode.addEventListener("change", syncSymbolsLoadMode);
+ui.symbolsLoadGo.addEventListener("click", submitSymbolsLoad);
+ui.symbolsLoadCancel.addEventListener("click", hideSymbolsLoad);
+ui.symbolsLoad.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    submitSymbolsLoad();
+  } else if (ev.key === "Escape") {
+    ev.preventDefault();
+    hideSymbolsLoad();
   }
 });
 

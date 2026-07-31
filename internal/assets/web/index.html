@@ -46,6 +46,9 @@
     <div class="panel-head panel-head-split">
       <span class="panel-title">Symbols</span>
       <span id="symbols-count" class="panel-sub"></span>
+      <span class="toolbar-gap"></span>
+      <button id="symbols-load-open" class="btn btn-small"
+              title="Load a symbol table without declaring a program to run">+ load</button>
     </div>
     <div class="symbols-filter">
       <input id="symbols-search" class="addr-input" type="search"
@@ -82,6 +85,22 @@
       <span id="confirm-load-text"></span>
       <button id="confirm-load-yes" class="btn btn-small">load anyway</button>
       <button id="confirm-load-no" class="btn btn-small">keep debugging</button>
+    </div>
+    <div id="symbols-load" class="confirm-bar is-hidden" role="group"
+         aria-label="Load symbols">
+      <span class="confirm-label">Load symbols</span>
+      <input id="symbols-load-path" class="addr-input symload-path" type="text"
+             placeholder="path to an ELF, relative to the project"
+             aria-label="Symbol file" spellcheck="false" autocomplete="off">
+      <select id="symbols-load-mode" class="kind-select" aria-label="Load mode">
+        <option value="replace">replace</option>
+        <option value="add">add</option>
+      </select>
+      <input id="symbols-load-offset" class="addr-input symload-offset is-hidden"
+             type="text" placeholder="offset e.g. 0x8000"
+             aria-label="Address offset" spellcheck="false" autocomplete="off">
+      <button id="symbols-load-go" class="btn btn-small">load</button>
+      <button id="symbols-load-cancel" class="btn btn-small">cancel</button>
     </div>
     <div id="source" class="panel-body source" data-center="source" tabindex="0"></div>
     <div id="disasm" class="panel-body asm is-hidden" data-center="disasm" tabindex="0"></div>

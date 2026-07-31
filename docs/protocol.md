@@ -103,6 +103,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `mem.read` | `{address, offset?, count, stopSeq?}` | [`Memory`](#memory) | `address` is any gdb expression. Capped at 64 KiB per read. |
 | `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. |
 | `symbols.list` | `{filter?, kind?, limit?}` | [`SymbolsList`](#symbols) | Allowed while the inferior runs: the symbol table is a property of the file. |
+| `symbols.load` | `{path, mode?, offset?}` | `{path, mode, available}` | Symbols without an exec file. `mode` is `replace` or `add`. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is frequently blocked in a gdb round-trip, and that is
@@ -728,6 +729,37 @@ workflow loads symbols by typing `file …`, never through `exe.load`.
 stale; the single `symbolsInvalidated` goes out just before the `stopped` event
 that ends the run. By the time a client knows the program has stopped, the
 symbol table it is about to query is already the new one.
+
+### Loading symbols without a program
+
+`exe.load` issues `-file-exec-and-symbols`, which says two things at once:
+these are the symbols, *and* this is the program to run. They only coincide
+when gdb starts the program itself. Against a stub that cannot load an ELF, or
+a process someone else started, the code is already in the target's memory and
+only the first is true — and declaring an exec file leaves the UI offering to
+Run a second, local copy.
+
+`symbols.load` says only the first:
+
+| mode | command | for |
+|---|---|---|
+| `replace` (default) | `-file-symbol-file <path>` | an image that runs where it was linked |
+| `add` | `add-symbol-file <path> [-o <offset>]` | an image that does not — the usual bare-metal case |
+
+`offset` is a string, not a number: a 64-bit address does not survive JSON's
+float64, and `"0x8000"` is how people write one. It is only meaningful with
+`add`, because `symbol-file` has nowhere to put one. `add-symbol-file` has no
+MI form, so it goes through `-interpreter-exec console`, the same route
+`starti` takes.
+
+`path` is root-relative and checked exactly like `exe.load`'s: through the
+project root, and it must start with the ELF magic. Both are allowed while the
+inferior runs — telling gdb what addresses mean is configuration, and it is
+precisely what someone does after attaching to a running target.
+
+Not covered here: shared libraries for an attached process need
+`set sysroot` (`target:` when the stub does file transfer, otherwise a local
+copy), which is a console command like any other.
 
 ## Remote targets
 

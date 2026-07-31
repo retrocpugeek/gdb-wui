@@ -696,3 +696,9 @@
 .pill[data-remote="off"] { color: var(--fg-2); }
 .pill[data-remote="on"]  { color: var(--ok); border-color: var(--ok); }
 .pill[data-remote="busy"] { color: var(--warn); border-color: var(--warn); }
+
+/* --- load-symbols bar ------------------------------------------------------ */
+
+.confirm-label { color: var(--fg-2); flex: 0 0 auto; }
+.symload-path { flex: 1 1 auto; min-width: 12ch; }
+.symload-offset { flex: 0 0 auto; width: 16ch; min-width: 0; }
