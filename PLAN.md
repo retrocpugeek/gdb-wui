@@ -642,16 +642,18 @@ session persistence, and Windows/macOS (the pty and `/proc` assumptions won't po
    bootstrap-token reuse — all rejected.
 6. `make vendor-verify` and `node --check` over the frontend modules.
 
-19. **`-symbol-info-*` reports link-time addresses, not running ones.** The
-    `nondebug` entries come straight from the ELF symbol table, so for a
-    position-independent executable every address is the unrelocated one:
-    `_start` is `0x1060`, while the running process has it at
-    `0x555555555060`. Disassembling the displayed address succeeds *before*
-    the program runs, reading from the exec file, and fails with "Cannot
-    access memory" *after* — the opposite of the intuition that a live
-    process makes more memory readable. The symbol pane therefore jumps by
-    *name* and lets gdb apply the load bias; `-data-disassemble -a <name>`
-    resolves correctly in both states. Verified by
+19. **`-symbol-info-*` addresses are link-time until the program runs.**
+    The `nondebug` entries come from the ELF symbol table, so before the
+    process exists every address for a position-independent executable is
+    the unrelocated one: `_start` reads `0x1060` while the running process
+    has it at `0x555555555060`. Re-reading the table after the program
+    starts gives relocated addresses instead. So a *cached* table is
+    dangerous in a way a fresh one is not, and the danger is asymmetric:
+    disassembling a link-time address succeeds *before* the run, reading
+    from the exec file, and fails with "Cannot access memory" *after* — the
+    opposite of the intuition that a live process makes more memory
+    readable. The symbol pane therefore jumps by *name* and lets gdb apply
+    the load bias, which is correct whatever the cache holds. Verified by
     `TestDisassembleBySymbolNameFollowsRelocation`, which fails with the
     resolution removed.
 
@@ -662,3 +664,21 @@ session persistence, and Windows/macOS (the pty and `/proc` assumptions won't po
     distinction for a stripped binary, which has no debug info to ask.
     Without `--include-nondebug` neither command returns them at all, and a
     stripped binary yields a bare `symbols={}`.
+
+21. **A symbol with no debug info cannot be evaluated, only located.** For a
+    binary built without `-g`, `-data-evaluate-expression LogType` fails with
+    `'LogType' has unknown type; cast it to its declared type`, and
+    `-data-disassemble -a LogType` fails the same way — gdb knows where the
+    symbol is but not what it is, and both of those ask for its value.
+    `-data-evaluate-expression &(LogType)` succeeds and yields
+    `0x4010 <LogType>`. Every path that turns a name into an address
+    therefore falls back to address-of. This is the normal case for a release
+    firmware image, not an edge case. Verified by
+    `TestResolveMinimalSymbolAddress`.
+
+22. **Data symbols belong in the memory view, not the disassembler.**
+    Disassembling a variable produces plausible-looking nonsense. The symbol
+    pane routes by kind: a variable without debug info opens the memory
+    viewer at `&(name)`, and the address-of matters even for a variable that
+    *does* have a type — a bare `LogType` holding 7 resolves to the address
+    7, which is a readable-looking answer to the wrong question.

@@ -694,8 +694,15 @@ Two populations share the list and they are not interchangeable:
 - **`debug: true`** — from DWARF. Carries `gdbPath` and `line`, and `file` as
   well when the source resolves inside the project. This is the only kind that
   can be jumped to in the source view.
-- **`debug` absent** — from the ELF symbol table. Carries only `address`. The
-  only honest destination is the disassembly.
+- **`debug` absent** — from the ELF symbol table. Carries only `address`. gdb
+  knows where such a symbol is but not what it is, so it cannot be evaluated,
+  only located. A function goes to the disassembly; a variable goes to the
+  memory viewer, because disassembling data produces plausible nonsense.
+
+`mem.read` and `disasm.function` both accept a symbol name where they accept
+an address. Resolution tries the expression, then `&(expression)` — a typeless
+symbol fails the first (`'LogType' has unknown type; cast it to its declared
+type`) and succeeds at the second.
 
 The split between the two comes from gdb itself: the server issues
 `-symbol-info-functions` and `-symbol-info-variables`, each with

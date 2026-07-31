@@ -72,8 +72,9 @@ breakpoints survive.
 
 The **Symbols** pane under the file tree lists the loaded program's functions
 and globals. Type in the filter box to narrow it, and double-click a symbol to
-jump: to the source line if it has debug info, or to the disassembly if it is
-an ELF symbol with only an address. `fn` and `var` sigils say which is which,
+jump: to the source line if it has debug info, to the disassembly if it is a
+function with only an address, or to the memory viewer if it is a variable
+with only an address. `fn` and `var` sigils say which is which,
 and dimmed rows are the ones with no debug info. It works on a stripped binary,
 where the ELF symbol table is the only map you have.
 

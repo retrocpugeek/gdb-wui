@@ -349,3 +349,92 @@ func TestSymbolsPickUpSharedLibraries(t *testing.T) {
 			hit.Symbols[0].Name, hit.Symbols[0].File)
 	}
 }
+
+// addFixtureNoDebug compiles a fixture without -g and leaves it unstripped, so
+// its symbols reach the ELF table with an address but no type.
+func addFixtureNoDebug(t *testing.T, h *harness, name string) {
+	t.Helper()
+	src := filepath.Join(testutil.RepoRoot(t), "testdata", "fixtures", name+".c")
+	body, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(h.files.Abs(), name+".c")
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("gcc", "-O0", "-o",
+		filepath.Join(h.files.Abs(), name), dst).CombinedOutput()
+	if err != nil {
+		t.Fatalf("compiling %s: %v\n%s", name, err, out)
+	}
+}
+
+// A symbol with an address but no type is what a binary built without -g is
+// made of. gdb refuses to evaluate one — "'LogType' has unknown type; cast it
+// to its declared type" — so anything that asks for its *value* fails. Its
+// address is not in doubt, and the address is what the symbol pane wants.
+func TestResolveMinimalSymbolAddress(t *testing.T) {
+	h := startReal(t, "hello")
+	addFixtureNoDebug(t, h, "minsym")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "minsym"})
+
+	syms := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "LogType"}).(wire.SymbolsList)
+	sym, ok := findSymbol(syms.Symbols, "LogType")
+	if !ok {
+		t.Fatalf("LogType missing from %d matches", syms.Matched)
+	}
+	if sym.Debug {
+		t.Error("LogType should have no debug info")
+	}
+	if sym.Kind != wire.SymbolVariable {
+		t.Errorf("LogType kind = %q, want variable", sym.Kind)
+	}
+	if sym.Address == "" {
+		t.Fatal("LogType has no address")
+	}
+
+	// No -g means no line table, so there is no source line to break on.
+	// starti is the documented way into a binary like this.
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{StopAtEntry: true})
+	h.rec.wait(t, wire.EventStopped)
+
+	// This is the request the symbol pane sends for a variable. Before the
+	// address-of fallback it failed outright with gdb's unknown-type message.
+	out := h.mustDo(wire.TypeMemRead, wire.MemReadRequest{
+		Address: "&(LogType)", Count: 16,
+	}).(wire.Memory)
+	if out.Addr == 0 {
+		t.Fatal("&(LogType) resolved to 0")
+	}
+
+	// The bare name must work too: the memory address bar accepts anything the
+	// user types, and typing a symbol's name there is the obvious thing to do.
+	bare := h.mustDo(wire.TypeMemRead, wire.MemReadRequest{
+		Address: "LogType", Count: 16,
+	}).(wire.Memory)
+	if bare.Addr != out.Addr {
+		t.Errorf("LogType resolved to 0x%x but &(LogType) to 0x%x",
+			bare.Addr, out.Addr)
+	}
+}
+
+// The same symbol, reached the way the pane reaches a function: by name,
+// through the disassembler. gdb's -a option rejects a typeless symbol too, so
+// this exercises the fallback rather than the fast path.
+func TestDisassembleMinimalSymbolFunction(t *testing.T) {
+	h := startReal(t, "hello")
+	addFixtureNoDebug(t, h, "minsym")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "minsym"})
+	// No -g means no line table, so there is no source line to break on.
+	// starti is the documented way into a binary like this.
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{StopAtEntry: true})
+	h.rec.wait(t, wire.EventStopped)
+
+	out := h.mustDo(wire.TypeDisasmFunction,
+		wire.DisasmFunctionRequest{Address: "LogWrite"}).(wire.Disassembly)
+	if len(out.Instructions) == 0 {
+		t.Fatal("no instructions for LogWrite")
+	}
+}

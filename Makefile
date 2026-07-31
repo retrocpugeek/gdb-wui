@@ -70,6 +70,13 @@ build/nodebug: testdata/fixtures/nodebug.c
 	gcc -O0 -o $@ $<
 	strip $@
 
+# minsym is the in-between case: no debug info, but not stripped either, so its
+# symbols survive in the ELF table with an address and no type. That is what a
+# release firmware image looks like.
+build/minsym: testdata/fixtures/minsym.c
+	@mkdir -p build
+	gcc -O0 -o $@ $<
+
 run: build fixtures
 	./$(BIN) -project . -assets-dir internal/assets/web -v
 

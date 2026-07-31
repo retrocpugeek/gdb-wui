@@ -763,6 +763,35 @@ function jumpToSymbol(sym) {
       .catch(reportError);
     return;
   }
+  // A variable is data, and disassembling data is meaningless. The memory
+  // viewer is the right destination, addressed by &(name) rather than by the
+  // name alone: a variable that *does* have debug info evaluates to its value,
+  // and showing memory at the address 7 because LogType happens to hold 7 is
+  // not what anyone meant.
+  if (sym.kind === "variable") {
+    disasmPin = null;
+    showCenter("memory");
+    const expr = `&(${sym.name})`;
+    send("mem.read", {
+      address: expr,
+      count: 64,
+      stopSeq: store.get("session.stopSeq"),
+    })
+      .then((res) => {
+        memory.show(res.addr, { expr: sym.name, seq: store.get("session.stopSeq") });
+        ui.memAddr.value = expr;
+        ui.sourceMeta.textContent = memory.summary();
+        setStatus(res.unreadable
+          ? `${sym.name} is at 0x${res.addr.toString(16)}, which is not readable.`
+          : `${sym.name} — 0x${res.addr.toString(16)}`);
+      })
+      .catch((err) => {
+        setStatus(err?.code === "not_ready"
+          ? `Cannot read ${sym.name} until the program is running.`
+          : (err?.message ?? String(err)), true);
+      });
+    return;
+  }
   if (sym.address) {
     // Pin the name, not the address, for the reason in showDisasmAt.
     disasmPin = sym.name;
@@ -772,7 +801,7 @@ function jumpToSymbol(sym) {
     // Switching tabs fires refreshDisasm, which honours the pin. Fetch here
     // only when the tab was already showing, so the two paths do not both ask.
     if (alreadyShowing) fetchPinned();
-    setStatus(`${sym.name} — ${sym.address} (link-time), no debug info`);
+    setStatus(`${sym.name} — ${sym.address}, no debug info`);
     return;
   }
   if (sym.gdbPath) {

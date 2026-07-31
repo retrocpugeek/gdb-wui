@@ -100,14 +100,41 @@ func (s *Session) resolveAddress(r *request, expr string) (uint64, *wire.Error) 
 	}
 	rec, werr := s.send(r.ctx, "-data-evaluate-expression "+quote(expr))
 	if werr != nil {
+		// A symbol from the ELF table alone has an address but no type, and
+		// gdb refuses to read its *value*: "'LogType' has unknown type; cast
+		// it to its declared type". Its address is still perfectly well known,
+		// and the address is all a caller of this function wanted, so ask for
+		// that instead. This is the normal case for a binary built without -g,
+		// not an edge case.
+		if addr, ok := s.addressOf(r, expr); ok {
+			return addr, nil
+		}
 		return 0, wire.NewError(wire.CodeGDBError, werr.Message)
 	}
 	value := rec.Results.Str("value")
 	if n, ok := addressFromValue(value); ok {
 		return n, nil
 	}
+	// The expression evaluated but not to something address-shaped — an int
+	// with debug info, say. Its address is still a sensible destination.
+	if addr, ok := s.addressOf(r, expr); ok {
+		return addr, nil
+	}
 	return 0, wire.NewError(wire.CodeBadRequest,
 		fmt.Sprintf("%q evaluates to %q, which is not an address", expr, value))
+}
+
+// addressOf asks gdb where an expression lives rather than what it holds.
+//
+// Wrapped in parentheses because the caller's expression may be anything —
+// `buf+16` taken address-of is `&(buf+16)`, and `&buf+16` is a different
+// place entirely.
+func (s *Session) addressOf(r *request, expr string) (uint64, bool) {
+	rec, werr := s.send(r.ctx, "-data-evaluate-expression "+quote("&("+expr+")"))
+	if werr != nil {
+		return 0, false
+	}
+	return addressFromValue(rec.Results.Str("value"))
 }
 
 // addressFromValue digs an address out of whatever gdb printed.
