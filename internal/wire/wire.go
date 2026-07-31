@@ -206,6 +206,7 @@ var EventNames = []string{
 	EventThreadsChanged,
 
 	EventSymbolsInvalidated,
+	EventRemoteChanged,
 }
 
 // Hello is pushed to every connection the moment it opens, before anything is
@@ -251,6 +252,21 @@ type Hello struct {
 	Selection *Selection `json:"selection,omitempty"`
 	// LastStopReason is why the inferior last stopped, for the status bar.
 	LastStopReason string `json:"lastStopReason,omitempty"`
+	// Remote describes a connection to a target this server did not start.
+	// Absent means there is none.
+	Remote *RemoteTarget `json:"remote,omitempty"`
+}
+
+// RemoteTarget describes a connection to a debug target this server did not
+// start — a gdbserver, an emulator's stub.
+//
+// It is reported by the server rather than inferred by the client from the
+// commands it sent, because the connection can also be made or dropped by a
+// command typed at the console, and two browser tabs must agree about it.
+type RemoteTarget struct {
+	Connected bool `json:"connected"`
+	// Address is what was passed to `target remote`, when it was recorded.
+	Address string `json:"address,omitempty"`
 }
 
 // Protocol is the current protocol version.

@@ -108,8 +108,15 @@ Inside a terminal panel only function keys and `Ctrl+Shift+…` are intercepted,
 | | Windows, macOS |
 
 **Remote targets** are not a supported feature, but they work if you drive them
-yourself. Start with a gdb that knows the architecture and a project containing
-the symbols, then type the usual commands into the gdb console:
+yourself. The console's tab bar has an address box with **connect** and
+**disconnect** buttons, and a pill showing whether gdb is attached. Those
+buttons run `target remote <address>` and `disconnect` — the same commands you
+would type, so the console shows exactly what ran and gdb's own error text when
+a stub refuses.
+
+Start with a gdb that knows the architecture and a project containing the
+symbols. Everything except the connection itself still goes through the
+console:
 
 ```sh
 gdb-wui -gdb gdb-multiarch -project ~/where/the/symbols/are
@@ -119,7 +126,7 @@ gdb-wui -gdb gdb-multiarch -project ~/where/the/symbols/are
 set architecture mips:isa64r2
 set endian big
 file /path/to/symbols
-target remote 127.0.0.1:9999
+target remote 127.0.0.1:9999    ← or use the connect button
 ```
 
 Connecting emits a stop, so the stack, disassembly, registers and stepping all

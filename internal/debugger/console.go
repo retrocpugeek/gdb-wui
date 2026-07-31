@@ -39,17 +39,22 @@ func (s *Session) consoleExec(r *request) (any, *wire.Error) {
 	// The ~ and & records the command produces are streamed by the ordinary
 	// event path, so the browser sees output as it arrives rather than in one
 	// lump at the end.
-	if _, werr := s.send(r.ctx, "-interpreter-exec console "+quote(line)); werr != nil {
+	_, cmdErr := s.send(r.ctx, "-interpreter-exec console "+quote(line))
+	if cmdErr != nil {
 		// A gdb error here is the user's command being wrong, which is normal
 		// at a console. Surface it as console output and report success, so the
 		// UI does not raise a dialog over a typo.
 		s.cfg.Events.Broadcast(wire.EventConsole, map[string]string{
-			"text":   werr.Message + "\n",
+			"text":   cmdErr.Message + "\n",
 			"stream": "log",
 		})
 	}
 
-	s.noteTargetCommand(line)
+	// Only believe a `target remote` that gdb accepted. A refused connection
+	// that still flipped the indicator to "connected" would be worse than no
+	// indicator at all, and it would also make shutdown try to detach from
+	// something that was never attached.
+	s.noteTargetCommand(line, cmdErr == nil)
 	s.noteSymbolCommand(line)
 	resynced := s.resyncAfterConsole(r.ctx)
 	return wire.ConsoleExecResult{
@@ -67,16 +72,20 @@ func (s *Session) consoleExec(r *request) (any, *wire.Error) {
 // parsing console output, which is worse. The cost of being wrong is bounded —
 // a false positive detaches a local inferior gdb would have killed anyway, and
 // a false negative is today's behaviour.
-func (s *Session) noteTargetCommand(line string) {
+func (s *Session) noteTargetCommand(line string, ok bool) {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return
 	}
+	was := s.st.remoteTarget
 	switch fields[0] {
 	case "detach", "disconnect":
+		// A failed detach is still worth believing: whatever went wrong, the
+		// connection is not in a state to be trusted, and continuing to think
+		// we are attached would make shutdown act on it.
 		s.st.remoteTarget, s.st.remoteAddr = false, ""
 	case "target", "tar":
-		if len(fields) < 2 {
+		if len(fields) < 2 || !ok {
 			return
 		}
 		switch fields[1] {
@@ -89,6 +98,17 @@ func (s *Session) noteTargetCommand(line string) {
 				s.st.remoteAddr)
 		}
 	}
+	if s.st.remoteTarget != was {
+		s.broadcastRemote()
+	}
+}
+
+// broadcastRemote tells every browser the connection state changed.
+func (s *Session) broadcastRemote() {
+	s.cfg.Events.Broadcast(wire.EventRemoteChanged, wire.RemoteTarget{
+		Connected: s.st.remoteTarget,
+		Address:   s.st.remoteAddr,
+	})
 }
 
 // symbolCommands are the typed commands that change which symbols gdb has.

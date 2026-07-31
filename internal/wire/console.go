@@ -21,6 +21,10 @@ const (
 	EventInferiorOutput = "inferiorOutput"
 	// EventThreadsChanged is emitted when threads appear or disappear.
 	EventThreadsChanged = "threadsChanged"
+	// EventRemoteChanged is emitted when a remote target is connected or
+	// disconnected, however that happened — a typed console command or the
+	// connect button.
+	EventRemoteChanged = "remoteChanged"
 )
 
 // ConsoleExecRequest runs a command as if typed at gdb's prompt.

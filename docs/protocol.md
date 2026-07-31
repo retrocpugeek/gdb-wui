@@ -160,6 +160,7 @@ later. Requesting one today returns `unsupported`.
 | `inferiorOutput` | The debuggee wrote to its terminal. | `{dataB64}` |
 | `threadsChanged` | Threads appeared or disappeared. | [`ThreadsList`](#threads) |
 | `symbolsInvalidated` | The cached symbol table belongs to a program that is no longer loaded. | `{}` |
+| `remoteChanged` | A remote target was connected or disconnected. | `{connected, address?}` |
 | `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
 | `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
@@ -727,3 +728,28 @@ workflow loads symbols by typing `file …`, never through `exe.load`.
 stale; the single `symbolsInvalidated` goes out just before the `stopped` event
 that ends the run. By the time a client knows the program has stopped, the
 symbol table it is about to query is already the new one.
+
+## Remote targets
+
+`hello` carries `remote: {connected, address}` when gdb is attached to a target
+this server did not start, and `remoteChanged` fires when that changes.
+
+There is no `target.connect` request. Connecting is `console.exec` with
+`target remote <address>`, and disconnecting is `console.exec` with
+`disconnect` — the same commands the user would type, so the console shows
+exactly what was run and gdb's own error text when a connection is refused.
+The UI's connect button is a shortcut for typing, not a separate mechanism,
+which is what keeps one source of truth for a connection that a console
+command can also make or break.
+
+The server recognises those commands by reading the command text. There is no
+MI query for "am I attached to something I did not start" that does not involve
+parsing console output, which would be worse. A `target remote` is believed
+only if gdb accepted it: a refused connection that still reported `connected`
+would be worse than no indicator, and would make shutdown try to detach from
+something never attached. A `detach` or `disconnect` is believed either way —
+whatever went wrong, the connection is no longer in a state to act on.
+
+Why it matters beyond display: shutting down **detaches** from a remote target
+rather than killing it, because killing something you merely connected to
+destroys somebody else's session.

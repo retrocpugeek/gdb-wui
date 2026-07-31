@@ -64,6 +64,10 @@ const ui = {
   statusMessage: el("status-message"),
   exeName: el("exe-name"),
   logHint: el("log-hint"),
+  remoteState: el("remote-state"),
+  remoteAddr: el("remote-addr"),
+  remoteConnect: el("remote-connect"),
+  remoteDisconnect: el("remote-disconnect"),
   buttons: {
     run: el("btn-run"),
     runMain: el("btn-run-main"),
@@ -87,6 +91,9 @@ const store = createStore({
     exePath: "",
     gdbVersion: "",
     lastStopReason: "",
+    // remote is the server's word on whether gdb is attached to a target it
+    // did not start. Null until the first snapshot says otherwise.
+    remote: null,
   },
   selection: { thread: 0, frame: 0 },
 });
@@ -302,6 +309,13 @@ function handleEvent(msg) {
     case "symbolsInvalidated":
       symbols.refresh();
       break;
+    case "remoteChanged":
+      store.set("session.remote", msg.payload);
+      applyRemote(msg.payload);
+      log.system(msg.payload?.connected
+        ? `connected to ${msg.payload.address || "remote target"}`
+        : "disconnected from the remote target");
+      break;
     case "varsInvalidated":
       variables.invalidate();
       registers.clear();
@@ -357,7 +371,9 @@ function applySnapshot(hello) {
     "session.exePath": hello.exePath ?? "",
     "session.gdbVersion": hello.gdbVersion ?? "",
     "session.lastStopReason": describeReason(hello.lastStopReason),
+    "session.remote": hello.remote ?? null,
   });
+  applyRemote(hello.remote);
 
   breakpoints.set(hello.breakpoints ?? []);
   source.setBreakpoints(hello.breakpoints ?? []);
@@ -695,6 +711,71 @@ ui.confirmLoad.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") {
     ev.preventDefault();
     hideConfirmLoad();
+  }
+});
+
+// --- remote targets ---------------------------------------------------------
+
+// Connecting is `target remote <addr>` and disconnecting is `disconnect` —
+// the same commands the user would type. The buttons are a shortcut for
+// typing, not a separate mechanism, which is what keeps one source of truth
+// for a connection a console command can also make or break. It also means
+// the console below shows exactly what ran, including gdb's own error text
+// when a stub refuses, which is far more use than a generic failure.
+function applyRemote(remote) {
+  const connected = Boolean(remote?.connected);
+  ui.remoteState.dataset.remote = connected ? "on" : "off";
+  ui.remoteState.textContent = connected
+    ? `remote ${remote.address || "connected"}`
+    : "no target";
+  ui.remoteConnect.disabled = connected;
+  ui.remoteDisconnect.disabled = !connected;
+  if (connected && remote.address) ui.remoteAddr.value = remote.address;
+}
+
+function remoteBusy(text) {
+  ui.remoteState.dataset.remote = "busy";
+  ui.remoteState.textContent = text;
+  ui.remoteConnect.disabled = true;
+  ui.remoteDisconnect.disabled = true;
+}
+
+// runRemoteCommand sends one console command and lets the resulting
+// remoteChanged event settle the indicator. Nothing here predicts the outcome:
+// on failure the pill goes back to whatever the server still believes, which
+// for a refused connection is "no target".
+function runRemoteCommand(line, pending) {
+  const before = store.get("session.remote");
+  remoteBusy(pending);
+  send("console.exec", { line })
+    .catch(reportError)
+    .finally(() => {
+      // If the command changed anything, remoteChanged has already repainted
+      // this and applyRemote below is a no-op on identical state.
+      applyRemote(store.get("session.remote") ?? before);
+    });
+}
+
+ui.remoteConnect.addEventListener("click", () => {
+  const addr = ui.remoteAddr.value.trim();
+  if (!addr) {
+    setStatus("Enter an address such as localhost:1234.", true);
+    ui.remoteAddr.focus();
+    return;
+  }
+  runRemoteCommand(`target remote ${addr}`, "connecting…");
+});
+
+ui.remoteDisconnect.addEventListener("click", () => {
+  // disconnect, not detach: detach resumes the target, and someone who
+  // connected to look at a stopped machine rarely wants it to run on.
+  runRemoteCommand("disconnect", "disconnecting…");
+});
+
+ui.remoteAddr.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ui.remoteConnect.disabled) {
+    ev.preventDefault();
+    ui.remoteConnect.click();
   }
 });
 

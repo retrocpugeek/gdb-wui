@@ -596,6 +596,9 @@ func (s *Session) buildSnapshot() wire.Hello {
 	if s.files != nil {
 		h.ProjectRoot = s.files.Abs()
 	}
+	if s.st.remoteTarget {
+		h.Remote = &wire.RemoteTarget{Connected: true, Address: s.st.remoteAddr}
+	}
 	if s.st.runState == wire.RunStateStopped {
 		h.Frames = append([]wire.Frame(nil), s.st.frames...)
 		h.Locals = append([]wire.Variable(nil), s.st.locals...)

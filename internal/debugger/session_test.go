@@ -976,3 +976,76 @@ func TestThreadSelectStillHappensWhenItChanges(t *testing.T) {
 			"typed next would act on the wrong thread")
 	}
 }
+
+// The connect button and the connection indicator both hang off the server's
+// idea of whether a remote target exists, so that idea has to be reported and
+// has to be right.
+func TestRemoteStateIsReported(t *testing.T) {
+	h := start(t, ``, gdbfake.WithDefaultDone())
+
+	if snap := h.sess.Snapshot(); snap.Remote != nil {
+		t.Fatalf("Remote = %+v before connecting, want nil", snap.Remote)
+	}
+
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{
+		Line: "target remote 127.0.0.1:9999",
+	})
+	h.rec.wait(t, wire.EventRemoteChanged)
+
+	snap := h.sess.Snapshot()
+	if snap.Remote == nil || !snap.Remote.Connected {
+		t.Fatalf("Remote = %+v after connecting, want connected", snap.Remote)
+	}
+	if snap.Remote.Address != "127.0.0.1:9999" {
+		t.Errorf("Address = %q, want 127.0.0.1:9999", snap.Remote.Address)
+	}
+
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "disconnect"})
+	h.rec.wait(t, wire.EventRemoteChanged)
+	if snap := h.sess.Snapshot(); snap.Remote != nil {
+		t.Errorf("Remote = %+v after disconnecting, want nil", snap.Remote)
+	}
+}
+
+// A connection gdb refused must not be reported as one that succeeded. The
+// indicator would be a lie, and shutdown would try to detach from something
+// that was never attached — against a *local* inferior that means not killing
+// a process that should be killed.
+func TestRefusedRemoteIsNotConnected(t *testing.T) {
+	h := start(t, `
+> -interpreter-exec console "target remote 127.0.0.1:9"
+< ^error,msg="could not connect: Connection refused."
+> -break-list
+< ^done,BreakpointTable={nr_rows="0",nr_cols="6",body=[]}
+`)
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{
+		Line: "target remote 127.0.0.1:9",
+	})
+
+	if snap := h.sess.Snapshot(); snap.Remote != nil {
+		t.Errorf("Remote = %+v after a refused connection, want nil", snap.Remote)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = h.sess.Close(ctx)
+	for _, cmd := range h.fake.Received() {
+		if cmd == "-target-detach" {
+			t.Error("detached from a target that was never connected")
+		}
+	}
+}
+
+// Connecting twice must not emit a second remoteChanged: the indicator is
+// already right, and a UI that repaints on every console command would flicker.
+func TestRemoteChangedOnlyOnChange(t *testing.T) {
+	h := start(t, ``, gdbfake.WithDefaultDone())
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "target remote :9999"})
+	h.rec.wait(t, wire.EventRemoteChanged)
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "target remote :9999"})
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "print 1"})
+
+	if n := h.rec.count(wire.EventRemoteChanged); n != 1 {
+		t.Errorf("remoteChanged fired %d times, want 1", n)
+	}
+}

@@ -125,6 +125,17 @@
       <button class="tab" data-bottom="log" role="tab">Log</button>
       <span class="toolbar-gap"></span>
       <span id="log-hint" class="panel-sub"></span>
+      <span class="remote-bar">
+        <span id="remote-state" class="pill" data-remote="off" role="status"
+              aria-live="polite">no target</span>
+        <input id="remote-addr" class="addr-input remote-addr" type="text"
+               value="localhost:1234" aria-label="Remote target address"
+               spellcheck="false" autocomplete="off">
+        <button id="remote-connect" class="btn btn-small"
+                title="target remote — connect gdb to a gdbserver or emulator stub">connect</button>
+        <button id="remote-disconnect" class="btn btn-small"
+                title="disconnect — leave the target running">disconnect</button>
+      </span>
       <button id="btn-clear-log" class="btn btn-small" title="Clear">clear</button>
     </div>
     <div id="gdbconsole" class="panel-body term" data-bottom="gdb"></div>

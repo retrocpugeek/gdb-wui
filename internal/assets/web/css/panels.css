@@ -679,3 +679,20 @@
 /* The destructive choice is not the visually obvious one. Discarding a session
  * you spent ten minutes getting into should take a deliberate look. */
 #confirm-load-yes { border-color: var(--warn); }
+
+/* --- remote target bar ----------------------------------------------------- */
+
+/* Lives in the console's tab bar because that is where the equivalent typed
+ * commands go, and the console below shows exactly what the buttons ran. */
+.remote-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.remote-addr { min-width: 16ch; width: 18ch; }
+
+.pill[data-remote="off"] { color: var(--fg-2); }
+.pill[data-remote="on"]  { color: var(--ok); border-color: var(--ok); }
+.pill[data-remote="busy"] { color: var(--warn); border-color: var(--warn); }
