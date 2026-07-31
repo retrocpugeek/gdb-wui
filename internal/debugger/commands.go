@@ -324,9 +324,13 @@ func (s *Session) frameSelect(r *request) (any, *wire.Error) {
 	}
 
 	// Programmatic commands always pass --thread/--frame, so this selection is
-	// not needed for them. It is issued anyway for the benefit of console
-	// commands the user types, which do use gdb's own notion of selection.
-	if _, werr := s.send(r.ctx, fmt.Sprintf("-thread-select %d", thread)); werr != nil {
+	// not needed for them. It is issued for the benefit of console commands the
+	// user types, which do use gdb's own notion of selection — but only when it
+	// would actually change something. Re-selecting the current thread makes gdb
+	// send a T packet to the target for nothing, and on a remote stub that is
+	// either wasted traffic or, for a minimal stub without T, a puzzling
+	// "command not supported" in the user's emulator log.
+	if werr := s.selectThreadIfNeeded(r.ctx, thread); werr != nil {
 		return nil, werr
 	}
 	if _, werr := s.send(r.ctx, fmt.Sprintf("-stack-select-frame %d", req.Frame)); werr != nil {

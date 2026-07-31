@@ -913,3 +913,66 @@ func TestDetachClearsRemoteFlag(t *testing.T) {
 		}
 	}
 }
+
+// TestFrameSelectDoesNotReselectTheThread is about noise, and about a user
+// hunting a problem that is not there.
+//
+// -thread-select is never needed for this server's own commands, which always
+// pass --thread. Issuing it anyway makes gdb probe the target with a T packet;
+// a minimal remote stub that does not implement T answers empty and logs
+// "command not supported", which is exactly the sort of message somebody
+// reasonably assumes means their frame click failed.
+func TestFrameSelectDoesNotReselectTheThread(t *testing.T) {
+	h := start(t, loadTranscript+stopTranscript+`
+> -stack-select-frame 1
+< ^done
+> -stack-list-variables --thread 1 --frame 1 --simple-values
+< ^done,variables=[]
+`)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	stopped := h.rec.wait(t, wire.EventStopped).(wire.Stopped)
+
+	h.mustDo(wire.TypeFrameSelect, wire.FrameSelectRequest{
+		Frame: 1, StopSeq: stopped.StopSeq,
+	})
+
+	for _, cmd := range h.fake.Received() {
+		if strings.HasPrefix(cmd, "-thread-select") {
+			t.Errorf("selecting a frame re-selected the already-current thread (%q); "+
+				"that is a wasted round-trip, and a T packet a minimal stub logs as "+
+				"unsupported", cmd)
+		}
+	}
+}
+
+// TestThreadSelectStillHappensWhenItChanges is the other half: the command is
+// skipped only when it would do nothing.
+func TestThreadSelectStillHappensWhenItChanges(t *testing.T) {
+	h := start(t, loadTranscript+stopTranscript+`
+> -thread-select 2
+< ^done
+> -stack-list-frames --thread 2 0 63
+< ^done,stack=[frame={level="0",addr="0x2000",func="worker"}]
+> -stack-list-arguments --thread 2 --simple-values 0 63
+< ^done,stack-args=[frame={level="0",args=[]}]
+> -stack-list-variables --thread 2 --frame 0 --simple-values
+< ^done,variables=[]
+`)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventStopped)
+
+	h.mustDo(wire.TypeThreadSelect, wire.ThreadSelectRequest{Thread: 2})
+
+	var selected bool
+	for _, cmd := range h.fake.Received() {
+		if cmd == "-thread-select 2" {
+			selected = true
+		}
+	}
+	if !selected {
+		t.Error("switching to a different thread did not tell gdb; a console command " +
+			"typed next would act on the wrong thread")
+	}
+}

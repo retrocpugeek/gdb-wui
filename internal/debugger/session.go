@@ -150,6 +150,12 @@ type state struct {
 	// else's session.
 	remoteTarget bool
 	remoteAddr   string
+
+	// gdbSelThread is the thread gdb itself currently has selected. Tracked so
+	// -thread-select can be skipped when it would be a no-op: it makes gdb send
+	// a T ("is thread alive?") packet to the target, which is pure noise on a
+	// single-threaded one and which minimal stubs log as unsupported.
+	gdbSelThread int
 }
 
 // request is one browser request awaiting the actor.

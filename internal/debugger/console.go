@@ -118,6 +118,11 @@ func (s *Session) resyncAfterConsole(ctx context.Context) []string {
 		// The user may have typed "thread 2" or "frame 1"; ask gdb what it
 		// thinks is selected rather than assuming it is still ours.
 		if rec, werr := s.send(ctx, "-thread-info"); werr == nil {
+			if id, ok := rec.Results.Int("current-thread-id"); ok {
+				// gdb's own selection is now whatever the typed command made
+				// it; record that so the next select is not skipped wrongly.
+				s.st.gdbSelThread = id
+			}
 			if id, ok := rec.Results.Int("current-thread-id"); ok && id != s.st.selThread {
 				s.st.selThread = id
 				s.st.selFrame = 0
@@ -127,6 +132,27 @@ func (s *Session) resyncAfterConsole(ctx context.Context) []string {
 		}
 	}
 	return done
+}
+
+// selectThreadIfNeeded points gdb's own selection at a thread, skipping the
+// command when gdb is already there.
+//
+// -thread-select is not needed for anything this server sends: every
+// programmatic command passes --thread explicitly. It exists so that a command
+// the *user* types at the console acts on the thread they clicked. Issuing it
+// when nothing would change costs a round-trip and, against a remote target,
+// makes gdb probe the stub with a T packet — which minimal stubs answer with an
+// empty reply and a "command not supported" line in their log, leaving the user
+// hunting a problem that is not there.
+func (s *Session) selectThreadIfNeeded(ctx context.Context, thread int) *wire.Error {
+	if thread <= 0 || thread == s.st.gdbSelThread {
+		return nil
+	}
+	if _, werr := s.send(ctx, fmt.Sprintf("-thread-select %d", thread)); werr != nil {
+		return werr
+	}
+	s.st.gdbSelThread = thread
+	return nil
 }
 
 func (s *Session) broadcastSelection(ctx context.Context) {
@@ -344,8 +370,9 @@ func (s *Session) threadSelect(r *request) (any, *wire.Error) {
 
 	// Tell gdb too. Programmatic commands always pass --thread, so this is not
 	// needed for them; it is for console commands the user types next, which do
-	// use gdb's own selection.
-	if _, werr := s.send(r.ctx, fmt.Sprintf("-thread-select %d", req.Thread)); werr != nil {
+	// use gdb's own selection. Skipped when it would be a no-op — see
+	// selectThreadIfNeeded.
+	if werr := s.selectThreadIfNeeded(r.ctx, req.Thread); werr != nil {
 		return nil, werr
 	}
 	s.st.selThread = req.Thread

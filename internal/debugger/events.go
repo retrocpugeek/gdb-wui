@@ -152,6 +152,9 @@ func (s *Session) onStopped(rec mi.Record) {
 	s.st.runState = wire.RunStateStopped
 	if id := rec.Results.Str("thread-id"); id != "" {
 		s.st.selThread = atoiSafe(id)
+		// gdb selects the stopping thread itself, so its selection is now this
+		// one whether we asked or not.
+		s.st.gdbSelThread = s.st.selThread
 	}
 	s.st.selFrame = 0
 
