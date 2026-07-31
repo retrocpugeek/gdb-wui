@@ -59,6 +59,20 @@ export function createSymbols({ element, input, kindSelect, countEl, onQuery, on
     element.replaceChildren(frag);
   }
 
+  // paintSelection moves the highlight by touching two attributes.
+  //
+  // Rebuilding the list here instead would be a bug, not just waste: a real
+  // double-click is click, click, dblclick, and the browser delivers dblclick
+  // to the node the second click hit. Replacing the rows on the first click
+  // detaches that node, the dblclick lands on nothing, and the jump silently
+  // never happens.
+  function paintSelection() {
+    element.querySelectorAll(".sym-row").forEach((row, i) => {
+      if (i === selected) row.setAttribute("aria-selected", "true");
+      else row.removeAttribute("aria-selected");
+    });
+  }
+
   function location(sym) {
     if (sym.file) return `${sym.file}:${sym.line}`;
     if (sym.gdbPath) return `${baseName(sym.gdbPath)}:${sym.line}`;
@@ -124,14 +138,14 @@ export function createSymbols({ element, input, kindSelect, countEl, onQuery, on
     const sym = symbols[index];
     if (!sym) return;
     selected = index;
-    render();
+    paintSelection();
     onJump?.(sym);
   }
 
   function move(delta) {
     if (symbols.length === 0) return;
     selected = Math.max(0, Math.min(symbols.length - 1, selected + delta));
-    render();
+    paintSelection();
     element.querySelector('[aria-selected="true"]')
       ?.scrollIntoView({ block: "nearest" });
   }
@@ -140,7 +154,7 @@ export function createSymbols({ element, input, kindSelect, countEl, onQuery, on
     const row = ev.target.closest(".sym-row");
     if (!row) return;
     selected = Number(row.dataset.index);
-    render();
+    paintSelection();
   });
 
   element.addEventListener("dblclick", (ev) => {

@@ -711,7 +711,12 @@ Addresses are trimmed of the zero padding gdb applies
 (`0x0000000000001060` → `0x1060`) to match every other panel.
 
 The cache is dropped, and `symbolsInvalidated` emitted, when a program is
-loaded, when gdb is restarted, and when a console command that changes symbols
-is typed — `file`, `symbol-file`, `add-symbol-file`, `core-file`, `load`,
+loaded, when gdb is restarted, when a shared library is loaded or unloaded, and
+when a console command that changes symbols is typed — `file`, `symbol-file`, `add-symbol-file`, `core-file`, `load`,
 `remove-symbol-file`. That last case is not an afterthought: the remote-target
 workflow loads symbols by typing `file …`, never through `exe.load`.
+
+`=library-loaded` arrives dozens of times per run, so it only marks the cache
+stale; the single `symbolsInvalidated` goes out just before the `stopped` event
+that ends the run. By the time a client knows the program has stopped, the
+symbol table it is about to query is already the new one.

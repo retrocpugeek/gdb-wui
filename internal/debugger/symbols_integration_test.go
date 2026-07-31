@@ -313,3 +313,39 @@ func TestDisassembleBySymbolNameFollowsRelocation(t *testing.T) {
 		t.Log("note: the link-time range was readable; relocation may be disabled here")
 	}
 }
+
+// Shared libraries bring their symbols with them. A pane that still lists only
+// the 27 symbols the executable had before it ran is not showing what the
+// program contains, which is the one thing it claims to show.
+func TestSymbolsPickUpSharedLibraries(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	before := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{}).(wire.SymbolsList)
+
+	h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "hello.c", Line: lineMainInit})
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	// The invalidation goes out just before the stop: by the time a client has
+	// been told the program stopped, the symbol table it is about to query is
+	// already the new one.
+	h.rec.wait(t, wire.EventSymbolsInvalidated)
+	h.rec.wait(t, wire.EventStopped)
+
+	after := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{}).(wire.SymbolsList)
+	if after.Available <= before.Available {
+		t.Errorf("available went %d -> %d; libc's symbols were not picked up",
+			before.Available, after.Available)
+	}
+
+	// The program's own symbols must survive the refill, and an exact match
+	// must still outrank the crowd of libc names that now contains it.
+	hit := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "add"}).(wire.SymbolsList)
+	if len(hit.Symbols) == 0 || hit.Symbols[0].Name != "add" {
+		t.Fatalf("add is no longer the top hit among %d matches", hit.Matched)
+	}
+	if hit.Symbols[0].File != "hello.c" {
+		t.Errorf("top hit is %q from %q, not the program's own add",
+			hit.Symbols[0].Name, hit.Symbols[0].File)
+	}
+}

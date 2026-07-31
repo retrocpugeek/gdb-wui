@@ -213,6 +213,13 @@ func (s *Session) onStopped(rec mi.Record) {
 		s.cfg.Events.Broadcast(wire.EventWatchesChanged, watches)
 	}
 
+	// Libraries loaded during the run brought their symbols with them. Tell the
+	// UI once, now that the run is over, rather than dozens of times during it.
+	if s.st.symbolsDirty {
+		s.st.symbolsDirty = false
+		s.cfg.Events.Broadcast(wire.EventSymbolsInvalidated, map[string]any{})
+	}
+
 	s.publish()
 	s.cfg.Events.Broadcast(wire.EventStopped, out)
 }
@@ -293,8 +300,13 @@ func (s *Session) onNotify(rec mi.Record) {
 		}
 
 	case "library-loaded", "library-unloaded":
-		// Suppressed: one per shared object, dozens per run, and nothing in
-		// the UI consumes them.
+		// Not forwarded — one per shared object, dozens per run, and no panel
+		// consumes them individually. They do mean the symbol table has grown
+		// or shrunk, though, so mark the cache stale. Dropping it here is free;
+		// refetching happens on the next request, and the one broadcast that
+		// tells the UI to ask goes out at the stop, not once per library.
+		s.st.symbols, s.st.symbolsRead = nil, false
+		s.st.symbolsDirty = true
 	}
 }
 

@@ -141,6 +141,10 @@ type state struct {
 	// every keystroke in the filter box would re-ask gdb for nothing.
 	symbols     []wire.Symbol
 	symbolsRead bool
+	// symbolsDirty records that a shared library came or went since the last
+	// stop, so one invalidation can be sent at the stop instead of one per
+	// library during the run.
+	symbolsDirty bool
 
 	// inferiorPID is the debuggee's process id, from =thread-group-started. It
 	// is what inferior.signal targets.
