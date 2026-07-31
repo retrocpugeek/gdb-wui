@@ -11,6 +11,10 @@ go build ./cmd/gdb-wui
 It prints a URL and opens a browser at it. Pick an executable from the file tree,
 click a line number to set a breakpoint, and step.
 
+Clicking another ELF while a program is being debugged asks first — loading one
+replaces the inferior, and a stray click on the wrong row would otherwise throw
+away a live session.
+
 > ## ⚠ It runs your programs as you
 >
 > gdb-wui starts arbitrary binaries with your full privileges. That is what a

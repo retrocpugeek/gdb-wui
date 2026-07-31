@@ -44,6 +44,10 @@ const ui = {
   disasm: el("disasm"),
   memory: el("memory"),
   memAddr: el("mem-addr"),
+  confirmLoad: el("confirm-load"),
+  confirmLoadText: el("confirm-load-text"),
+  confirmLoadYes: el("confirm-load-yes"),
+  confirmLoadNo: el("confirm-load-no"),
   locate: el("locate"),
   locateText: el("locate-text"),
   locatePick: el("locate-pick"),
@@ -258,6 +262,8 @@ function handleEvent(msg) {
       break;
     case "exited":
       execBusy = false;
+      // The session the prompt was guarding has ended on its own.
+      hideConfirmLoad();
       store.patch({
         "session.runState": msg.payload.runState,
         "session.lastStopReason": exitText(msg.payload),
@@ -278,6 +284,9 @@ function handleEvent(msg) {
       });
       log.system(`loaded ${msg.payload.path}`);
       symbols.refresh();
+      // Whatever the prompt was protecting is already gone — possibly because
+      // another browser tab loaded something.
+      hideConfirmLoad();
       break;
     case "breakpointsChanged":
       breakpoints.set(msg.payload.breakpoints);
@@ -622,6 +631,27 @@ el("btn-clear-log").addEventListener("click", () => {
 // before the click.
 tree.setFileHandler((path, kind) => {
   if (kind !== "elf") return false;
+  // Loading a program replaces the inferior, so a stray click on the wrong
+  // row throws away a live session — the process, its stack, and wherever the
+  // user had painstakingly got it to. Ask first, and only when there is
+  // something to lose: with no program loaded, or after one has exited, the
+  // click is unambiguous and a prompt would just be in the way.
+  if (hasLiveInferior()) {
+    askBeforeLoad(path);
+    return true;
+  }
+  loadExe(path);
+  return true;
+});
+
+// hasLiveInferior reports whether a process exists to be lost. "exited" does
+// not count: the program is already gone, and only its corpse is on screen.
+function hasLiveInferior() {
+  const state = store.get("session.runState");
+  return state === "stopped" || state === "running";
+}
+
+function loadExe(path) {
   send("exe.load", { path })
     .then(() => setStatus(`loaded ${path}`))
     .catch((err) => {
@@ -633,7 +663,39 @@ tree.setFileHandler((path, kind) => {
       }
       reportError(err);
     });
-  return true;
+}
+
+function askBeforeLoad(path) {
+  const current = store.get("session.exePath");
+  const running = store.get("session.runState") === "running";
+  const what = current ? `${current} is still ${running ? "running" : "being debugged"}`
+                       : `a program is still ${running ? "running" : "being debugged"}`;
+  ui.confirmLoadText.textContent =
+    `${what}. Loading ${path} will end that session.`;
+  ui.confirmLoad.dataset.path = path;
+  ui.confirmLoad.classList.remove("is-hidden");
+  // Focus the cancelling button, not the destructive one: Enter and Space are
+  // how a keyboard user dismisses something unexpected, and they should not
+  // detonate it.
+  ui.confirmLoadNo.focus();
+}
+
+function hideConfirmLoad() {
+  ui.confirmLoad.classList.add("is-hidden");
+  delete ui.confirmLoad.dataset.path;
+}
+
+ui.confirmLoadYes.addEventListener("click", () => {
+  const path = ui.confirmLoad.dataset.path;
+  hideConfirmLoad();
+  if (path) loadExe(path);
+});
+ui.confirmLoadNo.addEventListener("click", hideConfirmLoad);
+ui.confirmLoad.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") {
+    ev.preventDefault();
+    hideConfirmLoad();
+  }
 });
 
 createKeymap({

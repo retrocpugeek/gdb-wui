@@ -77,6 +77,12 @@
       <select id="locate-pick" class="locate-pick" aria-label="Choose the matching local file"></select>
       <button id="locate-apply" class="btn btn-small">use this file</button>
     </div>
+    <div id="confirm-load" class="confirm-bar is-hidden" role="alertdialog"
+         aria-labelledby="confirm-load-text">
+      <span id="confirm-load-text"></span>
+      <button id="confirm-load-yes" class="btn btn-small">load anyway</button>
+      <button id="confirm-load-no" class="btn btn-small">keep debugging</button>
+    </div>
     <div id="source" class="panel-body source" data-center="source" tabindex="0"></div>
     <div id="disasm" class="panel-body asm is-hidden" data-center="disasm" tabindex="0"></div>
     <div id="memory" class="panel-body mem is-hidden" data-center="memory" tabindex="0"></div>

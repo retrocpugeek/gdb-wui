@@ -657,3 +657,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* --- confirm bar ----------------------------------------------------------- */
+
+/* Shown before an action that would throw away a live debug session. Inline
+ * rather than a modal, and in the same place as the locate bar, because the
+ * thing at risk — the program being debugged — is named right next to it. */
+.confirm-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--pad);
+  padding: 4px var(--pad);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--warn);
+  color: var(--fg-0);
+  flex: 0 0 auto;
+}
+
+#confirm-load-text { flex: 1 1 auto; }
+
+/* The destructive choice is not the visually obvious one. Discarding a session
+ * you spent ten minutes getting into should take a deliberate look. */
+#confirm-load-yes { border-color: var(--warn); }
