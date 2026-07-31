@@ -213,6 +213,20 @@ func TestProtocolDocumented(t *testing.T) {
 			t.Errorf("error code %q is not documented in docs/protocol.md", code)
 		}
 	}
+
+	// The other direction, which is how the Reserved list quietly went stale:
+	// six names sat under "Requesting one today returns `unsupported`" long
+	// after they had been implemented. Documenting a working feature as absent
+	// is as misleading as leaving one undocumented.
+	if _, after, found := strings.Cut(text, "### Reserved"); found {
+		reserved, _, _ := strings.Cut(after, "\n## ")
+		for _, typ := range wire.RequestTypes {
+			if strings.Contains(reserved, "`"+typ+"`") {
+				t.Errorf("request type %q is implemented but still listed under "+
+					"Reserved in docs/protocol.md", typ)
+			}
+		}
+	}
 }
 
 func dirOf(p string) string {

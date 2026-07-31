@@ -138,11 +138,9 @@ longer exists.
 These names are fixed now so the frontend and the docs do not have to be renamed
 later. Requesting one today returns `unsupported`.
 
-`exe.unload` · `exec.stepi` `exec.nexti` `exec.until` `exec.return` ·
+`exe.unload` · `exec.until` `exec.return` ·
 `bp.setFunction` `bp.setAddress` `bp.setWatch` `bp.setCondition`
-`bp.setIgnoreCount` · `vars.setFormat` `vars.assign` ·
-`mem.read` · `path.substitute`
-`path.addDir` `path.list`
+`bp.setIgnoreCount` · `vars.setFormat` `vars.assign`
 
 ## Events
 

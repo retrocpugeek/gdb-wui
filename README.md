@@ -66,6 +66,7 @@ breakpoints survive.
 | `-project DIR` | The directory to browse. Nothing outside it is served. |
 | `-exe PATH` | Load a program at startup, relative to `-project`. |
 | `-addr ADDR` | Listen address; must be loopback (default `127.0.0.1:0`). |
+| `-listen-anywhere` | Permit a non-loopback address. Read the warning above first. |
 | `-gdb PATH` | Which gdb to run (default `gdb`). Use `gdb-multiarch` for a foreign architecture. |
 | `-no-gdb` | Browse the project without starting a debugger. |
 | `-open` | Open a browser at the URL (default true; `-open=false` to suppress). |
@@ -77,10 +78,20 @@ breakpoints survive.
 The **Symbols** pane under the file tree lists the loaded program's functions
 and globals. Type in the filter box to narrow it, and double-click a symbol to
 jump: to the source line if it has debug info, to the disassembly if it is a
-function with only an address, or to the memory viewer if it is a variable
-with only an address. `fn` and `var` sigils say which is which,
-and dimmed rows are the ones with no debug info. It works on a stripped binary,
-where the ELF symbol table is the only map you have.
+function with only an address, or to the memory viewer if it is a variable with
+only an address. `fn` and `var` sigils say which is which, and dimmed rows are
+the ones with no debug info. It works on a stripped binary, where the ELF symbol
+table is the only map you have.
+
+**Right-click an ELF** in the file tree for the three things you can do with
+one: *Load program* (`file` — the program to run, and the only thing that sets
+the architecture), *Replace symbols* (`symbol-file`), and *Add symbols…*
+(`add-symbol-file` with an offset, for an image that does not run where it was
+linked).
+
+In the source view the green bar is the program counter and a blue one marks an
+outer frame you have selected in the call stack, so inspecting a caller never
+hides where the program actually stopped.
 
 Keys: **F5** continue, **F6** pause, **F9** toggle breakpoint, **F10** step over,
 **F11** step into, **Shift+F11** step out, **Alt+F10/F11** instruction step,
@@ -94,7 +105,7 @@ Inside a terminal panel only function keys and `Ctrl+Shift+…` are intercepted,
 | Works | Not supported |
 |---|---|
 | C and C++ with `-g` | Rust, Go, or any other language |
-| Stripped binaries, disassembly-first | Remote targets and `gdbserver` |
+| Stripped binaries, disassembly-first | Launching `gdbserver` or an emulator for you |
 | Multiple threads, all-stop, thread switching | Non-stop mode, per-thread run control |
 | Breakpoints by source line, conditions | Watchpoints, catchpoints, tracepoints |
 | Locals, nested structs, watch expressions | Editing values, register writes, memory writes |
@@ -103,20 +114,24 @@ Inside a terminal panel only function keys and `Ctrl+Shift+…` are intercepted,
 | The gdb console, with tab completion | Core dumps, attach-to-pid |
 | A program with its own terminal | Full terminal emulation for curses programs |
 | Several browser tabs on one session | Multi-user, auth beyond loopback, TLS |
-| Remote stubs *by hand*, via the console | First-class remote/`gdbserver` support |
+| Remote targets: connect, disconnect, symbols-only loading | Auto-detecting a foreign target's architecture |
 | | Follow-fork, multi-inferior |
 | | Windows, macOS |
 
-**Remote targets** are not a supported feature, but they work if you drive them
-yourself. The console's tab bar has an address box with **connect** and
-**disconnect** buttons, and a pill showing whether gdb is attached. Those
-buttons run `target remote <address>` and `disconnect` — the same commands you
-would type, so the console shows exactly what ran and gdb's own error text when
-a stub refuses.
+## Remote targets
+
+A gdbserver, an emulator's stub, a board on the end of a probe. The console's
+tab bar has an address box with **connect** and **disconnect** buttons and a
+pill showing whether gdb is attached. Those buttons run `target remote
+<address>` and `disconnect` — the same commands you would type, so the console
+shows exactly what ran, and gdb's own error text when a stub refuses.
+
+Three things still go through the console, because they have no UI:
+`set architecture`, `set endian`, and `set sysroot`. Everything else — loading
+the program, loading symbols, connecting — has a control.
 
 Start with a gdb that knows the architecture and a project containing the
-symbols. Everything except the connection itself still goes through the
-console:
+symbols:
 
 ```sh
 gdb-wui -gdb gdb-multiarch -project ~/where/the/symbols/are
@@ -125,7 +140,7 @@ gdb-wui -gdb gdb-multiarch -project ~/where/the/symbols/are
 ```
 set architecture mips:isa64r2
 set endian big
-file /path/to/symbols
+file /path/to/symbols           ← or click the ELF in the file tree
 target remote 127.0.0.1:9999    ← or use the connect button
 ```
 
@@ -158,8 +173,10 @@ for one that does not. Attaching to a running process may also need
 file transfer, a local copy otherwise.
 
 Connecting emits a stop, so the stack, disassembly, registers and stepping all
-light up. **Run**, **Run→main** and **Run→entry** do not apply — the program is
-already running under the stub — but continue, pause, step and `stepi` do.
+light up. Continue, pause, step and `stepi` work as usual. **Run**, **Run→main**
+and **Run→entry** do not apply — the program is already running under the stub —
+though they stay clickable, and pressing one asks gdb to start the program over,
+which is rarely what you want against something you merely connected to.
 Shutting gdb-wui down **detaches** rather than killing, so the far end survives;
 note that detaching resumes it, because that is what the remote protocol's
 detach does.
@@ -183,6 +200,8 @@ Five layers, each ignorant of the ones above it:
 
 The protocol is documented in [docs/protocol.md](docs/protocol.md), and a test
 fails if that document and the code disagree.
+[docs/findings.md](docs/findings.md) records the GDB behaviours this had to
+establish by measurement; test comments cite them by number.
 
 ## Development
 

@@ -119,7 +119,7 @@ WANTED = [
 ]
 
 # Reproduce documented findings that are awkward to capture on demand. Each is
-# a shape gdb really produces; see the findings list in PLAN.md.
+# a shape gdb really produces; see docs/findings.md.
 SYNTHETIC = [
     # finding 3: the debuggee's stdout lands in the MI stream verbatim.
     ("garbage-inferior-line", "total=3 argc=1"),
