@@ -254,7 +254,7 @@ func (s *Session) deleteAllVarobjs(ctx context.Context) {
 	}
 	s.vars = newVarRegistry()
 	if len(roots) > 0 {
-		s.cfg.Events.Broadcast(wire.EventVarsInvalidated, map[string]any{})
+		s.emit(wire.EventVarsInvalidated, map[string]any{})
 	}
 }
 

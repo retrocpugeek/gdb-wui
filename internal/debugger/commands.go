@@ -90,7 +90,7 @@ func (s *Session) exeLoad(r *request) (any, *wire.Error) {
 	s.reconcileBreakpoints(r.ctx)
 
 	out := wire.ExeLoaded{Path: req.Path, RunState: s.st.runState}
-	s.cfg.Events.Broadcast(wire.EventExeLoaded, out)
+	s.emit(wire.EventExeLoaded, out)
 	return out, nil
 }
 
@@ -356,7 +356,7 @@ func (s *Session) frameSelect(r *request) (any, *wire.Error) {
 		src := f.Source
 		sel.Source = &src
 	}
-	s.cfg.Events.Broadcast(wire.EventSelectionChanged, sel)
+	s.emit(wire.EventSelectionChanged, sel)
 	return sel, nil
 }
 
@@ -508,7 +508,7 @@ func (s *Session) breakpointListPayload() wire.BreakpointList {
 }
 
 func (s *Session) broadcastBreakpoints() {
-	s.cfg.Events.Broadcast(wire.EventBreakpointsChanged, s.breakpointListPayload())
+	s.emit(wire.EventBreakpointsChanged, s.breakpointListPayload())
 }
 
 func atoiSafe(s string) int {

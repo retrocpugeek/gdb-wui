@@ -698,3 +698,24 @@ session persistence, and Windows/macOS (the pty and `/proc` assumptions won't po
     destructively, not politely. So the ordering rule is real and the UI warns
     about it — and the trap is specifically that the symbols pane *looks* like
     it did the job.
+
+24. **An event must not be broadcast before the snapshot describes it.**
+    `serve()` publishes the snapshot only *after* `dispatch()` returns, so a
+    handler that broadcast from inside announced a change the snapshot did not
+    yet carry. A client acting on the event — or a second browser connecting in
+    that window and being handed `hello` — could be told a program had loaded
+    and simultaneously given a snapshot saying none had.
+
+    It reproduced about one run in fifty, which is why it surfaced as a CI
+    flake (`snapshot exePath = ""`) rather than a bug, and why a test asserting
+    from the test goroutine cannot catch it reliably. The deterministic test
+    samples the snapshot *inside* the broadcast, which is the only vantage
+    point where the ordering is observable.
+
+    Fixed by routing every broadcast through `emit`, which publishes first.
+    The catch is that building a snapshot reads everything the actor owns:
+    routing the terminal pump through it tripped the race detector at once,
+    because that runs on its own goroutine. Hence `emitOffActor` for the two
+    genuinely off-actor events — inferior output and gdb dying — whose payloads
+    carry no session state. A source-level test enforces that nothing calls
+    `Broadcast` directly.

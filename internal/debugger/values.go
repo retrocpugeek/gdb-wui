@@ -178,7 +178,7 @@ func (s *Session) watchAdd(r *request) (any, *wire.Error) {
 	}
 	s.st.watches = append(s.st.watches, watch{path: path, expr: expr})
 	out := s.watchList()
-	s.cfg.Events.Broadcast(wire.EventWatchesChanged, out)
+	s.emit(wire.EventWatchesChanged, out)
 	_ = v
 	return out, nil
 }
@@ -208,7 +208,7 @@ func (s *Session) watchRemove(r *request) (any, *wire.Error) {
 		return nil, wire.NewError(wire.CodeNotFound, "no such watch")
 	}
 	out := s.watchList()
-	s.cfg.Events.Broadcast(wire.EventWatchesChanged, out)
+	s.emit(wire.EventWatchesChanged, out)
 	return out, nil
 }
 

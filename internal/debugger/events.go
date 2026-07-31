@@ -12,7 +12,7 @@ import (
 // onRecord handles one MI record inside the actor.
 func (s *Session) onRecord(rec mi.Record) {
 	if s.cfg.MILog && rec.Raw != "" {
-		s.cfg.Events.Broadcast(wire.EventMI, wire.MILogEntry{Direction: "in", Text: rec.Raw})
+		s.emit(wire.EventMI, wire.MILogEntry{Direction: "in", Text: rec.Raw})
 	}
 
 	switch rec.Type {
@@ -21,7 +21,7 @@ func (s *Session) onRecord(rec mi.Record) {
 	case mi.RecNotify:
 		s.onNotify(rec)
 	case mi.RecConsole, mi.RecLog, mi.RecTarget:
-		s.cfg.Events.Broadcast(wire.EventConsole, map[string]string{
+		s.emit(wire.EventConsole, map[string]string{
 			"text":   rec.Text,
 			"stream": streamName(rec.Type),
 		})
@@ -33,7 +33,7 @@ func (s *Session) onRecord(rec mi.Record) {
 			s.logf("unparseable MI line: %q (%v)", rec.Text, rec.Err)
 		}
 		if rec.Text != "" {
-			s.cfg.Events.Broadcast(wire.EventConsole, map[string]string{
+			s.emit(wire.EventConsole, map[string]string{
 				"text":   rec.Text + "\n",
 				"stream": "inferior",
 			})
@@ -82,8 +82,7 @@ func (s *Session) setRunning(thread int) {
 	// means a panel cannot render stale values while the inferior runs.
 	s.st.frames = nil
 	s.st.locals = nil
-	s.publish()
-	s.cfg.Events.Broadcast(wire.EventRunning, wire.Running{
+	s.emit(wire.EventRunning, wire.Running{
 		ThreadID: thread,
 		RunState: s.st.runState,
 	})
@@ -117,8 +116,7 @@ func (s *Session) setExited(code *int, signal string) {
 	s.st.frames = nil
 	s.st.locals = nil
 	s.st.selFrame = 0
-	s.publish()
-	s.cfg.Events.Broadcast(wire.EventExited, wire.Exited{
+	s.emit(wire.EventExited, wire.Exited{
 		ExitCode: code,
 		Signal:   signal,
 		RunState: s.st.runState,
@@ -210,18 +208,17 @@ func (s *Session) onStopped(rec mi.Record) {
 	// recreated here, so the panel is populated by the time the event lands.
 	s.recreateWatches(ctx)
 	if watches := s.watchList(); len(watches.Watches) > 0 {
-		s.cfg.Events.Broadcast(wire.EventWatchesChanged, watches)
+		s.emit(wire.EventWatchesChanged, watches)
 	}
 
 	// Libraries loaded during the run brought their symbols with them. Tell the
 	// UI once, now that the run is over, rather than dozens of times during it.
 	if s.st.symbolsDirty {
 		s.st.symbolsDirty = false
-		s.cfg.Events.Broadcast(wire.EventSymbolsInvalidated, map[string]any{})
+		s.emit(wire.EventSymbolsInvalidated, map[string]any{})
 	}
 
-	s.publish()
-	s.cfg.Events.Broadcast(wire.EventStopped, out)
+	s.emit(wire.EventStopped, out)
 }
 
 // parseExitCode reads gdb's octal exit code.
@@ -294,7 +291,7 @@ func (s *Session) onNotify(rec mi.Record) {
 		defer cancel()
 		if threads, werr := s.fetchThreads(ctx); werr == nil {
 			s.st.threads = threads
-			s.cfg.Events.Broadcast(wire.EventThreadsChanged, wire.ThreadsList{
+			s.emit(wire.EventThreadsChanged, wire.ThreadsList{
 				StopSeq: s.st.stopSeq, Threads: threads, Selected: s.st.selThread,
 			})
 		}

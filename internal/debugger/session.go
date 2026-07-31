@@ -291,7 +291,7 @@ func (s *Session) watchGDB() {
 	if err := s.client.DeadErr(); err != nil {
 		reason = err.Error()
 	}
-	s.cfg.Events.Broadcast(wire.EventGDBDead, wire.GDBDead{
+	s.emitOffActor(wire.EventGDBDead, wire.GDBDead{
 		Reason: reason,
 		Stderr: s.client.StderrTail(),
 	})
@@ -536,7 +536,7 @@ func (s *Session) gate(typ string) *wire.Error {
 // send issues one command with the session's timeout, from inside the actor.
 func (s *Session) send(ctx context.Context, cmd string) (mi.Record, *wire.Error) {
 	if s.cfg.MILog {
-		s.cfg.Events.Broadcast(wire.EventMI, wire.MILogEntry{Direction: "out", Text: cmd})
+		s.emit(wire.EventMI, wire.MILogEntry{Direction: "out", Text: cmd})
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.cfg.CommandTimeout)
 	defer cancel()
@@ -582,6 +582,37 @@ func (s *Session) checkStopSeq(got uint64) *wire.Error {
 func (s *Session) publish() {
 	snap := s.buildSnapshot()
 	s.snapshot.Store(&snap)
+}
+
+// emit refreshes the snapshot and then broadcasts. Actor goroutine only.
+//
+// The order is the point, and it is not an optimisation detail. serve()
+// publishes only *after* dispatch returns, so a handler that broadcast
+// directly would announce a change the snapshot did not yet carry. A client
+// acting on the event — or a browser connecting in that window and getting
+// `hello` — would be told the program had loaded and simultaneously handed a
+// snapshot saying none had. Rare, but it is the sort of disagreement that
+// costs an afternoon to track down; CI caught it as a flaky exePath.
+//
+// Building a snapshot reads the actor's state, so this is safe only on the
+// actor goroutine. Anything else must use emitOffActor.
+func (s *Session) emit(event string, payload any) {
+	s.publish()
+	s.cfg.Events.Broadcast(event, payload)
+}
+
+// emitOffActor broadcasts from a goroutine that does not own the state.
+//
+// It cannot publish, because building a snapshot means reading everything the
+// actor owns and nothing here holds that goroutine still. That is a real
+// constraint rather than a caution: routing the terminal pump through emit
+// tripped the race detector immediately.
+//
+// Only valid for events whose payload is self-contained and absent from the
+// snapshot — the debuggee's terminal output, and gdb having died. An event
+// that carries session state must be emitted by the actor.
+func (s *Session) emitOffActor(event string, payload any) {
+	s.cfg.Events.Broadcast(event, payload)
 }
 
 func (s *Session) buildSnapshot() wire.Hello {
@@ -770,8 +801,7 @@ func (s *Session) restartGDB(r *request) (any, *wire.Error) {
 		}
 	}
 
-	s.publish()
-	s.cfg.Events.Broadcast(wire.EventVarsInvalidated, map[string]any{})
+	s.emit(wire.EventVarsInvalidated, map[string]any{})
 	s.broadcastBreakpoints()
 	go s.watchGDB()
 

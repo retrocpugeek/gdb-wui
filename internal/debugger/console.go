@@ -44,7 +44,7 @@ func (s *Session) consoleExec(r *request) (any, *wire.Error) {
 		// A gdb error here is the user's command being wrong, which is normal
 		// at a console. Surface it as console output and report success, so the
 		// UI does not raise a dialog over a typo.
-		s.cfg.Events.Broadcast(wire.EventConsole, map[string]string{
+		s.emit(wire.EventConsole, map[string]string{
 			"text":   cmdErr.Message + "\n",
 			"stream": "log",
 		})
@@ -105,7 +105,7 @@ func (s *Session) noteTargetCommand(line string, ok bool) {
 
 // broadcastRemote tells every browser the connection state changed.
 func (s *Session) broadcastRemote() {
-	s.cfg.Events.Broadcast(wire.EventRemoteChanged, wire.RemoteTarget{
+	s.emit(wire.EventRemoteChanged, wire.RemoteTarget{
 		Connected: s.st.remoteTarget,
 		Address:   s.st.remoteAddr,
 	})
@@ -156,7 +156,7 @@ func (s *Session) resyncAfterConsole(ctx context.Context) []string {
 		if threads, werr := s.fetchThreads(ctx); werr == nil {
 			s.st.threads = threads
 			done = append(done, "threads")
-			s.cfg.Events.Broadcast(wire.EventThreadsChanged, wire.ThreadsList{
+			s.emit(wire.EventThreadsChanged, wire.ThreadsList{
 				StopSeq: s.st.stopSeq, Threads: threads, Selected: s.st.selThread,
 			})
 		}
@@ -218,7 +218,7 @@ func (s *Session) broadcastSelection(ctx context.Context) {
 		s.st.locals = locals
 		sel.Locals = locals
 	}
-	s.cfg.Events.Broadcast(wire.EventSelectionChanged, sel)
+	s.emit(wire.EventSelectionChanged, sel)
 }
 
 // consoleComplete asks gdb to complete a prefix.
@@ -289,7 +289,7 @@ func (s *Session) pumpTerminal(term *ptyio.Terminal) {
 			// Base64: these are arbitrary bytes from an arbitrary program,
 			// including invalid UTF-8 and control sequences, and JSON strings
 			// cannot carry them intact.
-			s.cfg.Events.Broadcast(wire.EventInferiorOutput, wire.InferiorOutput{
+			s.emitOffActor(wire.EventInferiorOutput, wire.InferiorOutput{
 				DataB64: base64.StdEncoding.EncodeToString(buf[:n]),
 			})
 		}
@@ -436,7 +436,7 @@ func (s *Session) threadSelect(r *request) (any, *wire.Error) {
 		s.st.locals = locals
 		sel.Locals = locals
 	}
-	s.cfg.Events.Broadcast(wire.EventSelectionChanged, sel)
+	s.emit(wire.EventSelectionChanged, sel)
 	return sel, nil
 }
 

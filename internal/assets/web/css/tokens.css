@@ -23,6 +23,10 @@
   --border: #2f3641;
   --border-strong: #3d4654;
 
+  /* Popup shadow. Heavier on the dark theme, where a menu and the panel behind
+   * it are close in luminance and a faint shadow would not separate them. */
+  --shadow-popup: #00000059;
+
   --accent: #6cb6ff;
   --accent-dim: #2f4a68;
   --focus: #8fd0ff;
@@ -75,6 +79,8 @@
 
   --border: #d8dce3;
   --border-strong: #c0c6d0;
+
+  --shadow-popup: #1c212833;
 
   --accent: #0a66c2;
   --accent-dim: #cfe2f7;

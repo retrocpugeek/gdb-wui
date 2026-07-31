@@ -222,6 +222,5 @@ func (s *Session) refreshFramesAfterPathChange(ctx context.Context) {
 		src := f.Source
 		sel.Source = &src
 	}
-	s.publish()
-	s.cfg.Events.Broadcast(wire.EventSelectionChanged, sel)
+	s.emit(wire.EventSelectionChanged, sel)
 }

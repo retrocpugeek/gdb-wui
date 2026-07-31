@@ -131,7 +131,7 @@ func (s *Session) invalidateSymbols() {
 	}
 	s.st.symbols = nil
 	s.st.symbolsRead = false
-	s.cfg.Events.Broadcast(wire.EventSymbolsInvalidated, map[string]any{})
+	s.emit(wire.EventSymbolsInvalidated, map[string]any{})
 }
 
 func (s *Session) fetchSymbols(ctx context.Context) ([]wire.Symbol, *wire.Error) {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/retrocpugeek/gdb-wui/internal/gdbfake"
 	"github.com/retrocpugeek/gdb-wui/internal/mi"
 	"github.com/retrocpugeek/gdb-wui/internal/srcfs"
+	"github.com/retrocpugeek/gdb-wui/internal/testutil"
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
 
@@ -23,6 +25,10 @@ type recorder struct {
 	mu     sync.Mutex
 	events []recorded
 	ch     chan recorded
+	// probe is set by tests that need to observe state at the instant an event
+	// is announced. Atomic because it is written from the test goroutine and
+	// read from the actor's.
+	probe atomic.Pointer[func(event string)]
 }
 
 type recorded struct {
@@ -32,7 +38,19 @@ type recorded struct {
 
 func newRecorder() *recorder { return &recorder{ch: make(chan recorded, 512)} }
 
+// probe runs inside Broadcast, on the actor goroutine, at the exact instant an
+// event is announced. That is the only place from which the snapshot-vs-event
+// ordering can be observed without a race: afterwards the actor has moved on
+// and published anyway, which is why asserting from the test goroutine
+// reproduces the bug about one run in fifty rather than every time.
+func (r *recorder) setProbe(f func(event string)) {
+	r.probe.Store(&f)
+}
+
 func (r *recorder) Broadcast(event string, payload any) {
+	if f := r.probe.Load(); f != nil {
+		(*f)(event)
+	}
 	r.mu.Lock()
 	r.events = append(r.events, recorded{event, payload})
 	r.mu.Unlock()
@@ -1047,5 +1065,77 @@ func TestRemoteChangedOnlyOnChange(t *testing.T) {
 
 	if n := h.rec.count(wire.EventRemoteChanged); n != 1 {
 		t.Errorf("remoteChanged fired %d times, want 1", n)
+	}
+}
+
+// Every broadcast must go through emit, which refreshes the snapshot first.
+//
+// A handler that broadcasts directly announces a change the snapshot does not
+// yet carry, because serve() publishes only after dispatch returns. The
+// symptom is a client acting on an event and reading state from before it —
+// which is how this was found: CI failed with `snapshot exePath = ""`
+// immediately after the exeLoaded event said a program had loaded.
+//
+// Checked by reading the source because the alternative is a race that
+// reproduces once in fifty runs.
+func TestAllBroadcastsGoThroughEmit(t *testing.T) {
+	dir := filepath.Join(testutil.RepoRoot(t), "internal", "debugger")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if !strings.Contains(line, "cfg.Events.Broadcast(") {
+				continue
+			}
+			// The bodies of emit and emitOffActor are the two legitimate
+			// calls; everything else goes through one of them.
+			if name == "session.go" && strings.Contains(line, "s.cfg.Events.Broadcast(event, payload)") {
+				continue
+			}
+			t.Errorf("%s:%d broadcasts directly; use s.emit (actor goroutine, "+
+				"refreshes the snapshot first) or s.emitOffActor (other "+
+				"goroutines, payload must not be snapshot state):\n\t%s",
+				name, i+1, strings.TrimSpace(line))
+		}
+	}
+}
+
+// The snapshot must already describe the change an event announces.
+//
+// Sampled from inside the broadcast, which is the only place the ordering is
+// observable without a race — see recorder.setProbe. Asserting after the event
+// has been received instead is what CI was doing when it failed with
+// `snapshot exePath = ""`, and that reproduces roughly one run in fifty.
+func TestSnapshotIsCurrentWhenEventFires(t *testing.T) {
+	h := start(t, loadTranscript)
+
+	var atEvent string
+	var seen bool
+	h.rec.setProbe(func(event string) {
+		if event == wire.EventExeLoaded {
+			atEvent = h.sess.Snapshot().ExePath
+			seen = true
+		}
+	})
+
+	h.load()
+	h.rec.wait(t, wire.EventExeLoaded)
+	if !seen {
+		t.Fatal("exeLoaded never fired")
+	}
+	if atEvent != "prog" {
+		t.Errorf("snapshot exePath = %q at the instant exeLoaded was broadcast, "+
+			"want prog: the event announced a change the snapshot did not carry",
+			atEvent)
 	}
 }

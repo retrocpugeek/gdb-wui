@@ -703,3 +703,48 @@
 .confirm-label { color: var(--fg-2); flex: 0 0 auto; }
 .symload-path { flex: 1 1 auto; min-width: 12ch; }
 .symload-offset { flex: 0 0 auto; width: 16ch; min-width: 0; }
+
+/* --- context menu ---------------------------------------------------------- */
+
+/* Outside #app and fixed-positioned: the panels all set `contain: layout
+ * paint`, which would clip a menu rendered inside one to the panel's box, and
+ * a file tree is exactly where a menu needs to escape its container. */
+.ctxmenu {
+  position: fixed;
+  z-index: 50;
+  min-width: 18ch;
+  padding: 3px 0;
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px var(--shadow-popup);
+  display: flex;
+  flex-direction: column;
+}
+
+.ctxmenu-item {
+  font: inherit;
+  font-family: var(--font-ui);
+  text-align: left;
+  padding: 4px 12px;
+  border: 0;
+  background: none;
+  color: var(--fg-1);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ctxmenu-item:hover,
+.ctxmenu-item:focus-visible { background: var(--accent-dim); color: var(--fg-0); }
+
+.ctxmenu-head {
+  padding: 3px 12px 5px;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3px;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

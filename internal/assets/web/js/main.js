@@ -51,6 +51,7 @@ const ui = {
   disasm: el("disasm"),
   memory: el("memory"),
   memAddr: el("mem-addr"),
+  ctxmenu: el("ctxmenu"),
   confirm: el("confirm"),
   confirmText: el("confirm-text"),
   confirmYes: el("confirm-yes"),
@@ -659,13 +660,19 @@ tree.setFileHandler((path, kind) => {
   // user had painstakingly got it to. Ask first, and only when there is
   // something to lose: with no program loaded, or after one has exited, the
   // click is unambiguous and a prompt would just be in the way.
-  if (hasLiveInferior()) {
-    askBeforeLoad(path);
-    return true;
-  }
-  loadExe(path);
+  openElf(path);
   return true;
 });
+
+// openElf is the left-click action and the menu's "Load program", which must
+// be the same thing including the guard: the risk is the same either way.
+function openElf(path) {
+  if (hasLiveInferior()) {
+    askBeforeLoad(path);
+    return;
+  }
+  loadExe(path);
+}
 
 // hasLiveInferior reports whether a process exists to be lost. "exited" does
 // not count: the program is already gone, and only its corpse is on screen.
@@ -731,6 +738,104 @@ ui.confirm.addEventListener("keydown", (ev) => {
   }
 });
 
+// --- context menu -----------------------------------------------------------
+
+// A tiny menu, built per open rather than kept in the DOM: the items depend on
+// what was right-clicked, and three stale hidden menus would be three things
+// to keep in sync.
+function showContextMenu(x, y, heading, items) {
+  const frag = document.createDocumentFragment();
+  if (heading) {
+    const h = document.createElement("div");
+    h.className = "ctxmenu-head";
+    h.textContent = heading;
+    frag.append(h);
+  }
+  for (const item of items) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ctxmenu-item";
+    b.setAttribute("role", "menuitem");
+    b.textContent = item.label;
+    if (item.title) b.title = item.title;
+    b.addEventListener("click", () => {
+      hideContextMenu();
+      item.run();
+    });
+    frag.append(b);
+  }
+  ui.ctxmenu.replaceChildren(frag);
+  ui.ctxmenu.classList.remove("is-hidden");
+
+  // Measure after showing, then clamp: a menu opened near the bottom right
+  // would otherwise hang off the window with its items unreachable.
+  const box = ui.ctxmenu.getBoundingClientRect();
+  ui.ctxmenu.style.left = `${Math.max(0, Math.min(x, window.innerWidth - box.width - 4))}px`;
+  ui.ctxmenu.style.top = `${Math.max(0, Math.min(y, window.innerHeight - box.height - 4))}px`;
+  ui.ctxmenu.querySelector(".ctxmenu-item")?.focus();
+}
+
+function hideContextMenu() {
+  ui.ctxmenu.classList.add("is-hidden");
+  ui.ctxmenu.replaceChildren();
+}
+
+// Anything that moves the menu away from what it points at should close it.
+document.addEventListener("mousedown", (ev) => {
+  if (!ui.ctxmenu.contains(ev.target)) hideContextMenu();
+});
+window.addEventListener("blur", hideContextMenu);
+window.addEventListener("resize", hideContextMenu);
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") hideContextMenu();
+});
+ui.ctxmenu.addEventListener("keydown", (ev) => {
+  const items = [...ui.ctxmenu.querySelectorAll(".ctxmenu-item")];
+  const i = items.indexOf(document.activeElement);
+  if (ev.key === "ArrowDown") {
+    ev.preventDefault();
+    items[(i + 1) % items.length]?.focus();
+  } else if (ev.key === "ArrowUp") {
+    ev.preventDefault();
+    items[(i - 1 + items.length) % items.length]?.focus();
+  }
+});
+
+// Right-clicking an ELF is the no-typing route to everything you can do with
+// one. The labels say which action sets the architecture, because that is the
+// distinction that decides whether a remote session works at all.
+//
+// The contextmenu event covers the keyboard menu key too, so this is not
+// mouse-only.
+ui.tree.addEventListener("contextmenu", (ev) => {
+  const row = ev.target.closest(".tree-row");
+  if (!row || row.dataset.kind !== "elf") return;
+  ev.preventDefault();
+  const path = row.dataset.path;
+  showContextMenu(ev.clientX, ev.clientY, path, [
+    {
+      label: "Load program",
+      title: "file — symbols and the program to run, and the only thing that sets the architecture",
+      run: () => openElf(path),
+    },
+    {
+      label: "Replace symbols",
+      title: "symbol-file — symbols only, no program to run. Does not set the architecture.",
+      run: () => loadSymbols(path, "replace", ""),
+    },
+    {
+      label: "Add symbols…",
+      title: "add-symbol-file with an offset, for an image that does not run where it was linked",
+      run: () => {
+        ui.symbolsLoadPath.value = path;
+        ui.symbolsLoadMode.value = "add";
+        showSymbolsLoad();
+        ui.symbolsLoadOffset.focus();
+      },
+    },
+  ]);
+});
+
 // --- loading symbols --------------------------------------------------------
 
 // Separate from loading a program, because they are separate acts that only
@@ -764,17 +869,9 @@ function syncSymbolsLoadMode() {
   ui.symbolsLoadOffset.classList.toggle("is-hidden", !isAdd);
 }
 
-function submitSymbolsLoad() {
-  const path = ui.symbolsLoadPath.value.trim();
-  if (!path) {
-    setStatus("Give a path to an ELF file, relative to the project.", true);
-    ui.symbolsLoadPath.focus();
-    return;
-  }
-  const mode = ui.symbolsLoadMode.value;
-  const offset = mode === "add" ? ui.symbolsLoadOffset.value.trim() : "";
+function loadSymbols(path, mode, offset) {
   ui.symbolsLoadGo.disabled = true;
-  send("symbols.load", { path, mode, offset })
+  return send("symbols.load", { path, mode, offset })
     .then((out) => {
       hideSymbolsLoad();
       setStatus(out.available
@@ -784,6 +881,17 @@ function submitSymbolsLoad() {
     })
     .catch(reportError)
     .finally(() => { ui.symbolsLoadGo.disabled = false; });
+}
+
+function submitSymbolsLoad() {
+  const path = ui.symbolsLoadPath.value.trim();
+  if (!path) {
+    setStatus("Give a path to an ELF file, relative to the project.", true);
+    ui.symbolsLoadPath.focus();
+    return;
+  }
+  const mode = ui.symbolsLoadMode.value;
+  loadSymbols(path, mode, mode === "add" ? ui.symbolsLoadOffset.value.trim() : "");
 }
 
 ui.symbolsLoadOpen.addEventListener("click", () => {
