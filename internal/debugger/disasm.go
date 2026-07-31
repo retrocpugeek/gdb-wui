@@ -76,9 +76,14 @@ func (s *Session) disasmFunction(r *request) (any, *wire.Error) {
 		s.logf("-data-disassemble -a %s: %s", addr, werr.Message)
 	}
 
-	n, err := parseAddress(addr)
-	if err != nil {
-		return nil, wire.NewError(wire.CodeBadRequest, "unparseable address "+addr)
+	// The target need not be a number. The symbol pane sends names on purpose:
+	// -symbol-info-* reports link-time addresses, so for a PIE every one of
+	// them is wrong the moment the program is running and relocated. A name
+	// resolves correctly in both states, and gdb is the only thing that knows
+	// the load bias.
+	n, werr := s.resolveAddress(r, addr)
+	if werr != nil {
+		return nil, werr
 	}
 	start := uint64(0)
 	if n > disasmWindowBefore {

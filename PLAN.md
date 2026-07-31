@@ -641,3 +641,24 @@ session persistence, and Windows/macOS (the pty and `/proc` assumptions won't po
 5. `curl` the security matrix by hand: no cookie, wrong `Host`, cross-site `Origin`,
    bootstrap-token reuse — all rejected.
 6. `make vendor-verify` and `node --check` over the frontend modules.
+
+19. **`-symbol-info-*` reports link-time addresses, not running ones.** The
+    `nondebug` entries come straight from the ELF symbol table, so for a
+    position-independent executable every address is the unrelocated one:
+    `_start` is `0x1060`, while the running process has it at
+    `0x555555555060`. Disassembling the displayed address succeeds *before*
+    the program runs, reading from the exec file, and fails with "Cannot
+    access memory" *after* — the opposite of the intuition that a live
+    process makes more memory readable. The symbol pane therefore jumps by
+    *name* and lets gdb apply the load bias; `-data-disassemble -a <name>`
+    resolves correctly in both states. Verified by
+    `TestDisassembleBySymbolNameFollowsRelocation`, which fails with the
+    resolution removed.
+
+20. **`-symbol-info-functions` and `-symbol-info-variables` partition the
+    nondebug symbols between them.** Each reports its own `nondebug` list —
+    ELF symbols gdb classifies as code and as data respectively — with no
+    overlap. That split is the only source of the function-vs-variable
+    distinction for a stripped binary, which has no debug info to ask.
+    Without `--include-nondebug` neither command returns them at all, and a
+    stripped binary yields a bare `symbols={}`.

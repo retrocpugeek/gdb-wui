@@ -121,6 +121,12 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
 
   async function open(next, { line = 0 } = {}) {
     if (next === path) {
+      // Repaint the header even though the file has not changed. The centre
+      // tabs blank it while the disassembly or memory view is showing, and a
+      // caller re-opening the file it is already on is exactly how you get
+      // back — leaving it blank shows a file with no name above it.
+      pathLabel.textContent = next;
+      pathLabel.title = next;
       if (line) reveal(line);
       return;
     }

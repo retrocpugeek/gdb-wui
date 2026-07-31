@@ -50,6 +50,7 @@ func (s *Session) consoleExec(r *request) (any, *wire.Error) {
 	}
 
 	s.noteTargetCommand(line)
+	s.noteSymbolCommand(line)
 	resynced := s.resyncAfterConsole(r.ctx)
 	return wire.ConsoleExecResult{
 		Resynced: resynced,
@@ -87,6 +88,30 @@ func (s *Session) noteTargetCommand(line string) {
 			s.logf("attached to a remote target (%s); shutdown will detach, not kill",
 				s.st.remoteAddr)
 		}
+	}
+}
+
+// symbolCommands are the typed commands that change which symbols gdb has.
+//
+// Not exhaustive, and cannot be: gdb accepts any unambiguous prefix, so `fil`
+// is `file`. Matching the spelled-out forms covers what people type and what
+// the remote-target workflow in the README tells them to type. A missed one
+// costs a stale symbol pane until the next reload, not a wrong answer
+// elsewhere.
+var symbolCommands = map[string]bool{
+	"file": true, "symbol-file": true, "add-symbol-file": true,
+	"core-file": true, "load": true, "remove-symbol-file": true,
+}
+
+// noteSymbolCommand drops the cached symbol table when the user has just
+// changed it out from under us.
+func (s *Session) noteSymbolCommand(line string) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return
+	}
+	if symbolCommands[fields[0]] {
+		s.invalidateSymbols()
 	}
 }
 

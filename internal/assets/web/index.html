@@ -42,6 +42,22 @@
       <span id="project-root" class="panel-sub" title=""></span>
     </div>
     <div id="tree" class="panel-body tree" role="tree" tabindex="0"></div>
+
+    <div class="panel-head panel-head-split">
+      <span class="panel-title">Symbols</span>
+      <span id="symbols-count" class="panel-sub"></span>
+    </div>
+    <div class="symbols-filter">
+      <input id="symbols-search" class="addr-input" type="search"
+             placeholder="filter symbols" aria-label="Filter symbols"
+             autocomplete="off" spellcheck="false">
+      <select id="symbols-kind" class="kind-select" aria-label="Symbol kind">
+        <option value="">all</option>
+        <option value="function">fn</option>
+        <option value="variable">var</option>
+      </select>
+    </div>
+    <div id="symbols" class="panel-body list symbols" role="list" tabindex="0"></div>
   </aside>
   <div id="split-tree" class="splitter splitter-v" role="separator"
        aria-orientation="vertical" aria-label="Resize the file tree" tabindex="0"></div>

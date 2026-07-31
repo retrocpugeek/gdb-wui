@@ -1,0 +1,315 @@
+//go:build integration
+
+package debugger_test
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/retrocpugeek/gdb-wui/internal/testutil"
+	"github.com/retrocpugeek/gdb-wui/internal/wire"
+)
+
+// addFixture compiles a second program into an existing project. realProject
+// builds exactly one, and the cache-invalidation tests need two to switch
+// between.
+func addFixture(t *testing.T, h *harness, name string) {
+	t.Helper()
+	src := filepath.Join(testutil.RepoRoot(t), "testdata", "fixtures", name+".c")
+	body, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(h.files.Abs(), name+".c")
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("gcc", "-g", "-O0", "-o",
+		filepath.Join(h.files.Abs(), name), dst).CombinedOutput()
+	if err != nil {
+		t.Fatalf("compiling %s: %v\n%s", name, err, out)
+	}
+}
+
+// The symbol pane's backend, against a real gdb. The distinction it has to get
+// right is debug-vs-nondebug: one population can be jumped to in the source
+// view and the other only in the disassembly, and a UI that cannot tell them
+// apart offers jumps that do nothing.
+
+func findSymbol(syms []wire.Symbol, name string) (wire.Symbol, bool) {
+	for _, s := range syms {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return wire.Symbol{}, false
+}
+
+func TestSymbolsListDebugFunctions(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	out := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{}).(wire.SymbolsList)
+	if out.Available == 0 {
+		t.Fatal("no symbols at all from a -g binary")
+	}
+
+	main, ok := findSymbol(out.Symbols, "main")
+	if !ok {
+		t.Fatalf("main not in %d symbols", len(out.Symbols))
+	}
+	if main.Kind != wire.SymbolFunction {
+		t.Errorf("main kind = %q, want function", main.Kind)
+	}
+	if !main.Debug {
+		t.Error("main should carry debug info")
+	}
+	if main.File != "hello.c" {
+		t.Errorf("main file = %q, want hello.c — the source jump needs a project path", main.File)
+	}
+	if main.Line == 0 {
+		t.Error("main has no line; a source jump has nowhere to go")
+	}
+	if !strings.Contains(main.Type, "int") {
+		t.Errorf("main type = %q, want something containing int", main.Type)
+	}
+
+	// A static function must be listed too: it is exactly what someone
+	// reaches for the filter box to find.
+	if _, ok := findSymbol(out.Symbols, "add"); !ok {
+		t.Error("the static function add is missing")
+	}
+}
+
+func TestSymbolsListIncludesNondebug(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	out := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{Limit: 5000}).(wire.SymbolsList)
+
+	var nondebug int
+	for _, s := range out.Symbols {
+		if s.Debug {
+			continue
+		}
+		nondebug++
+		if s.Address == "" {
+			t.Fatalf("nondebug symbol %q has no address, so it cannot be jumped to", s.Name)
+		}
+		if !strings.HasPrefix(s.Address, "0x") {
+			t.Errorf("address %q is not hex", s.Address)
+		}
+	}
+	if nondebug == 0 {
+		t.Error("no nondebug symbols; --include-nondebug is not reaching gdb")
+	}
+
+	// _start comes from the ELF table, not from debug info.
+	if start, ok := findSymbol(out.Symbols, "_start"); ok {
+		if start.Debug {
+			t.Error("_start should not claim debug info")
+		}
+		if start.Kind != wire.SymbolFunction {
+			t.Errorf("_start kind = %q, want function", start.Kind)
+		}
+	}
+}
+
+// Addresses come back from gdb zero-padded to the word size. Every other panel
+// shows them trimmed, and two spellings of one address in one UI is a bug
+// report waiting to happen.
+func TestSymbolsAddressesAreTrimmed(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	out := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{Limit: 5000}).(wire.SymbolsList)
+	for _, s := range out.Symbols {
+		if s.Address != "" && strings.HasPrefix(s.Address, "0x0") && s.Address != "0x0" {
+			t.Errorf("address %q is still zero-padded", s.Address)
+		}
+	}
+}
+
+func TestSymbolsFilterAndRanking(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	out := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "main"}).(wire.SymbolsList)
+	if len(out.Symbols) == 0 {
+		t.Fatal("filtering for main found nothing")
+	}
+	if out.Symbols[0].Name != "main" {
+		t.Errorf("first hit = %q, want the exact match main first", out.Symbols[0].Name)
+	}
+	for _, s := range out.Symbols {
+		if !strings.Contains(strings.ToLower(s.Name), "main") {
+			t.Errorf("%q does not match the filter", s.Name)
+		}
+	}
+
+	// Case-insensitive: the user does not know how the symbol was spelled.
+	upper := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "MAIN"}).(wire.SymbolsList)
+	if upper.Matched != out.Matched {
+		t.Errorf("MAIN matched %d, main matched %d — filter is case-sensitive",
+			upper.Matched, out.Matched)
+	}
+}
+
+func TestSymbolsKindFilter(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	out := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{
+		Kind: wire.SymbolVariable, Limit: 5000,
+	}).(wire.SymbolsList)
+	for _, s := range out.Symbols {
+		if s.Kind != wire.SymbolVariable {
+			t.Fatalf("%q is a %s in a variables-only reply", s.Name, s.Kind)
+		}
+	}
+	if out.Available == out.Matched {
+		t.Error("the variable filter matched the whole table; kinds are not being separated")
+	}
+}
+
+// Truncation must be visible. A list that silently stops at the limit reads as
+// the complete answer, and the user concludes the symbol is not there.
+func TestSymbolsTruncationIsReported(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	out := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{Limit: 2}).(wire.SymbolsList)
+	if len(out.Symbols) != 2 {
+		t.Fatalf("got %d symbols, want the limit of 2", len(out.Symbols))
+	}
+	if !out.Truncated {
+		t.Error("truncated is false on a truncated reply")
+	}
+	if out.Matched <= 2 {
+		t.Errorf("matched = %d, should count past the limit", out.Matched)
+	}
+}
+
+// A stripped binary has no debug info. The pane must still work: the ELF
+// dynamic symbols are the only thing a user has to navigate by, which is
+// precisely the remote-firmware case.
+func TestSymbolsOnStrippedBinary(t *testing.T) {
+	h := startReal(t, "hello")
+	addFixture(t, h, "nodebug")
+	stripFixture(t, h, "nodebug")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+
+	out := h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{Limit: 5000}).(wire.SymbolsList)
+	for _, s := range out.Symbols {
+		if s.Debug {
+			t.Errorf("%q claims debug info in a stripped binary", s.Name)
+		}
+	}
+	if out.Available == 0 {
+		t.Skip("this toolchain left no dynamic symbols to list")
+	}
+}
+
+// Loading a different program must not leave the previous one's symbols in the
+// cache, or the pane lists functions that no longer exist and jumping to them
+// lands nowhere.
+func TestSymbolsInvalidatedOnExeLoad(t *testing.T) {
+	h := startReal(t, "hello")
+	addFixture(t, h, "structs")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	before := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "add"}).(wire.SymbolsList)
+	if before.Matched == 0 {
+		t.Fatal("add missing from hello")
+	}
+
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "structs"})
+	h.rec.wait(t, wire.EventSymbolsInvalidated)
+
+	after := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "inspect"}).(wire.SymbolsList)
+	if _, ok := findSymbol(after.Symbols, "inspect"); !ok {
+		t.Error("structs' inspect is missing; the cache was not refilled")
+	}
+	stale := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "add"}).(wire.SymbolsList)
+	if _, ok := findSymbol(stale.Symbols, "add"); ok {
+		t.Error("hello's add survived loading structs; the cache is stale")
+	}
+}
+
+// The remote-target workflow loads symbols by typing `file …` at the console,
+// never through exe.load. If that does not invalidate, the pane is empty for
+// exactly the users who need it most.
+func TestSymbolsInvalidatedByConsoleFileCommand(t *testing.T) {
+	h := startReal(t, "hello")
+	addFixture(t, h, "structs")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+	h.mustDo(wire.TypeSymbolsList, wire.SymbolsListRequest{})
+
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{
+		Line: "file " + h.files.Abs() + "/structs",
+	})
+	h.rec.wait(t, wire.EventSymbolsInvalidated)
+
+	out := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "inspect"}).(wire.SymbolsList)
+	if _, ok := findSymbol(out.Symbols, "inspect"); !ok {
+		t.Error("symbols did not follow a typed `file` command")
+	}
+}
+
+// The symbol pane jumps by name, not by the address it displays, and this is
+// why. gdb's -symbol-info-* reports link-time addresses; a PIE is relocated
+// when it runs, so those addresses point at unmapped memory the moment there
+// is a live process. Disassembling by name has to resolve to the *running*
+// address.
+func TestDisassembleBySymbolNameFollowsRelocation(t *testing.T) {
+	h := startReal(t, "hello")
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello"})
+
+	syms := h.mustDo(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "_start", Limit: 5000}).(wire.SymbolsList)
+	start, ok := findSymbol(syms.Symbols, "_start")
+	if !ok {
+		t.Skip("no _start symbol in this toolchain's output")
+	}
+	linkTime, err := strconv.ParseUint(strings.TrimPrefix(start.Address, "0x"), 16, 64)
+	if err != nil {
+		t.Fatalf("parsing %q: %v", start.Address, err)
+	}
+
+	h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "hello.c", Line: lineMainInit})
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+	h.rec.wait(t, wire.EventStopped)
+
+	out := h.mustDo(wire.TypeDisasmFunction,
+		wire.DisasmFunctionRequest{Address: "_start"}).(wire.Disassembly)
+	if len(out.Instructions) == 0 {
+		t.Fatal("disassembling _start by name produced nothing")
+	}
+	got := out.Instructions[0].Addr
+	if got == linkTime {
+		t.Fatalf("got the link-time address 0x%x; a relocated PIE should not "+
+			"disassemble there", got)
+	}
+	if got < linkTime {
+		t.Errorf("address 0x%x is below the link-time 0x%x", got, linkTime)
+	}
+
+	// And the address the pane displays really is the unusable one, which is
+	// the whole reason the jump goes by name.
+	if _, werr := h.do(wire.TypeDisasmRange, wire.DisasmRangeRequest{
+		Start: start.Address,
+		End:   "0x" + strconv.FormatUint(linkTime+16, 16),
+	}); werr == nil {
+		t.Log("note: the link-time range was readable; relocation may be disabled here")
+	}
+}

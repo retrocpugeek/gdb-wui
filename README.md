@@ -70,6 +70,13 @@ breakpoints survive.
 | `-idle-exit DUR` | Exit after this long with no browser connected. |
 | `-print-url` | Print a fresh login link for a running server and exit. |
 
+The **Symbols** pane under the file tree lists the loaded program's functions
+and globals. Type in the filter box to narrow it, and double-click a symbol to
+jump: to the source line if it has debug info, or to the disassembly if it is
+an ELF symbol with only an address. `fn` and `var` sigils say which is which,
+and dimmed rows are the ones with no debug info. It works on a stripped binary,
+where the ELF symbol table is the only map you have.
+
 Keys: **F5** continue, **F6** pause, **F9** toggle breakpoint, **F10** step over,
 **F11** step into, **Shift+F11** step out, **Alt+F10/F11** instruction step,
 **Ctrl+F5** run, **Ctrl+Shift+F5** run to `main`.
@@ -87,6 +94,7 @@ Inside a terminal panel only function keys and `Ctrl+Shift+…` are intercepted,
 | Breakpoints by source line, conditions | Watchpoints, catchpoints, tracepoints |
 | Locals, nested structs, watch expressions | Editing values, register writes, memory writes |
 | Registers, disassembly, memory (read-only) | Reverse debugging, `rr` |
+| A searchable symbol list, functions and globals | Types, macros, and other symbol domains |
 | The gdb console, with tab completion | Core dumps, attach-to-pid |
 | A program with its own terminal | Full terminal emulation for curses programs |
 | Several browser tabs on one session | Multi-user, auth beyond loopback, TLS |

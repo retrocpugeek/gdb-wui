@@ -135,6 +135,13 @@ type state struct {
 	// registerNames is cached per program; it never changes within one.
 	registerNames []string
 
+	// symbols is the program's symbol table, cached per program. symbolsRead
+	// records that it has been looked at, which is not the same as it being
+	// non-empty: a stripped binary legitimately has none, and without the flag
+	// every keystroke in the filter box would re-ask gdb for nothing.
+	symbols     []wire.Symbol
+	symbolsRead bool
+
 	// inferiorPID is the debuggee's process id, from =thread-group-started. It
 	// is what inferior.signal targets.
 	inferiorPID int
@@ -433,6 +440,9 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 	case wire.TypeEvalExpr:
 		return s.evalExpr(r)
 
+	case wire.TypeSymbolsList:
+		return s.symbolsList(r)
+
 	case wire.TypePathSubstitute:
 		return s.pathSubstitute(r)
 	case wire.TypePathAddDir:
@@ -477,7 +487,11 @@ func (s *Session) gate(typ string) *wire.Error {
 		wire.TypeInferiorStdin, wire.TypeInferiorSignal, wire.TypeInferiorResize,
 		// Telling gdb where source lives is configuration, not a state query,
 		// and is exactly what a user reaches for when a frame has no source.
-		wire.TypePathSubstitute, wire.TypePathAddDir, wire.TypePathList:
+		wire.TypePathSubstitute, wire.TypePathAddDir, wire.TypePathList,
+		// The symbol table is a property of the file, not of the inferior.
+		// Refusing to search it while the program runs would disable the one
+		// panel that has a useful answer at that moment.
+		wire.TypeSymbolsList:
 		return nil
 	}
 
@@ -706,6 +720,7 @@ func (s *Session) restartGDB(r *request) (any, *wire.Error) {
 	s.st.breakpoints = map[int]wire.Breakpoint{}
 	s.st.ours = map[int]bool{}
 	s.st.registerNames = nil
+	s.st.symbols, s.st.symbolsRead = nil, false
 	s.st.substitutions, s.st.sourceDirs = nil, nil
 	s.st.inferiorPID = 0
 	s.st.features = client.Features()

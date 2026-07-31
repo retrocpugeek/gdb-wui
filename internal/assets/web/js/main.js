@@ -11,6 +11,7 @@ import { createStore } from "./core/store.js";
 import { createConnection } from "./core/ws.js";
 import { createKeymap } from "./core/keys.js";
 import { createTree } from "./panels/tree.js";
+import { createSymbols } from "./panels/symbols.js";
 import { createSource } from "./panels/source.js";
 import { createStack } from "./panels/stack.js";
 import { createBreakpoints } from "./panels/breakpoints.js";
@@ -28,6 +29,10 @@ const el = (id) => document.getElementById(id);
 
 const ui = {
   tree: el("tree"),
+  symbols: el("symbols"),
+  symbolsSearch: el("symbols-search"),
+  symbolsKind: el("symbols-kind"),
+  symbolsCount: el("symbols-count"),
   source: el("source"),
   sourcePath: el("source-path"),
   sourceMeta: el("source-meta"),
@@ -195,6 +200,20 @@ const tree = createTree({
   },
 });
 
+// The symbol pane. Filtering is a server round trip per (debounced) keystroke
+// rather than a one-off bulk fetch, so a firmware image with fifty thousand
+// symbols costs the same as a hello-world.
+const symbols = createSymbols({
+  element: ui.symbols,
+  input: ui.symbolsSearch,
+  kindSelect: ui.symbolsKind,
+  countEl: ui.symbolsCount,
+  onQuery({ filter, kind }) {
+    return send("symbols.list", { filter, kind });
+  },
+  onJump: jumpToSymbol,
+});
+
 const conn = createConnection({
   onStatus(state) {
     store.set("connection", state);
@@ -225,6 +244,7 @@ function handleEvent(msg) {
   switch (msg.event) {
     case "hello":
       applySnapshot(msg.payload);
+      symbols.refresh();
       break;
     case "stopped":
       applyStopped(msg.payload);
@@ -257,6 +277,7 @@ function handleEvent(msg) {
         "session.runState": msg.payload.runState,
       });
       log.system(`loaded ${msg.payload.path}`);
+      symbols.refresh();
       break;
     case "breakpointsChanged":
       breakpoints.set(msg.payload.breakpoints);
@@ -268,6 +289,9 @@ function handleEvent(msg) {
       break;
     case "watchesChanged":
       variables.setWatches(msg.payload.watches, msg.payload.stopSeq);
+      break;
+    case "symbolsInvalidated":
+      symbols.refresh();
       break;
     case "varsInvalidated":
       variables.invalidate();
@@ -407,6 +431,7 @@ function applyStopped(stopped) {
 
   stack.set(stopped.frames ?? [], 0);
   threads.set(stopped.threads ?? [], stopped.threadId);
+  disasmPin = null;
   refreshDisasm(stopped.frames?.[0]?.address);
   // Memory is the thing most likely to have changed, so the cache goes.
   memory.onStop(stopped.stopSeq);
@@ -637,6 +662,26 @@ function currentLine() {
   return frame?.source?.line ?? 0;
 }
 
+// disasmPin is a target the user asked to look at — the name of a symbol they
+// double-clicked — which overrides the machine view's usual habit of following
+// the program counter. Without it, switching to the disassembly tab to show a
+// symbol immediately refetches around the PC and the user lands somewhere they
+// did not ask for. Cleared on the next stop, because a stop means the PC moved
+// and following it is once again what they want.
+let disasmPin = null;
+
+// disasmPinExplicit marks the next pinned fetch as one the user asked for by
+// hand, so a failure is reported rather than swallowed. It has to be a flag
+// rather than an argument because the fetch is usually triggered indirectly,
+// by the tab switch that showing the disassembly implies.
+let disasmPinExplicit = false;
+
+function fetchPinned() {
+  const explicit = disasmPinExplicit;
+  disasmPinExplicit = false;
+  return showDisasmAt(disasmPin, { explicit });
+}
+
 // refreshDisasm keeps the machine view in step with the program counter.
 //
 // Three cases, cheapest first: the panel is hidden, so do nothing; the new PC
@@ -645,6 +690,10 @@ function currentLine() {
 // needs to be.
 function refreshDisasm(pc) {
   if (centerTab !== "disasm") return;
+  if (disasmPin) {
+    fetchPinned();
+    return;
+  }
   if (pc && disasm.has(pc)) {
     disasm.setPC(pc);
     updateCenterMeta();
@@ -664,6 +713,76 @@ function refreshDisasm(pc) {
 function updateCenterMeta() {
   if (centerTab !== "disasm") return;
   ui.sourceMeta.textContent = disasm.summary();
+}
+
+// showDisasmAt disassembles the function containing a target, which may be an
+// address or a symbol name. Names are preferred and the reason is not cosmetic:
+// -symbol-info-* reports link-time addresses, so for a position-independent
+// executable every one of them is wrong once the program is running and
+// relocated. gdb is the only thing that knows the load bias, so let it resolve.
+function showDisasmAt(target, { explicit = false } = {}) {
+  return send("disasm.function", {
+    address: target,
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((out) => {
+      disasm.set(out);
+      disasm.setBreakpoints(breakpoints.all());
+      updateCenterMeta();
+      return true;
+    })
+    .catch((err) => {
+      // Silence is right for a background refresh and wrong for a double
+      // click: the user asked for something and must be told it did not
+      // happen.
+      if (explicit) {
+        setStatus(err?.code === "not_ready"
+          ? `Cannot disassemble ${target} until the program is running.`
+          : (err?.message ?? String(err)), true);
+      } else if (err?.code !== "busy" && err?.code !== "not_ready") {
+        reportError(err);
+      }
+      return false;
+    });
+}
+
+// jumpToSymbol is what double-clicking a symbol does.
+//
+// Where it goes depends on what the symbol knows about itself, and the three
+// cases are genuinely different rather than fallbacks for one another. Debug
+// info means a source line. An ELF symbol means an address and therefore
+// disassembly. A symbol whose source file is real but outside the project is
+// neither: the honest answer is to say where it claims to live, because the
+// user can then add a substitution and try again.
+function jumpToSymbol(sym) {
+  if (sym.file) {
+    disasmPin = null;
+    showCenter("source");
+    source.open(sym.file, { line: sym.line })
+      .then(() => setStatus(`${sym.name} — ${sym.file}:${sym.line}`))
+      .catch(reportError);
+    return;
+  }
+  if (sym.address) {
+    // Pin the name, not the address, for the reason in showDisasmAt.
+    disasmPin = sym.name;
+    disasmPinExplicit = true;
+    const alreadyShowing = centerTab === "disasm";
+    showCenter("disasm");
+    // Switching tabs fires refreshDisasm, which honours the pin. Fetch here
+    // only when the tab was already showing, so the two paths do not both ask.
+    if (alreadyShowing) fetchPinned();
+    setStatus(`${sym.name} — ${sym.address} (link-time), no debug info`);
+    return;
+  }
+  if (sym.gdbPath) {
+    setStatus(
+      `${sym.name} is at ${sym.gdbPath}:${sym.line}, which is not inside the project.`,
+      true,
+    );
+    return;
+  }
+  setStatus(`${sym.name} has no location to jump to.`, true);
 }
 
 // localsToNodes lifts the flat locals carried by a stop event into tree rows.

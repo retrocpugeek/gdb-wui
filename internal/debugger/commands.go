@@ -76,6 +76,7 @@ func (s *Session) exeLoad(r *request) (any, *wire.Error) {
 	// Loading a program invalidates everything that described the previous one.
 	s.deleteAllVarobjs(r.ctx)
 	s.st.registerNames = nil
+	s.invalidateSymbols()
 	s.st.exePath = req.Path
 	s.st.runState = wire.RunStateNoProgram
 	s.st.threads = nil

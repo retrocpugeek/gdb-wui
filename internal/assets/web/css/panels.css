@@ -598,3 +598,62 @@
   color: var(--fg-0);
   box-shadow: inset 2px 0 0 var(--accent);
 }
+
+/* --- symbols --------------------------------------------------------------- */
+
+/* The left column now holds two lists. The tree gets the larger share because
+ * it is the one you browse; the symbol list is one you search, and a search
+ * result set does not need to be tall to be useful. */
+.panel-tree > #tree    { flex: 1 1 55%; }
+.panel-tree > #symbols { flex: 1 1 45%; }
+
+.symbols-filter {
+  display: flex;
+  gap: 4px;
+  padding: 4px var(--pad);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.symbols-filter .addr-input { min-width: 0; flex: 1 1 auto; }
+
+.kind-select {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  flex: 0 0 auto;
+  padding: 1px 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  color: var(--fg-1);
+}
+
+/* A sigil, not a word: the kind has to be readable at a glance down a column
+ * of two hundred rows, and "function"/"variable" spelled out would crowd out
+ * the name, which is what the user is actually scanning for. */
+.sym-kind {
+  flex: 0 0 auto;
+  min-width: 2.5ch;
+  padding: 0 3px;
+  text-align: center;
+  border-radius: 2px;
+  font-size: 10px;
+  color: var(--bg-0);
+}
+
+.sym-kind[data-kind="function"] { background: var(--accent); }
+.sym-kind[data-kind="variable"] { background: var(--ok); }
+
+/* Without debug info there is no source to jump to, only an address. Dimming
+ * the row says so before the user double-clicks and lands in disassembly
+ * wondering why. */
+.sym-row.is-nondebug .list-main { color: var(--fg-1); }
+.sym-row.is-nondebug .sym-kind { opacity: 0.55; }
+
+.sym-row .list-sub {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

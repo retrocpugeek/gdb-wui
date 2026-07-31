@@ -102,6 +102,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `exec.nexti` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction, over calls. |
 | `mem.read` | `{address, offset?, count, stopSeq?}` | [`Memory`](#memory) | `address` is any gdb expression. Capped at 64 KiB per read. |
 | `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. |
+| `symbols.list` | `{filter?, kind?, limit?}` | [`SymbolsList`](#symbols) | Allowed while the inferior runs: the symbol table is a property of the file. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is frequently blocked in a gdb round-trip, and that is
@@ -158,6 +159,7 @@ later. Requesting one today returns `unsupported`.
 | `console` | gdb wrote console or log output. | `{text, stream}` |
 | `inferiorOutput` | The debuggee wrote to its terminal. | `{dataB64}` |
 | `threadsChanged` | Threads appeared or disappeared. | [`ThreadsList`](#threads) |
+| `symbolsInvalidated` | The cached symbol table belongs to a program that is no longer loaded. | `{}` |
 | `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
 | `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
@@ -666,3 +668,50 @@ and `connect-src` naming the WebSocket origins explicitly.
 `style-src` currently includes `'unsafe-inline'` because xterm.js injects a
 `<style>` element at runtime. That arrives in M5; if it proves unnecessary, the
 allowance is dropped.
+
+## Symbols
+
+`symbols.list` answers from a table read once per program and cached, so the
+filter box costs a message rather than a gdb round trip. `filter` is a
+case-insensitive substring match on the name, `kind` is `function` or
+`variable`, and `limit` defaults to 500 and is capped at 5000.
+
+```json
+{
+  "symbols": [
+    {"name": "main", "kind": "function", "type": "int (int, char **)",
+     "file": "src/hello.c", "gdbPath": "/build/src/hello.c", "line": 9,
+     "debug": true},
+    {"name": "_start", "kind": "function", "address": "0x1060"}
+  ],
+  "matched": 2,
+  "available": 148
+}
+```
+
+Two populations share the list and they are not interchangeable:
+
+- **`debug: true`** — from DWARF. Carries `gdbPath` and `line`, and `file` as
+  well when the source resolves inside the project. This is the only kind that
+  can be jumped to in the source view.
+- **`debug` absent** — from the ELF symbol table. Carries only `address`. The
+  only honest destination is the disassembly.
+
+The split between the two comes from gdb itself: the server issues
+`-symbol-info-functions` and `-symbol-info-variables`, each with
+`--include-nondebug`, and gdb sorts ELF symbols into the code and data lists
+for us. That is where `kind` comes from for a stripped binary, which has no
+debug info to ask.
+
+`matched` counts what the filter selected before `limit` was applied, and
+`available` is the whole table, so a client can render "200 of 4096" rather
+than presenting a truncated list as the complete answer.
+
+Addresses are trimmed of the zero padding gdb applies
+(`0x0000000000001060` → `0x1060`) to match every other panel.
+
+The cache is dropped, and `symbolsInvalidated` emitted, when a program is
+loaded, when gdb is restarted, and when a console command that changes symbols
+is typed — `file`, `symbol-file`, `add-symbol-file`, `core-file`, `load`,
+`remove-symbol-file`. That last case is not an afterthought: the remote-target
+workflow loads symbols by typing `file …`, never through `exe.load`.
