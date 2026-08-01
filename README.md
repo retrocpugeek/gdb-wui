@@ -218,6 +218,11 @@ fails if that document and the code disagree.
 [docs/findings.md](docs/findings.md) records the GDB behaviours this had to
 establish by measurement; test comments cite them by number.
 
+[docs/decompilation.md](docs/decompilation.md) is a **prototype**, not a
+feature: a Ghidra headless exporter that maps recovered C back to addresses, so
+a future pane could show decompiled source beside a live session. Nothing reads
+it yet.
+
 ## Development
 
 ```sh
