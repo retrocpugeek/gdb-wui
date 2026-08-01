@@ -93,6 +93,20 @@ In the source view the green bar is the program counter and a blue one marks an
 outer frame you have selected in the call stack, so inspecting a caller never
 hides where the program actually stopped.
 
+**Rest the pointer on something to see what it holds.** In the source view that
+is a variable, and the whole path is read, not just the word: point at `name`
+in `cfg.items[2].name` and you get that field, not a field name out of context.
+In the disassembly it is a register — `%rax` on x86, a bare `r0` or `sp`
+elsewhere — or the symbol in a `<add+4>` annotation. Integers are shown in the
+other base alongside, because a stack pointer as 140737488347136 is a number
+and as `0x7fffffffe000` is an address you recognise. Values are read from the
+frame selected in the call stack, and the tooltip goes as soon as the program
+moves, so it can never show you a value from the previous stop.
+
+Only names, fields and subscripts are evaluated. `f(x)` is not, and that is
+deliberate: gdb would answer by *calling f*, which is not a thing a mouse
+should do by accident.
+
 Keys: **F5** continue, **F6** pause, **F9** toggle breakpoint, **F10** step over,
 **F11** step into, **Shift+F11** step out, **Alt+F10/F11** instruction step,
 **Ctrl+F5** run, **Ctrl+Shift+F5** run to `main`.
@@ -109,6 +123,7 @@ Inside a terminal panel only function keys and `Ctrl+Shift+…` are intercepted,
 | Multiple threads, all-stop, thread switching | Non-stop mode, per-thread run control |
 | Breakpoints by source line, conditions | Watchpoints, catchpoints, tracepoints |
 | Locals, nested structs, watch expressions | Editing values, register writes, memory writes |
+| Hover a variable or register for its value | Hovering a call — it would run the function |
 | Registers, disassembly, memory (read-only) | Reverse debugging, `rr` |
 | A searchable symbol list, functions and globals | Types, macros, and other symbol domains |
 | The gdb console, with tab completion | Core dumps, attach-to-pid |

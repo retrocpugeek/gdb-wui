@@ -748,3 +748,42 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* --- hover tooltip --------------------------------------------------------- */
+
+/* Outside #app and fixed-positioned for the same reason as the context menu:
+ * the panels set `contain: layout paint`, which would clip a tooltip to the
+ * pane, and the top line of the source view is exactly where one needs to
+ * escape upwards.
+ *
+ * pointer-events: none is the load-bearing declaration. The tooltip is placed
+ * right where the pointer is heading, and a tooltip that can be hovered would
+ * take the mouseleave off the word it describes, hide itself, and reappear —
+ * a flicker with no way out. */
+.hovertip {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  max-width: 60ch;
+  padding: 3px 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px var(--shadow-popup);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-ui);
+  color: var(--fg-1);
+  white-space: pre-wrap;
+  /* A struct prints on one long line; wrapping it forever would cover the code
+   * the user is reading. Three lines is enough to see the shape of one. */
+  max-height: calc(var(--line-h) * 3);
+  overflow: hidden;
+}
+
+.hovertip-expr { color: var(--fg-2); }
+.hovertip-value { color: var(--fg-0); }
+
+/* The same number in the other base, dimmed: it is a convenience, not part of
+ * what gdb said. */
+.hovertip-alt::before { content: "  "; }
+.hovertip-alt { color: var(--fg-2); }

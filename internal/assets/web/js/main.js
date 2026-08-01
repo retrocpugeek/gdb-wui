@@ -9,6 +9,7 @@
 
 import { createStore } from "./core/store.js";
 import { createConnection } from "./core/ws.js";
+import { createHover } from "./core/hover.js";
 import { createKeymap } from "./core/keys.js";
 import { createTree } from "./panels/tree.js";
 import { createSymbols } from "./panels/symbols.js";
@@ -52,6 +53,7 @@ const ui = {
   memory: el("memory"),
   memAddr: el("mem-addr"),
   ctxmenu: el("ctxmenu"),
+  hovertip: el("hovertip"),
   confirm: el("confirm"),
   confirmText: el("confirm-text"),
   confirmYes: el("confirm-yes"),
@@ -179,6 +181,33 @@ const memory = createMemory({
   onError: reportError,
 });
 
+// Hovering a variable or a register asks gdb what it holds. The panes decide
+// what the pointer is over — the source view walks the line's text, the
+// disassembly reads the token span — and this evaluates whatever they name.
+//
+// Only while stopped, which is not a UI nicety: eval.expr is one of the
+// requests the server refuses unless there is a stopped inferior, so a hover
+// during a run would be a round trip that can only fail.
+const hover = createHover({
+  element: ui.hovertip,
+  isEnabled: () => store.get("session.runState") === "stopped",
+  evaluate(expr) {
+    return send("eval.expr", {
+      expr,
+      thread: store.get("selection.thread"),
+      frame: store.get("selection.frame"),
+      stopSeq: store.get("session.stopSeq"),
+    })
+      .then((out) => out.value)
+      // A failure is the ordinary outcome of pointing at a word that is not a
+      // variable here, so it shows nothing rather than shouting in the status
+      // bar. The pointer is already an experiment; a wrong guess costs nothing.
+      .catch(() => null);
+  },
+});
+hover.attach(ui.source, (ev) => source.expressionAt(ev));
+hover.attach(ui.disasm, (ev) => disasm.expressionAt(ev));
+
 const threads = createThreads({
   element: ui.threads,
   onSelect(id) {
@@ -271,6 +300,8 @@ function handleEvent(msg) {
     case "running":
       execBusy = false;
       store.patch({ "session.runState": msg.payload.runState });
+      // A value was only true for the stop it was read at.
+      hover.hide();
       source.clearExecLine();
       stack.clear();
       variables.clear();
@@ -279,6 +310,7 @@ function handleEvent(msg) {
       execBusy = false;
       // The session the prompt was guarding has ended on its own.
       hideConfirm();
+      hover.hide();
       store.patch({
         "session.runState": msg.payload.runState,
         "session.lastStopReason": exitText(msg.payload),
@@ -454,6 +486,7 @@ ui.locateApply.addEventListener("click", () => {
 
 function applyStopped(stopped) {
   execBusy = false;
+  hover.hide();
   store.patch({
     "session.runState": stopped.runState,
     "session.stopSeq": stopped.stopSeq,
@@ -528,6 +561,9 @@ function describeReason(reason) {
 
 function applySelection(sel) {
   if (!sel) return;
+  // Locals are per-frame, so a tooltip read in the previous frame is now about
+  // a different variable of the same name.
+  hover.hide();
   store.patch({ "selection.thread": sel.threadId, "selection.frame": sel.frame });
   // Frames arrive when the selection changed the stack — switching threads.
   // Without this the panel keeps rendering the previous thread's frames, which
@@ -1223,6 +1259,7 @@ for (const tab of document.querySelectorAll(".tab")) {
 for (const tab of document.querySelectorAll(".tab[data-center]")) {
   tab.addEventListener("click", () => {
     centerTab = tab.dataset.center;
+    hover.hide();
     for (const other of document.querySelectorAll(".tab[data-center]")) {
       other.classList.toggle("is-active", other === tab);
     }

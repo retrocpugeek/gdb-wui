@@ -9,6 +9,7 @@
 // address, raw bytes and an AT&T instruction. Nineteen kilobytes to get it
 // wrong is a poor trade against forty lines to get it right.
 
+import { bareRegisterExpr, registerExpr, symbolExpr } from "../core/expr.js";
 import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 
 // Four classes is all this needs: registers, immediates and addresses,
@@ -117,6 +118,31 @@ export function createDisasm({ element, onGutterClick }) {
     if (row) onGutterClick?.(row.dataset.address);
   });
 
+  // expressionAt answers the hover controller. The tokenizer has already done
+  // the parsing: the pointer is over exactly one span, and its class says what
+  // kind of thing it is.
+  //
+  // Immediates are left out on purpose. `$0x10` is a constant printed right
+  // there on the line, and a tooltip repeating it back would be the feature
+  // getting in the way of reading.
+  function expressionAt(ev) {
+    const el = ev.target;
+    if (!el?.classList) return null;
+    let expr = "";
+    if (el.classList.contains("asm-reg")) {
+      expr = registerExpr(el.textContent);
+    } else if (el.classList.contains("asm-sym")) {
+      expr = symbolExpr(el.textContent);
+    } else if (el.classList.contains("asm-plain")) {
+      // Only x86 decorates its registers. On ARM and MIPS a register is a bare
+      // word the tokenizer cannot distinguish from anything else, and this is
+      // where they land — so guess, and let a wrong guess come back as `void`.
+      expr = bareRegisterExpr(el.textContent);
+    }
+    if (!expr) return null;
+    return { expr, rect: el.getBoundingClientRect(), anchor: el };
+  }
+
   function revealPC() {
     if (!list || !pc) return;
     const index = instructions.findIndex((i) => i.address === pc);
@@ -129,6 +155,7 @@ export function createDisasm({ element, onGutterClick }) {
   }
 
   return {
+    expressionAt,
     set(disasm) {
       instructions = disasm.instructions ?? [];
       pc = disasm.pc ?? "";
