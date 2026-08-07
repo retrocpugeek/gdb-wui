@@ -46,6 +46,8 @@ what you get is gdb's behaviour with a better view of it.
   A stock `gdb` only knows the host architecture; for a foreign target install
   `gdb-multiarch` and point `-gdb` at it.
 - **Go ≥ 1.24** to build. Two dependencies, no npm, no bundler.
+- **Ghidra, optional**, only for the Decompiled tab. It is an 884 MB install
+  and needs a system JDK 21+; without it nothing else changes.
 
 ## Getting a link
 
@@ -123,8 +125,11 @@ should do by accident.
 
 **Decompiled** is a fourth centre tab, for a binary with no source. It shows
 Ghidra's recovered C for the function you are stopped in, with the program
-counter marked, and hovering a local reads its value out of the frame. It needs
-`-ghidra`; without it the tab says so and nothing else changes. See
+counter marked. The gutter sets breakpoints, and hovering a local or a global
+reads its value — a global being the readable one, since a fixed address is
+valid at every pc while two thirds of the locals live in a register that is
+only correct near one. It needs `-ghidra`, and can read *your own* Ghidra
+project — names, types and all — with `-ghidra-project`, opened read-only. See
 [docs/decompilation.md](docs/decompilation.md).
 
 **Step over and step into work there**, which they do not otherwise: gdb's own
@@ -241,9 +246,11 @@ showing the wrong file with plausible line numbers is worse than showing none.
 
 ## Architecture
 
-Five layers, each ignorant of the ones above it:
+Six layers, each ignorant of the ones above it:
 
 - `internal/mi` — GDB/MI codec and process supervisor. No domain knowledge.
+- `internal/ghidra` — the same shape for a resident decompiler: a long-lived
+  child, id-matched requests, a death that fails outstanding calls. Optional.
 - `internal/debugger` — all session state, behind a single actor goroutine.
 - `internal/hub` + `internal/httpapi` — the WebSocket protocol and HTTP surface.
 - `internal/srcfs` — the project, browsed through `os.Root` so nothing escapes.
@@ -256,11 +263,9 @@ fails if that document and the code disagree.
 [docs/findings.md](docs/findings.md) records the GDB behaviours this had to
 establish by measurement; test comments cite them by number.
 
-[docs/decompilation.md](docs/decompilation.md) covers decompilation: gdb-wui
-supervises a resident Ghidra the same way it supervises gdb, and serves
-recovered C with a map back to real addresses. There is no pane yet — the
-protocol is there and the browser does not use it — and the whole feature is
-optional: without `-ghidra` nothing changes.
+[docs/decompilation.md](docs/decompilation.md) covers decompilation — how the
+recovered C is mapped back to real addresses, and what that mapping cannot
+promise.
 
 ## Development
 

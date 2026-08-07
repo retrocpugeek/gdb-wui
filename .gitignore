@@ -4,6 +4,12 @@ coverage.out
 /e2e/node_modules
 .mi-log*
 
+# editor state: personal colour choices are not project configuration
+/.vscode/
+
+# gdb-wui's own cache, written beside the project it is browsing
+/.gdb-wui/
+
 # compiled fixtures and the Makefile's scratch output
 /testdata/fixtures/*.bin
 /build/

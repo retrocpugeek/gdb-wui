@@ -1,15 +1,54 @@
-# Decompilation sidecars
+# Decompilation
 
-A prototype. Nothing in the server or the frontend reads this yet; what exists
-is the exporter and the format, so the shape can be judged against real
-binaries before any UI is built on it.
+For a binary with no source, gdb-wui can show Ghidra's recovered C beside the
+live session, with the program counter marked on it. gdb stays in charge — this
+adds a view, not a second debugger.
 
-The idea: for a binary with no source, run Ghidra's decompiler once and keep
-its output beside the program, so gdb-wui can show recovered C next to the
-disassembly with the program counter marked on it. gdb is still in charge —
-this adds a view, not a debugger.
+It is optional. Without `-ghidra` nothing changes and the Decompiled tab
+explains itself.
 
-## Producing one
+## Using it
+
+```sh
+gdb-wui -project DIR -ghidra /opt/ghidra_12.1.2_PUBLIC
+```
+
+gdb-wui runs Ghidra as a separate process, exactly as it runs gdb — no linking,
+nothing vendored. It analyses the loaded executable once, caches the result
+under `<project>/.gdb-wui/ghidra` keyed on the binary's sha256, and keeps a
+resident decompiler for the session so a function costs 100-200ms rather than
+the 3.5s a fresh `analyzeHeadless` would.
+
+To read *your own* Ghidra project instead — with your names, types and comments
+— point at it. It is opened read-only and never written to:
+
+```sh
+gdb-wui -ghidra /opt/ghidra_12.1.2_PUBLIC \
+        -ghidra-project ~/ghidra-projects/fw/fw.gpr \
+        -ghidra-program firmware.elf
+```
+
+`-ghidra-program` is required there, and not out of fussiness: a real project
+holds several programs and, in Ghidra's Debugger workflow, a pile of traces,
+and `analyzeHeadless` with no `-process` pattern sweeps all of them.
+
+`-decomp-dir` moves the cache, which a read-only or network-mounted project
+needs.
+
+### What the pane does
+
+Stop anywhere and it decompiles the function you are in, marking the line. The
+gutter sets breakpoints on the lines that have addresses; hovering a local or a
+global reads its value. **Step over and step into work**, which they do not
+otherwise: gdb's own stepping needs a line table, and without one its step
+range is the whole function, so a step over runs to the function's exit. With
+this tab showing, a step walks to the next decompiled line instead.
+
+The **Log** tab carries what the decompiler is doing — what it imported, how
+long analysis took, one line per function with its timing, and Ghidra's own
+complaints.
+
+## Producing a sidecar by hand
 
 ```sh
 analyzeHeadless /tmp/proj decomp -import ./firmware.elf \
@@ -24,7 +63,11 @@ and can be run by hand, as above.
 
 An optional second script argument is a regular expression; only functions whose
 names match are decompiled. On an image with thousands of functions that is the
-difference between a prototype and a batch job.
+difference between a look and a batch job.
+
+This is the batch counterpart of what the server does on demand. Both emit the
+same schema from the same `DecompJson` helper, so the format below describes
+either.
 
 ## Reading one
 
@@ -40,10 +83,9 @@ show-decomp.py out.json main --bias 0x555555554000
 it prints lines up with what gdb shows. Lines marked `!` share an address with
 another line. Variables are rendered as expressions you can paste into gdb.
 
-gdb-wui would spawn this exactly as it spawns gdb — a separate process, no
-linking, nothing vendored. Ghidra is Apache-2.0, so unlike gdb there is no
-licence pressure here; the rule is kept anyway because Ghidra is a gigabyte with
-a JRE inside it and must stay an optional dependency.
+Ghidra is Apache-2.0, so unlike gdb there is no licence pressure to keep it at
+arm's length. The rule is kept anyway: it is an 884 MB install that also needs a
+system JDK 21+, and both must stay optional.
 
 ## The format
 
@@ -137,6 +179,18 @@ Three storage kinds come out of the decompiler and they are not equally useful:
 In `inspect`, `lVar1` and `local_58` look alike in the C text; one of them has
 a location and the other never will. A UI that shows blanks for some variables
 is honest. One that quietly omits them is not.
+
+### `globals`
+
+A separate list, from a separate map. `getLocalSymbolMap()` holds the frame and
+nothing else, so a function full of counters and flags — `cnt_drop_malformed`
+and its twenty-five siblings in `process_packet` — yields nothing addressable
+for any of them from `variables` alone.
+
+They are the readable half of the picture: a fixed address is valid at every
+pc, unlike a register, and needs no frame, unlike a stack slot. They are
+addressed by number rather than by name, because in a stripped image Ghidra
+calls one `DAT_<address>` and gdb has never heard of it.
 
 ## The two things a consumer must get right
 
@@ -310,6 +364,16 @@ way rather than implying the decompiled line is where the program "is".
   per connected browser.
 - **Decompiling is the cost, not analysis.** Ghidra's own `ParallelDecompiler`
   exists; this script is deliberately serial and single purpose.
+- **Import and serve cannot be one invocation.** `analyzeHeadless` writes an
+  imported program to the project only once the postScript returns, and the
+  resident server never returns — it *is* the server. Doing both at once
+  analyses the binary, serves it, and discards it, leaving an empty project for
+  the next run to fail on. They are two invocations.
+- **Stepping is reconstructed, not recovered.** `exec.stepLine` single-steps
+  until the pc reaches a different line, which is what gdb does with a real
+  line table. It cannot know about inlining or about statements the decompiler
+  merged, so where DWARF exists gdb's own stepping is better and is what the
+  source view keeps using.
 - **Far fewer variables are usefully readable than the storage kinds suggest.**
   On `/usr/bin/gzip`, of 960 variables:
 
