@@ -338,3 +338,32 @@ func TestStorageKindCollapse(t *testing.T) {
 		}
 	}
 }
+
+// TestSymbolFromValue pins the shape gdb actually returns, checked at the MI
+// level: `-data-evaluate-expression "(void*)$pc"` answers
+// value="0x5555555551f9 <inspect+16>", and the same for a stack address
+// answers value="0x7fffffffd658" with no annotation at all.
+func TestSymbolFromValue(t *testing.T) {
+	cases := map[string]string{
+		"0x5555555551f9 <inspect+16>": "inspect+16",
+		"0x555555555169 <main>":       "main",
+		// No symbol: the ordinary answer for the stack and the heap, and it
+		// has to come back empty rather than as some placeholder, because the
+		// caller omits those rather than showing a name that is not one.
+		"0x7fffffffd658": "",
+		"0x1":            "",
+		"":               "",
+		// Defensive: malformed decoration must not panic or half-parse.
+		"0x1 <unterminated": "",
+		"0x1 >backwards<":   "",
+		// A symbol whose own name contains angle brackets — a C++ template —
+		// must keep all of it, which is why the closing bracket is found from
+		// the end rather than the start.
+		"0x1 <std::vector<int>::push_back+8>": "std::vector<int>::push_back+8",
+	}
+	for in, want := range cases {
+		if got := symbolFromValue(in); got != want {
+			t.Errorf("symbolFromValue(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

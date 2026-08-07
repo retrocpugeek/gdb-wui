@@ -519,6 +519,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.memRead(r)
 	case wire.TypeEvalExpr:
 		return s.evalExpr(r)
+	case wire.TypeMemSymbols:
+		return s.memSymbols(r)
 
 	case wire.TypeSymbolsList:
 		return s.symbolsList(r)
@@ -601,7 +603,7 @@ func (s *Session) gate(typ string) *wire.Error {
 		wire.TypeThreadsList, wire.TypeThreadSelect,
 		wire.TypeDisasmFunction, wire.TypeDisasmRange,
 		wire.TypeExecStepI, wire.TypeExecNextI, wire.TypeExecStepLine,
-		wire.TypeMemRead, wire.TypeEvalExpr:
+		wire.TypeMemRead, wire.TypeEvalExpr, wire.TypeMemSymbols:
 		if s.st.runState != wire.RunStateStopped {
 			return wire.NewError(wire.CodeNotReady,
 				"no stopped inferior; load a program and run it first")

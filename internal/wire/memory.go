@@ -4,8 +4,9 @@ package wire
 
 // Request types implemented in M7.
 const (
-	TypeMemRead  = "mem.read"
-	TypeEvalExpr = "eval.expr"
+	TypeMemRead    = "mem.read"
+	TypeEvalExpr   = "eval.expr"
+	TypeMemSymbols = "mem.symbols"
 )
 
 // MemReadRequest reads bytes.
@@ -50,6 +51,33 @@ type Memory struct {
 	// outcome — pointing a hex viewer at an unmapped page is how you find out
 	// it is unmapped — not an error worth interrupting the user for.
 	Unreadable bool `json:"unreadable,omitempty"`
+}
+
+// MemSymbolsRequest asks which symbol each address falls in.
+//
+// A hex dump of raw addresses is hard to place; "cfg+0x10" says where you are.
+// The client sends the addresses it is showing rather than a range, because
+// the memory view is virtual: it renders a screenful out of a 4 KiB chunk and
+// symbolising the whole chunk would be mostly work nobody sees.
+type MemSymbolsRequest struct {
+	// Addresses are hex strings. Capped server-side.
+	Addresses []string `json:"addresses"`
+	StopSeq   uint64   `json:"stopSeq,omitempty"`
+}
+
+// MemSymbol names one address.
+type MemSymbol struct {
+	Addr string `json:"addr"`
+	// Name is gdb's rendering, "inspect+16" or bare "main". Empty when the
+	// address is in no symbol at all, which is the ordinary case for the stack
+	// and the heap.
+	Name string `json:"name,omitempty"`
+}
+
+// MemSymbols is the reply to mem.symbols. Addresses with no symbol are
+// omitted, so an empty reply is a meaningful answer rather than a failure.
+type MemSymbols struct {
+	Symbols []MemSymbol `json:"symbols"`
 }
 
 // EvalExprRequest evaluates a gdb expression.

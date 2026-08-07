@@ -123,6 +123,14 @@ Only names, fields and subscripts are evaluated. `f(x)` is not, and that is
 deliberate: gdb would answer by *calling f*, which is not a thing a mouse
 should do by accident.
 
+**Right-click the same thing for "Show in memory"** — the bytes at the
+variable's address, not its value. Not offered for something living in a
+register, which has no address at all.
+
+The memory viewer names what it is showing: each row carries the symbol it
+falls in, `inspect+16` rather than a bare number. Blank for the stack and the
+heap, which is the truth rather than an omission.
+
 **Decompiled** is a fourth centre tab, for a binary with no source. It shows
 Ghidra's recovered C for the function you are stopped in, with the program
 counter marked. The gutter sets breakpoints, and hovering a local or a global

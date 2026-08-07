@@ -129,8 +129,10 @@ export function createDisasm({ element, onGutterClick }) {
     const el = ev.target;
     if (!el?.classList) return null;
     let expr = "";
+    let storage = "";
     if (el.classList.contains("asm-reg")) {
       expr = registerExpr(el.textContent);
+      storage = "register";
     } else if (el.classList.contains("asm-sym")) {
       expr = symbolExpr(el.textContent);
     } else if (el.classList.contains("asm-plain")) {
@@ -138,9 +140,10 @@ export function createDisasm({ element, onGutterClick }) {
       // word the tokenizer cannot distinguish from anything else, and this is
       // where they land — so guess, and let a wrong guess come back as `void`.
       expr = bareRegisterExpr(el.textContent);
+      storage = "register";
     }
     if (!expr) return null;
-    return { expr, rect: el.getBoundingClientRect(), anchor: el };
+    return { expr, storage, rect: el.getBoundingClientRect(), anchor: el };
   }
 
   function revealPC() {

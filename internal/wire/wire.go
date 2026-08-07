@@ -161,6 +161,7 @@ var RequestTypes = []string{
 
 	TypeMemRead,
 	TypeEvalExpr,
+	TypeMemSymbols,
 
 	TypePathSubstitute,
 	TypePathAddDir,

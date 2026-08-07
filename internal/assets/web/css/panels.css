@@ -848,3 +848,16 @@
 
 .dec-row.has-bp .dec-gutter { color: var(--bg-0); background: var(--bp-fill); }
 .dec-row.is-pc.has-bp .dec-gutter { background: var(--bp-fill); }
+
+/* The symbol a hex row falls in. Dimmed and last, because it is an annotation
+ * on the bytes rather than part of them — and blank for the stack and the heap,
+ * which is the honest answer rather than an omission. */
+.mem-sym {
+  flex: 0 0 auto;
+  padding-left: 12px;
+  color: var(--tok-func);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28ch;
+}

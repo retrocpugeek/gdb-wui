@@ -190,6 +190,7 @@ decomp.clear();
 const memory = createMemory({
   element: ui.memory,
   onRead: (req) => send("mem.read", req),
+  onSymbols: (req) => send("mem.symbols", req),
   onError: reportError,
 });
 
@@ -220,6 +221,67 @@ const hover = createHover({
 hover.attach(ui.source, (ev) => source.expressionAt(ev));
 hover.attach(ui.disasm, (ev) => disasm.expressionAt(ev));
 hover.attach(ui.decomp, (ev) => decomp.expressionAt(ev));
+
+// Right-clicking whatever the pointer is over offers what can be done with it.
+// The same resolvers the hover uses, so the menu is about exactly the thing
+// whose value was just shown.
+for (const [pane, resolve] of [
+  [ui.source, (ev) => source.expressionAt(ev)],
+  [ui.disasm, (ev) => disasm.expressionAt(ev)],
+  [ui.decomp, (ev) => decomp.expressionAt(ev)],
+]) {
+  pane.addEventListener("contextmenu", (ev) => {
+    const hit = resolve(ev);
+    if (!hit) return;
+    ev.preventDefault();
+    hover.hide();
+
+    const items = [];
+    // A register is not in memory, so there is nothing to show. Offered only
+    // where the storage is known to be otherwise — the source view cannot
+    // tell, and there gdb's refusal is the answer.
+    if (hit.storage !== "register") {
+      items.push({
+        label: "Show in memory",
+        title: "the bytes at this variable's address, not its value",
+        run: () => showAddressOf(hit.expr, hit.name ?? hit.expr),
+      });
+    }
+    if (!items.length) {
+      setStatus(`${hit.expr} lives in a register, so it has no address in memory.`);
+      return;
+    }
+    showContextMenu(ev.clientX, ev.clientY, hit.name ?? hit.expr, items);
+  });
+}
+
+// showAddressOf points the memory viewer at where a variable lives.
+//
+// The address, not the value: `&(...)` wrapped around whatever expression the
+// pane resolved. The parentheses matter — `&*(int *)($rbp - 8)` is the slot
+// and `&(*(int *)($rbp - 8))` is the same thing said unambiguously, while for
+// a bare name `&buf + 16` would be a different place entirely.
+function showAddressOf(expr, label) {
+  send("mem.read", {
+    address: `&(${expr})`,
+    count: 64,
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((res) => {
+      showCenter("memory");
+      memory.show(res.addr, { expr: label, seq: store.get("session.stopSeq") });
+      ui.memAddr.value = `&(${expr})`;
+      ui.sourceMeta.textContent = memory.summary();
+      setStatus(res.unreadable
+        ? `${label} is at 0x${res.addr.toString(16)}, which is not readable.`
+        : `${label} — 0x${res.addr.toString(16)}`);
+    })
+    .catch((err) => {
+      // gdb's own words are the useful ones here: "Address requested for
+      // identifier ... which is in register $rax" says exactly what is wrong.
+      setStatus(err?.message ?? String(err), true);
+    });
+}
 
 const threads = createThreads({
   element: ui.threads,

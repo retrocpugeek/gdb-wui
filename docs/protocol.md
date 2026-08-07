@@ -103,6 +103,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `exec.nexti` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction, over calls. |
 | `exec.stepLine` | `{lines?, bodyStart?, bodyEnd?, over?, thread?, stopSeq?}` | [`ExecAck`](#execack) | Step until the pc reaches a different decompiled line. For views with no line table. |
 | `mem.read` | `{address, offset?, count, stopSeq?}` | [`Memory`](#memory) | `address` is any gdb expression. Capped at 64 KiB per read. |
+| `mem.symbols` | `{addresses, stopSeq?}` | `{symbols}` | Which symbol each address falls in. Capped at 128 per request. |
 | `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. Also the hover evaluator, which is why the client debounces it. |
 | `symbols.list` | `{filter?, kind?, limit?}` | [`SymbolsList`](#symbols) | Allowed while the inferior runs: the symbol table is a property of the file. |
 | `symbols.load` | `{path, mode?, offset?}` | `{path, mode, available}` | Symbols without an exec file. `mode` is `replace` or `add`. |
@@ -480,6 +481,29 @@ is what makes a gigabyte-wide region free — only the bytes for visible rows ar
 ever fetched, into a sparse cache of 4 KiB chunks with an LRU bound. The cache
 is dropped on every stop, because memory is precisely the thing that changes
 while a program runs.
+
+### Symbolising addresses
+
+`mem.symbols` answers "what is this address called", so a hex dump reads as
+`cfg+0x10` rather than as a bare number.
+
+```json
+{"symbols": [{"addr": "0x5555555551f9", "name": "inspect+16"}]}
+```
+
+An address in no symbol is **omitted** rather than returned empty, which is the
+ordinary case for the stack and the heap; an empty reply is therefore a
+meaningful answer, not a failure.
+
+It is implemented by evaluating `(void*)ADDR`, because gdb annotates a pointer
+with its symbol when it prints one — `0x5555555551f9 <inspect+16>`. That needs
+no console command, and it is the only answer that stays correct across
+relocation and across shared libraries, each of which has its own load bias.
+A table built from `-symbol-info-*` would not: those addresses are link-time.
+
+The client sends the addresses it is showing rather than a range. The memory
+view is virtual over a 4 KiB chunk, and symbolising a whole chunk would be 256
+lookups for a screenful of forty.
 
 ### Source paths
 
