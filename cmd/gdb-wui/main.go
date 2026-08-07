@@ -509,12 +509,42 @@ func decompConfig(opt options, projectAbs string, logf func(string, ...any)) deb
 		return debugger.DecompConfig{}
 	}
 	cfg := debugger.DecompConfig{Install: install, CacheRoot: opt.decompDir}
+	if cfg.CacheRoot != "" {
+		// An explicit path that Ghidra will refuse is worth saying so about
+		// now, rather than one JVM start later in a message that names
+		// neither the path nor the reason.
+		if err := ghidra.CheckProjectPath(cfg.CacheRoot); err != nil {
+			logf("decompilation unavailable: %v", err)
+			return debugger.DecompConfig{}
+		}
+	}
 	if cfg.CacheRoot == "" {
-		// Beside the project by default, so the analysis travels with it and
-		// is visible rather than hidden in a cache directory nobody finds.
+		// Beside the project by default, so the analysis travels with it.
 		// -decomp-dir moves it, which is what a read-only or network-mounted
 		// project needs.
-		cfg.CacheRoot = filepath.Join(projectAbs, ".gdb-wui", "ghidra")
+		//
+		// Not a dotted name, and not for want of trying: Ghidra refuses any
+		// path element beginning with a dot, which rules out both a hidden
+		// directory here and every conventional cache location, $XDG_CACHE_HOME
+		// being ~/.cache. Visible it is.
+		cfg.CacheRoot = filepath.Join(projectAbs, "gdb-wui-decomp")
+		if err := ghidra.CheckProjectPath(cfg.CacheRoot); err != nil {
+			// The project itself lives under a dotted directory, so nothing
+			// inside it can hold the cache. Fall back somewhere Ghidra will
+			// accept and say so, because the analysis will then be redone
+			// after a reboot.
+			cfg.CacheRoot = filepath.Join(os.TempDir(), "gdb-wui-decomp")
+			logf("decompilation: %v", err)
+			logf("decompilation: caching in %s instead; pass -decomp-dir to choose",
+				cfg.CacheRoot)
+		}
+	}
+
+	if opt.ghidraProject != "" {
+		if err := ghidra.CheckProjectPath(opt.ghidraProject); err != nil {
+			logf("decompilation unavailable: %v", err)
+			return debugger.DecompConfig{}
+		}
 	}
 
 	if opt.ghidraProject != "" {

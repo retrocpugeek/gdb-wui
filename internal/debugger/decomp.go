@@ -179,6 +179,17 @@ func (s *Session) maybeStartDecomp() {
 		if root == "" {
 			return
 		}
+		// Checked here as well as at startup: a caller of the library could
+		// hand us anything, and Ghidra's own refusal names neither the path
+		// nor the reason and arrives a JVM start later.
+		if err := ghidra.CheckProjectPath(root); err != nil {
+			s.decomp.mu.Lock()
+			s.decomp.state = wire.DecompFailed
+			s.decomp.err = err.Error()
+			s.decomp.mu.Unlock()
+			s.decompLog(wire.DecompLogError, "%v", err)
+			return
+		}
 		// Keyed on the hash, not the path: a rebuilt binary must not be served
 		// a stale analysis of its predecessor.
 		cfg.ProjectDir = filepath.Join(root, s.st.exeSHA256[:16])

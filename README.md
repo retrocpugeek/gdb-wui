@@ -79,7 +79,7 @@ breakpoints survive.
 | `-ghidra DIR` | Ghidra installation, to enable decompilation. Defaults to `$GHIDRA_INSTALL_DIR`, then the usual locations. |
 | `-ghidra-project PATH` | An existing Ghidra project to read, **opened read-only** — your names and types, never written to. |
 | `-ghidra-program NAME` | Which program inside that project. Required with `-ghidra-project`: a real project holds several. |
-| `-decomp-dir DIR` | Where to cache projects gdb-wui creates itself (default `<project>/.gdb-wui/ghidra`). |
+| `-decomp-dir DIR` | Where to cache projects gdb-wui creates itself (default `<project>/gdb-wui-decomp`). |
 
 The **Symbols** pane under the file tree lists the loaded program's functions
 and globals. Type in the filter box to narrow it, and double-click a symbol to

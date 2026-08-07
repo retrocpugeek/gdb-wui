@@ -7,8 +7,9 @@ coverage.out
 # editor state: personal colour choices are not project configuration
 /.vscode/
 
-# gdb-wui's own cache, written beside the project it is browsing
-/.gdb-wui/
+# gdb-wui's decompilation cache, written beside the project it is browsing.
+# Not a dotted name: Ghidra refuses any path element starting with a dot.
+/gdb-wui-decomp/
 
 # compiled fixtures and the Makefile's scratch output
 /testdata/fixtures/*.bin

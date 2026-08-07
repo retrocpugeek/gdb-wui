@@ -15,9 +15,18 @@ gdb-wui -project DIR -ghidra /opt/ghidra_12.1.2_PUBLIC
 
 gdb-wui runs Ghidra as a separate process, exactly as it runs gdb — no linking,
 nothing vendored. It analyses the loaded executable once, caches the result
-under `<project>/.gdb-wui/ghidra` keyed on the binary's sha256, and keeps a
+under `<project>/gdb-wui-decomp` keyed on the binary's sha256, and keeps a
 resident decompiler for the session so a function costs 100-200ms rather than
 the 3.5s a fresh `analyzeHeadless` would.
+
+That directory is visible rather than hidden, and not by preference: **Ghidra
+refuses any path element beginning with a dot**, anywhere in a project's
+location. Measured on 12.1.2 — `.../x/.gdbwui/ghidra` and
+`.../x/.hidden/sub/ghidra` are both rejected with "Path element starting with
+'.' is not permitted", while the same tree without dots imports fine. That also
+rules out every conventional cache location, `$XDG_CACHE_HOME` being `~/.cache`
+and `$XDG_STATE_HOME` `~/.local/state`. If the project itself lives under a
+dotted directory, gdb-wui falls back to a temporary directory and says so.
 
 To read *your own* Ghidra project instead — with your names, types and comments
 — point at it. It is opened read-only and never written to:

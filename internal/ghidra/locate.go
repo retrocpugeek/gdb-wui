@@ -127,3 +127,31 @@ func readVersion(dir string) string {
 	}
 	return ""
 }
+
+// CheckProjectPath rejects a path Ghidra will not accept as a project location.
+//
+// Ghidra refuses any path element beginning with a dot — not merely the last
+// one — with "Path element starting with '.' is not permitted". Measured: a
+// location of .../x/.hidden/sub/ghidra fails exactly as .../x/.gdbwui/ghidra
+// does, while the same tree without dots imports fine.
+//
+// That rules out every conventional per-user cache location, since $XDG_CACHE_HOME
+// is ~/.cache and $XDG_STATE_HOME is ~/.local/state. It also means a project
+// living under a dotted directory cannot hold its own cache.
+//
+// Checked here rather than left to Ghidra, because Ghidra's own message names
+// neither the path nor the offending element, and arrives after a JVM start.
+func CheckProjectPath(path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("ghidra: %s: %w", path, err)
+	}
+	for _, part := range strings.Split(abs, string(filepath.Separator)) {
+		if strings.HasPrefix(part, ".") && part != "." && part != ".." {
+			return fmt.Errorf(
+				"ghidra: cannot use %s as a project location: the element %q starts "+
+					"with a dot, and Ghidra refuses any such path element", abs, part)
+		}
+	}
+	return nil
+}
