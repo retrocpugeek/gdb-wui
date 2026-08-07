@@ -124,6 +124,7 @@ var RequestTypes = []string{
 	TypeExecKill,
 
 	TypeBpSetSource,
+	TypeBpSetAddress,
 	TypeBpDelete,
 	TypeBpSetEnabled,
 	TypeBpList,
@@ -155,6 +156,7 @@ var RequestTypes = []string{
 	TypeDisasmRange,
 
 	TypeExecStepI,
+	TypeExecStepLine,
 	TypeExecNextI,
 
 	TypeMemRead,
@@ -166,6 +168,9 @@ var RequestTypes = []string{
 
 	TypeSymbolsList,
 	TypeSymbolsLoad,
+
+	TypeDecompStatus,
+	TypeDecompFunction,
 }
 
 // SessionRequestTypes is the subset the hub answers with no debugger attached.
@@ -208,6 +213,8 @@ var EventNames = []string{
 
 	EventSymbolsInvalidated,
 	EventRemoteChanged,
+	EventDecompChanged,
+	EventDecompLog,
 }
 
 // Hello is pushed to every connection the moment it opens, before anything is

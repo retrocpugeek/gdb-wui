@@ -77,6 +77,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `exec.pause` | — | `{paused}` | Allowed while running. |
 | `exec.kill` | — | [`ExecAck`](#execack) | Allowed while running. |
 | `bp.setSource` | `{path, line, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | |
+| `bp.setAddress` | `{location, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | `location` is an address or a function name. The only way to break in a stripped binary. |
 | `bp.delete` | `{number}` | [`BreakpointList`](#breakpoints-1) | |
 | `bp.setEnabled` | `{number, enabled}` | [`BreakpointList`](#breakpoints-1) | |
 | `bp.list` | — | [`BreakpointList`](#breakpoints-1) | Re-reads from gdb. Allowed while running. |
@@ -100,10 +101,13 @@ Everything below needs a debugger session except the `session.*` group; with
 | `disasm.range` | `{start, end, stopSeq?}` | [`Disassembly`](#disassembly) | Capped at 1 MiB of address space. |
 | `exec.stepi` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction. |
 | `exec.nexti` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction, over calls. |
+| `exec.stepLine` | `{lines?, bodyStart?, bodyEnd?, over?, thread?, stopSeq?}` | [`ExecAck`](#execack) | Step until the pc reaches a different decompiled line. For views with no line table. |
 | `mem.read` | `{address, offset?, count, stopSeq?}` | [`Memory`](#memory) | `address` is any gdb expression. Capped at 64 KiB per read. |
-| `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. |
+| `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. Also the hover evaluator, which is why the client debounces it. |
 | `symbols.list` | `{filter?, kind?, limit?}` | [`SymbolsList`](#symbols) | Allowed while the inferior runs: the symbol table is a property of the file. |
 | `symbols.load` | `{path, mode?, offset?}` | `{path, mode, available}` | Symbols without an exec file. `mode` is `replace` or `add`. |
+| `decomp.status` | `{}` | [`DecompStatus`](#decompilation) | Answered even with no program loaded: it is how a client learns the feature exists. |
+| `decomp.function` | `{target?, thread?, frame?, stopSeq?}` | [`DecompFunction`](#decompilation) | `target` is a name or any address inside a function; empty follows the selected frame. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is frequently blocked in a gdb round-trip, and that is
@@ -133,13 +137,18 @@ mechanism covers a double-clicked step, a panel refreshing against a stop that
 has been superseded, and — from M4 — a variable tree built from a frame that no
 longer exists.
 
+`bp.setFunction` stayed reserved rather than being implemented alongside
+`bp.setAddress`: that request takes a function name as readily as an address,
+and two requests differing only in which spelling they accept would be one too
+many.
+
 ### Reserved
 
 These names are fixed now so the frontend and the docs do not have to be renamed
 later. Requesting one today returns `unsupported`.
 
 `exe.unload` · `exec.until` `exec.return` ·
-`bp.setFunction` `bp.setAddress` `bp.setWatch` `bp.setCondition`
+`bp.setFunction` `bp.setWatch` `bp.setCondition`
 `bp.setIgnoreCount` · `vars.setFormat` `vars.assign`
 
 ## Events
@@ -160,6 +169,8 @@ later. Requesting one today returns `unsupported`.
 | `threadsChanged` | Threads appeared or disappeared. | [`ThreadsList`](#threads) |
 | `symbolsInvalidated` | The cached symbol table belongs to a program that is no longer loaded. | `{}` |
 | `remoteChanged` | A remote target was connected or disconnected. | `{connected, address?}` |
+| `decompChanged` | The decompiler started, died, or now holds a different program. | `{}` |
+| `decompLog` | One line of decompiler activity, for the log pane. | `{text, level?, millis?}` |
 | `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
 | `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
@@ -538,6 +549,148 @@ Breakpoint state is **event-driven**: `-break-insert -f` can return
 The mirror hides temporary breakpoints the server did not create. `-exec-run
 --start` injects one at `main`, and a marker the user cannot delete because they
 never made it is worse than no marker.
+
+### Decompilation
+
+Recovered C beside a live session, for a binary with no source. The producer is
+Ghidra, supervised as a separate process exactly as gdb is — no linking,
+nothing vendored. The feature is optional: with no `-ghidra` and no
+`GHIDRA_INSTALL_DIR`, `decomp.status` reports `off` and nothing else changes.
+
+`decomp.status`:
+
+```json
+{ "state": "ready",
+  "ghidraVersion": "12.1.2",
+  "functionCount": 1415,
+  "program": { "name": "vwfw-linux_64.symbols", "sha256": "27763cc2…",
+               "languageId": "MIPS:BE:64:default", "imageBase": "0x120000000",
+               "pointerSize": 8 } }
+```
+
+`state` is `off`, `starting`, `ready` or `failed`. `starting` is a state a
+client genuinely observes: opening an existing project is seconds, importing
+and analysing a binary is minutes.
+
+`mismatch` is set when the decompiler's program is not the binary gdb loaded,
+compared by sha256. A warning rather than a refusal — a stripped and an
+unstripped link of one program share every address, so the decompilation is
+often still correct — but reading one build while debugging another is a
+confidently wrong answer and has to be visible.
+
+`decomp.function` returns the recovered text with a line map:
+
+```json
+{ "name": "process_packet", "entry": "0x120007ee0",
+  "text": "void process_packet(…)\n{\n…",
+  "lines": [ {"n": 26, "addrs": ["0x1200068d5"]},
+             {"n": 28, "addrs": ["0x1200068e2", "0x1200068e5"]} ],
+  "vars":  [ {"name": "local_70", "type": "undefined1 *", "storage": "stack",
+              "expr": "*(undefined1 * *)($sp + 0xf0)"} ],
+  "bias": 0, "biasFrom": "main", "pcLine": 28 }
+```
+
+**`addrs` is a set, not a range.** A decompiled line's addresses are routinely
+disjoint and consecutive lines interleave — a loop's init, increment and test
+sit either side of its body — so a min/max range would claim instructions
+belonging to a different line.
+
+**Every address has `bias` already applied**, so it is directly comparable with
+`stopped`, the disassembly and everything else on the wire. `biasFrom` names
+the symbol the bias was established from, by resolving it through gdb and
+subtracting Ghidra's address for it. Image bases are *not* used for this: that
+arithmetic is right for a non-PIE and silently wrong for everything else. An
+empty `biasFrom` means no shared symbol was found — the ordinary case for a
+stripped image, where Ghidra's names are `FUN_<address>` and gdb has never
+heard of them — and then `bias` is zero and the addresses are link-time, which
+a client must say rather than imply otherwise.
+
+`pcLine` is the line the program counter is on, resolved server-side so every
+client does not reimplement two rules that are not obvious.
+
+The tie-break: on optimised code about one address in five is claimed by two
+lines, and the answer is the lowest line number that claims it.
+`pcLineAmbiguous` reports when that happened, because it is the same
+imprecision as stepping `-O2` code with DWARF and hiding it would be a lie.
+
+The fallback: plenty of addresses are claimed by *no* line. Prologues, register
+spills and epilogues belong to no expression, and stepping lands on them
+constantly — on a hello-world, stepping off a function's last statement lands
+on `0x1248` when the nearest mapped addresses are `0x1243` and `0x124d`.
+Reporting "no line" there is accurate and useless: it makes the marker blink
+out mid-step. The nearest *preceding* line is used instead and flagged
+`pcLineApprox`, which a client draws differently — "the program is here" and
+"the program is somewhere after here" are different claims.
+
+`decompLog` is **not** behind a flag, unlike the raw MI stream. Its volume is
+one line per human-paced operation — start, import, ready, one per decompile —
+and the alternative is a pane that says "starting" for a minute with no way to
+tell whether anything is happening or why it failed. Ghidra's own output is
+filtered on the way through: its `REPORT:` milestones and its complaints go to
+the browser, while the JVM banner, every analyzer's timing and the log4j noise
+stay in the server's log where `-v` can find them.
+
+`level` is `info`, `warn` or `error`. `millis` times an operation that
+finished, and is a separate field rather than part of `text` so a client can
+render durations consistently instead of parsing them back out.
+
+`expr` uses gdb's type vocabulary, not Ghidra's. `undefined4`, `uint` and the
+name of a struct Ghidra invented all fail to parse — measured, `p *(config *
+*)($rbp - 0x58)` answers `No symbol "config" in current context` — so a pointer
+to something unnameable becomes `void *` and anything else unnameable becomes
+an unsigned integer of the right width. Both lose the type; neither loses the
+value.
+
+`storage` is `stack`, `register` or `none`, and the three are not
+interchangeable. `stack` is readable anywhere in the frame. `register` is
+readable only near `pc` — in optimised code the decompiler packs many variables
+into one register, so a value read elsewhere is confidently wrong. `none` is a
+decompiler temporary that exists nowhere in the machine and can never show a
+value; it is reported rather than omitted, because a blank row is honest and a
+missing one is not.
+
+`expr` is a gdb expression, formed from Ghidra's frame base — the stack pointer
+at function entry — using a per-ABI rule established by measurement:
+`$rbp + pointerSize` on x86-64 with a frame pointer, `$sp + frame.size` on
+MIPS64. An architecture with no established rule gets no expression rather than
+a guess. See [docs/decompilation.md](decompilation.md).
+
+`bp.setAddress` passes a name to gdb verbatim and only wraps a bare address in
+`*`. The difference is not cosmetic: gdb skips the prologue for a named
+function — `break process_packet` on a MIPS firmware stops at entry+24, past
+the register spills — and `*name` would defeat that and stop on the first
+instruction instead, which is not where anyone means.
+
+`exec.stepLine` exists because gdb's `next` and `step` need a line table. With
+none, gdb's step range is the whole function, so "step over" in a binary
+without debug info runs to the function's exit — measured on a
+symbols-but-no-DWARF build, `break main` then `next` lands at `0x7ffff7c2a601`,
+inside libc, having returned out of `main` altogether.
+
+It does what gdb does internally when it *does* have a line table: single-step
+until the pc reaches a different line. Only the source of the map differs —
+Ghidra's instead of DWARF's.
+
+The rule is "a different line", and it has to be, rather than anything simpler.
+A line's address set is **sparse** — the addresses its tokens carry, not every
+instruction between them — so stepping until the pc leaves the set ends at the
+first unlisted instruction, usually the second one. A line's *span* is no good
+either: a loop header's addresses wrap around the body, so its span covers the
+whole loop and stepping out of it would step out of the loop. Resolving "which
+line" reuses the pc marker's rule, fallback included, so an instruction between
+a line's tokens maps back to that line and the walk continues.
+
+The client sends the whole map because it already holds it, which saves the
+server decompiling the function again on every step — a few kilobytes at human
+stepping speeds.
+
+The intermediate stops are not broadcast. Ten instructions inside one
+decompiled line are one step, and emitting ten `stopped` events would repaint
+the stack, the locals and the registers ten times. The walk also ends on
+anything that is not `end-stepping-range` — a breakpoint, a signal — and on
+leaving the frame it started in, so a step over the last statement of a
+function stops on return rather than following the caller's addresses by
+coincidence.
 
 ## Errors
 

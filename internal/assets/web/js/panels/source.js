@@ -6,6 +6,7 @@
 // a file.
 
 import { fetchFile } from "../core/api.js";
+import { expressionAt as parseExpression } from "../core/expr.js";
 import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 
 export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
@@ -194,8 +195,50 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
     onGutterClick?.(path, Number(row.dataset.line));
   });
 
+  // caretAt maps a viewport point onto a character in a text node.
+  //
+  // Two spellings because the standard one is recent: Firefox and current
+  // Chrome have caretPositionFromPoint, older Chrome and Safari only ever had
+  // caretRangeFromPoint. Neither is worth a fallback that guesses from column
+  // widths — without one of these there is simply no hover.
+  function caretAt(x, y) {
+    if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(x, y);
+      return pos ? { node: pos.offsetNode, offset: pos.offset } : null;
+    }
+    if (document.caretRangeFromPoint) {
+      const range = document.caretRangeFromPoint(x, y);
+      return range ? { node: range.startContainer, offset: range.startOffset } : null;
+    }
+    return null;
+  }
+
+  // expressionAt is what the hover controller asks on every mouse move.
+  //
+  // The rendered line is a single text node — the row renderer sets
+  // textContent, not markup — so the offset the caret API reports indexes
+  // straight into the source text and no reverse mapping is needed. That is
+  // also why this does not survive syntax highlighting unchanged.
+  function expressionAt(ev) {
+    const code = ev.target?.closest?.(".src-code");
+    if (!code) return null;
+    const caret = caretAt(ev.clientX, ev.clientY);
+    if (!caret || caret.node?.nodeType !== Node.TEXT_NODE) return null;
+    if (caret.node.parentElement !== code) return null;
+
+    const found = parseExpression(caret.node.data, caret.offset);
+    if (!found) return null;
+    // Anchor to the whole chain rather than to the pointer: a tooltip for
+    // `cfg.items[2].name` should point at all of it.
+    const range = document.createRange();
+    range.setStart(caret.node, found.start);
+    range.setEnd(caret.node, found.end);
+    return { expr: found.expr, rect: range.getBoundingClientRect(), anchor: code };
+  }
+
   return {
     open,
+    expressionAt,
     get path() {
       return path;
     },

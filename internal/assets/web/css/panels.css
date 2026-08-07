@@ -321,6 +321,13 @@
 .log-mi-out   { color: var(--tok-keyword); }
 .log-mi-in    { color: var(--fg-2); }
 
+/* The decompiler's own activity. Distinct from gdb's console and from the MI
+ * stream, because when something is slow or wrong it matters a great deal
+ * which of the two processes it was. */
+.log-decomp       { color: var(--tok-func); }
+.log-decomp-warn  { color: var(--warn); }
+.log-decomp-error { color: var(--danger); }
+
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
@@ -748,3 +755,96 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* --- hover tooltip --------------------------------------------------------- */
+
+/* Outside #app and fixed-positioned for the same reason as the context menu:
+ * the panels set `contain: layout paint`, which would clip a tooltip to the
+ * pane, and the top line of the source view is exactly where one needs to
+ * escape upwards.
+ *
+ * pointer-events: none is the load-bearing declaration. The tooltip is placed
+ * right where the pointer is heading, and a tooltip that can be hovered would
+ * take the mouseleave off the word it describes, hide itself, and reappear —
+ * a flicker with no way out. */
+.hovertip {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  max-width: 60ch;
+  padding: 3px 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px var(--shadow-popup);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-ui);
+  color: var(--fg-1);
+  white-space: pre-wrap;
+  /* A struct prints on one long line; wrapping it forever would cover the code
+   * the user is reading. Three lines is enough to see the shape of one. */
+  max-height: calc(var(--line-h) * 3);
+  overflow: hidden;
+}
+
+.hovertip-expr { color: var(--fg-2); }
+.hovertip-value { color: var(--fg-0); }
+
+/* The same number in the other base, dimmed: it is a convenience, not part of
+ * what gdb said. */
+.hovertip-alt::before { content: "  "; }
+.hovertip-alt { color: var(--fg-2); }
+
+/* --- decompiled view -------------------------------------------------------- */
+
+/* Recovered C. Deliberately styled like the source view rather than like the
+ * disassembly: it reads as code, and pretending otherwise would be a worse lie
+ * than the one the decompiler is already telling. */
+.dec { font-family: var(--font-mono); }
+
+.dec-row {
+  display: flex;
+  height: var(--line-h);
+  line-height: var(--line-h);
+  white-space: pre;
+}
+
+.dec-gutter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 5ch;
+  padding: 0 6px;
+  color: var(--fg-2);
+  background: var(--bg-1);
+  user-select: none;
+}
+
+/* Only a line with addresses can hold a breakpoint. Everything else — braces,
+ * declarations, blank lines — must not invite a click that does nothing. */
+.dec-row.is-mapped .dec-gutter { color: var(--fg-1); cursor: pointer; }
+.dec-row.is-mapped .dec-gutter:hover { background: var(--bg-3); color: var(--fg-0); }
+
+.dec-code { padding: 0 10px; color: var(--tok-plain); }
+
+.dec-row.is-pc { background: var(--exec-line); }
+.dec-row.is-pc .dec-gutter { background: var(--exec-line); color: var(--fg-0); }
+
+/* An ambiguous highlight is marked rather than hidden: on optimised code about
+ * one address in five is claimed by two lines, and a user working out what the
+ * compiler did is exactly who cannot afford to be told a guess is a fact. */
+.dec-row.is-pc-ambiguous .dec-gutter::after {
+  content: "?";
+  margin-left: 2px;
+  color: var(--warn);
+}
+
+/* No line claimed the pc, so this is the nearest one above it. An outline
+ * rather than a fill: "the program is here" and "the program is somewhere
+ * after here" are different claims and must not look identical. */
+.dec-row.is-pc-approx { background: transparent; box-shadow: inset 2px 0 0 var(--exec-line); }
+.dec-row.is-pc-approx .dec-gutter { background: var(--bg-1); color: var(--fg-1); }
+
+.dec-row.has-bp .dec-gutter { color: var(--bg-0); background: var(--bp-fill); }
+.dec-row.is-pc.has-bp .dec-gutter { background: var(--bp-fill); }

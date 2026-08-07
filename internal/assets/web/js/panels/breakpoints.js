@@ -82,7 +82,23 @@ export function createBreakpoints({ element, onToggle, onDelete, onReveal }) {
     find(path, line) {
       return items.find((b) => b.path === path && b.line === line);
     },
+    // findAddress makes the machine-level gutters a toggle rather than an
+    // accumulator. gdb pads addresses to the pointer width and the panes do
+    // not, so the comparison has to be numeric.
+    findAddress(address) {
+      const want = normaliseAddr(address);
+      if (!want) return undefined;
+      return items.find((b) => normaliseAddr(b.address) === want);
+    },
   };
+}
+
+// normaliseAddr strips the zero padding gdb applies, so "0x0000000000001040"
+// and "0x1040" compare equal.
+function normaliseAddr(addr) {
+  if (typeof addr !== "string") return "";
+  const m = /^0x0*([0-9a-f]+)$/i.exec(addr.trim());
+  return m ? m[1].toLowerCase() : "";
 }
 
 function note(text) {

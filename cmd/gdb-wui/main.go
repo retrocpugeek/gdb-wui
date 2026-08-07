@@ -18,12 +18,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/retrocpugeek/gdb-wui/internal/assets"
 	"github.com/retrocpugeek/gdb-wui/internal/debugger"
+	"github.com/retrocpugeek/gdb-wui/internal/ghidra"
 	"github.com/retrocpugeek/gdb-wui/internal/httpapi"
 	"github.com/retrocpugeek/gdb-wui/internal/hub"
 	"github.com/retrocpugeek/gdb-wui/internal/mi"
@@ -50,6 +52,13 @@ type options struct {
 	miLog    bool
 	printURL bool
 	idleExit time.Duration
+
+	// Decompilation. Optional throughout: Ghidra is a large dependency and
+	// most sessions never want one.
+	ghidraDir     string
+	ghidraProject string
+	ghidraProgram string
+	decompDir     string
 }
 
 func main() {
@@ -69,6 +78,10 @@ func main() {
 	flag.BoolVar(&opt.noGDB, "no-gdb", false, "browse the project without starting a debugger")
 	flag.BoolVar(&opt.miLog, "mi-log", false, "stream raw MI traffic to the browser's log pane")
 	flag.BoolVar(&opt.printURL, "print-url", false, "print a fresh login URL for an already-running gdb-wui and exit")
+	flag.StringVar(&opt.ghidraDir, "ghidra", "", "Ghidra installation directory for decompilation (default $"+ghidra.EnvInstall+", then the usual locations)")
+	flag.StringVar(&opt.ghidraProject, "ghidra-project", "", "existing Ghidra project (.gpr) to read, opened read-only")
+	flag.StringVar(&opt.ghidraProgram, "ghidra-program", "", "which program inside -ghidra-project to decompile")
+	flag.StringVar(&opt.decompDir, "decomp-dir", "", "where to cache Ghidra projects gdb-wui creates (default <project>/.gdb-wui/ghidra)")
 	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
 		"exit after this long with no browser connected (0 disables)")
 	flag.Usage = usage
@@ -246,6 +259,7 @@ func startDebugger(opt options, files *srcfs.FS, h *hub.Hub, logf func(string, .
 		Version:    version,
 		GDBVersion: gdbVersion(opt.gdbPath),
 		MILog:      opt.miLog,
+		Decomp:     decompConfig(opt, files.Abs(), logf),
 	})
 	if err != nil {
 		return nil, err
@@ -475,4 +489,51 @@ func openBrowser(url string, logf func(string, ...any)) {
 	}
 	logf("no browser launcher found (tried %s); open the URL above yourself",
 		strings.Join(candidates, ", "))
+}
+
+// decompConfig resolves the decompiler options, or returns a zero value.
+//
+// Every failure here is soft. Decompilation is an extra view: a missing or
+// misconfigured Ghidra must leave a working debugger and an explanation in the
+// log, not a refusal to start. The UI learns the feature is unavailable from
+// decomp.status and says how to enable it.
+func decompConfig(opt options, projectAbs string, logf func(string, ...any)) debugger.DecompConfig {
+	// Only go looking when asked. Discovering a Ghidra nobody mentioned and
+	// silently offering to spawn a JVM from it is too much initiative.
+	if opt.ghidraDir == "" && opt.ghidraProject == "" && os.Getenv(ghidra.EnvInstall) == "" {
+		return debugger.DecompConfig{}
+	}
+	install, err := ghidra.Locate(opt.ghidraDir)
+	if err != nil {
+		logf("decompilation unavailable: %v", err)
+		return debugger.DecompConfig{}
+	}
+	cfg := debugger.DecompConfig{Install: install, CacheRoot: opt.decompDir}
+	if cfg.CacheRoot == "" {
+		// Beside the project by default, so the analysis travels with it and
+		// is visible rather than hidden in a cache directory nobody finds.
+		// -decomp-dir moves it, which is what a read-only or network-mounted
+		// project needs.
+		cfg.CacheRoot = filepath.Join(projectAbs, ".gdb-wui", "ghidra")
+	}
+
+	if opt.ghidraProject != "" {
+		// A .gpr is addressed by the directory holding it plus its bare name,
+		// which is not how anyone thinks of a project, so accept the path to
+		// the .gpr itself and split it.
+		path := strings.TrimSuffix(opt.ghidraProject, ".gpr")
+		cfg.ProjectDir = filepath.Dir(path)
+		cfg.ProjectName = filepath.Base(path)
+		cfg.Program = opt.ghidraProgram
+		if cfg.Program == "" {
+			// Not a default worth guessing. A project holds several programs
+			// and, in Ghidra's Debugger workflow, a pile of traces; picking
+			// one would be picking wrong.
+			logf("decompilation unavailable: -ghidra-project needs -ghidra-program " +
+				"naming one program inside it")
+			return debugger.DecompConfig{}
+		}
+	}
+	logf("decompilation: ghidra %s at %s", install.Version, install.Dir)
+	return cfg
 }

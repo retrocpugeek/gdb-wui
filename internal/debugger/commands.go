@@ -78,6 +78,10 @@ func (s *Session) exeLoad(r *request) (any, *wire.Error) {
 	s.st.registerNames = nil
 	s.invalidateSymbols()
 	s.st.exePath = req.Path
+	// Hashed here rather than on demand: the decompiler's mismatch guard needs
+	// it, and reading the file once at load time is cheaper and more truthful
+	// than reading it later, when it may have been rebuilt underneath us.
+	s.st.exeSHA256 = s.hashExe(req.Path)
 	s.st.runState = wire.RunStateNoProgram
 	s.st.threads = nil
 	s.st.frames = nil
@@ -517,4 +521,57 @@ func atoiSafe(s string) int {
 		return 0
 	}
 	return n
+}
+
+// bpSetAddress sets a breakpoint by address or by symbol.
+//
+// The counterpart to bpSetSource for everything without source: a decompiled
+// line, a disassembly row, a function in the symbol pane. In a stripped binary
+// it is the only way to break at all.
+//
+// A location that is not a bare number goes to gdb verbatim, so a function name
+// keeps gdb's prologue skipping — `break process_packet` stops at entry+24,
+// past the register spills, which is where a user means. Prefixing a name with
+// `*` would defeat that and stop on the first instruction instead.
+func (s *Session) bpSetAddress(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.BreakpointAddressRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+	loc := strings.TrimSpace(req.Location)
+	if loc == "" {
+		return nil, wire.NewError(wire.CodeBadRequest, "location is required")
+	}
+
+	// An address needs the `*` form; a name must not have it.
+	spec := loc
+	if _, err := parseAddress(loc); err == nil {
+		spec = "*" + loc
+	}
+
+	// -f for the same reason as bpSetSource: a location that cannot be
+	// resolved yet becomes pending rather than an error, and the address
+	// arrives later in a =breakpoint-modified.
+	cmd := "-break-insert -f"
+	if req.Temporary {
+		cmd += " -t"
+	}
+	if req.Condition != "" {
+		cmd += " -c " + quote(req.Condition)
+	}
+	cmd += " " + quote(spec)
+
+	rec, werr := s.send(r.ctx, cmd)
+	if werr != nil {
+		return nil, werr
+	}
+	bkpt, ok := rec.Results.Tuple("bkpt")
+	if !ok {
+		return nil, wire.NewError(wire.CodeInternal, "gdb accepted the breakpoint but reported none")
+	}
+	bp := s.parseBreakpoint(bkpt)
+	s.st.ours[bp.Number] = true
+	s.st.breakpoints[bp.Number] = bp
+	s.broadcastBreakpoints()
+	return bp, nil
 }

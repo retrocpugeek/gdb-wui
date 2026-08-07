@@ -195,6 +195,12 @@ export function createSymbols({ element, input, kindSelect, countEl, onQuery, on
   return {
     // refresh re-runs the current filter. Called when the program changes.
     refresh: query,
+    // symbolAt maps a rendered row back to the symbol it came from, so a
+    // context menu can act on it without the caller reaching into the DOM.
+    symbolAt(row) {
+      const i = Number(row?.dataset?.index);
+      return Number.isInteger(i) ? symbols[i] : undefined;
+    },
     clear() {
       seq++;
       symbols = [];

@@ -61,6 +61,10 @@ type Config struct {
 	MILog bool
 	// CommandTimeout bounds one gdb round-trip. Zero means 20s.
 	CommandTimeout time.Duration
+	// Decomp configures the optional decompiler. A zero value disables it,
+	// which is an ordinary state: Ghidra is a large dependency and most
+	// sessions never want one.
+	Decomp DecompConfig
 }
 
 // Session is one debug session: one gdb, one project, any number of browsers.
@@ -69,6 +73,10 @@ type Session struct {
 	client *mi.Client
 	files  *srcfs.FS
 	logf   func(string, ...any)
+
+	// decomp is the optional decompiler. Deliberately not in st: its cold
+	// start is seconds to minutes, and that must not happen on the actor.
+	decomp decomp
 
 	// reqs carries browser requests to the actor.
 	reqs chan *request
@@ -106,6 +114,17 @@ type state struct {
 	stopSeq  uint64
 
 	exePath string
+	// stepping is a step-by-line walk in progress. Not a request that blocks:
+	// exec commands are acknowledgements and the stop arrives later on this
+	// same actor, so a handler that waited for one would deadlock against
+	// itself.
+	stepping *stepLine
+
+	// exeSHA256 is the loaded executable's hash. It exists for the decompiler
+	// mismatch guard: showing a decompilation of a different build than the
+	// one being debugged is a confidently wrong answer, and the hash is the
+	// only thing that notices.
+	exeSHA256 string
 
 	threads   []wire.Thread
 	frames    []wire.Frame
@@ -259,6 +278,10 @@ func (s *Session) Close(ctx context.Context) error {
 			cancel()
 			s.client.SetKillOnClose(false)
 		}
+		// Before gdb, because the decompiler is a separate process with its own
+		// JVM and a 2 GB heap ceiling: leaving one behind is the worst kind of
+		// leak, invisible until the machine swaps.
+		s.closeDecomp()
 		err = s.client.Close(ctx)
 	})
 	return err
@@ -387,6 +410,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 
 	case wire.TypeBpSetSource:
 		return s.bpSetSource(r)
+	case wire.TypeBpSetAddress:
+		return s.bpSetAddress(r)
 	case wire.TypeBpDelete:
 		return s.bpDelete(r)
 	case wire.TypeBpSetEnabled:
@@ -434,6 +459,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 	case wire.TypeDisasmRange:
 		return s.disasmRange(r)
 
+	case wire.TypeExecStepLine:
+		return s.execStepLine(r)
 	case wire.TypeExecStepI:
 		return s.execStepI(r)
 	case wire.TypeExecNextI:
@@ -448,6 +475,11 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.symbolsList(r)
 	case wire.TypeSymbolsLoad:
 		return s.symbolsLoad(r)
+
+	case wire.TypeDecompStatus:
+		return s.decompStatus(r)
+	case wire.TypeDecompFunction:
+		return s.decompFunction(r)
 
 	case wire.TypePathSubstitute:
 		return s.pathSubstitute(r)
@@ -499,7 +531,11 @@ func (s *Session) gate(typ string) *wire.Error {
 		// panel that has a useful answer at that moment. Loading is allowed
 		// then too: telling gdb what the addresses mean is configuration, and
 		// it is exactly what someone does after attaching to a running target.
-		wire.TypeSymbolsList, wire.TypeSymbolsLoad:
+		wire.TypeSymbolsList, wire.TypeSymbolsLoad,
+		// Decompilation is a property of the file, not of the inferior, and
+		// the status request must answer even when nothing is loaded — it is
+		// how the UI learns the feature exists at all.
+		wire.TypeDecompStatus, wire.TypeDecompFunction:
 		return nil
 	}
 
@@ -515,7 +551,7 @@ func (s *Session) gate(typ string) *wire.Error {
 		wire.TypeRegsNames, wire.TypeRegsValues,
 		wire.TypeThreadsList, wire.TypeThreadSelect,
 		wire.TypeDisasmFunction, wire.TypeDisasmRange,
-		wire.TypeExecStepI, wire.TypeExecNextI,
+		wire.TypeExecStepI, wire.TypeExecNextI, wire.TypeExecStepLine,
 		wire.TypeMemRead, wire.TypeEvalExpr:
 		if s.st.runState != wire.RunStateStopped {
 			return wire.NewError(wire.CodeNotReady,
@@ -525,7 +561,8 @@ func (s *Session) gate(typ string) *wire.Error {
 		if s.st.exePath == "" {
 			return wire.NewError(wire.CodeNotReady, "no program is loaded")
 		}
-	case wire.TypeBpSetSource, wire.TypeBpDelete, wire.TypeBpSetEnabled:
+	case wire.TypeBpSetSource, wire.TypeBpSetAddress,
+		wire.TypeBpDelete, wire.TypeBpSetEnabled:
 		if s.st.exePath == "" {
 			return wire.NewError(wire.CodeNotReady, "no program is loaded")
 		}

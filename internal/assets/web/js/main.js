@@ -9,6 +9,7 @@
 
 import { createStore } from "./core/store.js";
 import { createConnection } from "./core/ws.js";
+import { createHover } from "./core/hover.js";
 import { createKeymap } from "./core/keys.js";
 import { createTree } from "./panels/tree.js";
 import { createSymbols } from "./panels/symbols.js";
@@ -20,6 +21,7 @@ import { createVariables } from "./panels/variables.js";
 import { createRegisters } from "./panels/registers.js";
 import { createThreads } from "./panels/threads.js";
 import { createDisasm } from "./panels/disasm.js";
+import { createDecomp } from "./panels/decomp.js";
 import { createMemory } from "./panels/memory.js";
 import { initLayout, initTheme } from "./core/layout.js";
 import { createGdbConsole } from "./panels/gdbconsole.js";
@@ -49,9 +51,11 @@ const ui = {
   registers: el("registers"),
   threads: el("threads"),
   disasm: el("disasm"),
+  decomp: el("decomp"),
   memory: el("memory"),
   memAddr: el("mem-addr"),
   ctxmenu: el("ctxmenu"),
+  hovertip: el("hovertip"),
   confirm: el("confirm"),
   confirmText: el("confirm-text"),
   confirmYes: el("confirm-yes"),
@@ -102,6 +106,9 @@ const store = createStore({
     // remote is the server's word on whether gdb is attached to a target it
     // did not start. Null until the first snapshot says otherwise.
     remote: null,
+    // decomp is the decompiler's state, fetched rather than pushed: most
+    // sessions never open the pane and do not need to know.
+    decomp: null,
   },
   selection: { thread: 0, frame: 0 },
 });
@@ -168,16 +175,51 @@ let centerTab = "source";
 
 const disasm = createDisasm({
   element: ui.disasm,
-  onGutterClick(address) {
-    setStatus(`${address} — address breakpoints arrive with bp.setAddress`);
-  },
+  onGutterClick: (address) => toggleAddressBreakpoint(address),
 });
+
+// The decompiled view. Its data comes from Ghidra by way of the server, and
+// the whole feature is optional: without a decompiler configured the tab
+// explains itself and nothing else changes.
+const decomp = createDecomp({
+  element: ui.decomp,
+  onGutterClick: (address) => toggleAddressBreakpoint(address),
+});
+decomp.clear();
 
 const memory = createMemory({
   element: ui.memory,
   onRead: (req) => send("mem.read", req),
   onError: reportError,
 });
+
+// Hovering a variable or a register asks gdb what it holds. The panes decide
+// what the pointer is over — the source view walks the line's text, the
+// disassembly reads the token span — and this evaluates whatever they name.
+//
+// Only while stopped, which is not a UI nicety: eval.expr is one of the
+// requests the server refuses unless there is a stopped inferior, so a hover
+// during a run would be a round trip that can only fail.
+const hover = createHover({
+  element: ui.hovertip,
+  isEnabled: () => store.get("session.runState") === "stopped",
+  evaluate(expr) {
+    return send("eval.expr", {
+      expr,
+      thread: store.get("selection.thread"),
+      frame: store.get("selection.frame"),
+      stopSeq: store.get("session.stopSeq"),
+    })
+      .then((out) => out.value)
+      // A failure is the ordinary outcome of pointing at a word that is not a
+      // variable here, so it shows nothing rather than shouting in the status
+      // bar. The pointer is already an experiment; a wrong guess costs nothing.
+      .catch(() => null);
+  },
+});
+hover.attach(ui.source, (ev) => source.expressionAt(ev));
+hover.attach(ui.disasm, (ev) => disasm.expressionAt(ev));
+hover.attach(ui.decomp, (ev) => decomp.expressionAt(ev));
 
 const threads = createThreads({
   element: ui.threads,
@@ -271,6 +313,8 @@ function handleEvent(msg) {
     case "running":
       execBusy = false;
       store.patch({ "session.runState": msg.payload.runState });
+      // A value was only true for the stop it was read at.
+      hover.hide();
       source.clearExecLine();
       stack.clear();
       variables.clear();
@@ -279,6 +323,7 @@ function handleEvent(msg) {
       execBusy = false;
       // The session the prompt was guarding has ended on its own.
       hideConfirm();
+      hover.hide();
       store.patch({
         "session.runState": msg.payload.runState,
         "session.lastStopReason": exitText(msg.payload),
@@ -307,6 +352,7 @@ function handleEvent(msg) {
       breakpoints.set(msg.payload.breakpoints);
       source.setBreakpoints(msg.payload.breakpoints);
       disasm.setBreakpoints(msg.payload.breakpoints);
+      decomp.setBreakpoints(msg.payload.breakpoints);
       break;
     case "selectionChanged":
       applySelection(msg.payload);
@@ -316,6 +362,16 @@ function handleEvent(msg) {
       break;
     case "symbolsInvalidated":
       symbols.refresh();
+      break;
+    case "decompLog":
+      log.decomp(msg.payload?.text ?? "", msg.payload?.level, msg.payload?.millis);
+      break;
+    case "decompChanged":
+      refreshDecompStatus().then((st) => {
+        if (st?.state === "ready" && centerTab === "decomp") {
+          refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address);
+        }
+      });
       break;
     case "remoteChanged":
       store.set("session.remote", msg.payload);
@@ -385,6 +441,7 @@ function applySnapshot(hello) {
 
   breakpoints.set(hello.breakpoints ?? []);
   source.setBreakpoints(hello.breakpoints ?? []);
+  decomp.setBreakpoints(hello.breakpoints ?? []);
 
   const frames = hello.frames ?? [];
   const selectedFrame = hello.selection?.frame ?? 0;
@@ -454,6 +511,7 @@ ui.locateApply.addEventListener("click", () => {
 
 function applyStopped(stopped) {
   execBusy = false;
+  hover.hide();
   store.patch({
     "session.runState": stopped.runState,
     "session.stopSeq": stopped.stopSeq,
@@ -466,6 +524,7 @@ function applyStopped(stopped) {
   threads.set(stopped.threads ?? [], stopped.threadId);
   disasmPin = null;
   refreshDisasm(stopped.frames?.[0]?.address);
+  refreshDecomp(stopped.frames?.[0]?.address);
   // Memory is the thing most likely to have changed, so the cache goes.
   memory.onStop(stopped.stopSeq);
   // The stop event already carries frame-0 locals, so the panel repaints with
@@ -482,12 +541,21 @@ function applyStopped(stopped) {
   } else {
     source.clearExecLine();
     if (frame) {
-      // No source: the machine view is the only one there is, so switch to it
-      // rather than leaving a blank pane and an explanation.
+      // No source. The rescue is only for someone looking at the source view,
+      // which has nothing to show them — every other centre tab does.
+      //
+      // This used to fire from any tab but the disassembly, which was right
+      // when the disassembly was the only fallback and became wrong the moment
+      // there was a second one: on a binary with no debug info *every* stop
+      // takes this branch, so stepping in the decompiled view flipped to the
+      // disassembly every single time.
       const where = frame.from ? ` in ${frame.from}` : "";
-      setStatus(`Stopped at ${frame.address}${where} with no source — showing disassembly.`);
-      if (centerTab !== "disasm") showCenter("disasm");
-      else refreshDisasm(frame.address);
+      if (centerTab === "source") {
+        setStatus(`Stopped at ${frame.address}${where} with no source — showing disassembly.`);
+        showCenter("disasm");
+      } else {
+        setStatus(`Stopped at ${frame.address}${where}`);
+      }
     }
   }
 }
@@ -528,6 +596,9 @@ function describeReason(reason) {
 
 function applySelection(sel) {
   if (!sel) return;
+  // Locals are per-frame, so a tooltip read in the previous frame is now about
+  // a different variable of the same name.
+  hover.hide();
   store.patch({ "selection.thread": sel.threadId, "selection.frame": sel.frame });
   // Frames arrive when the selection changed the stack — switching threads.
   // Without this the panel keeps rendering the previous thread's frames, which
@@ -548,8 +619,10 @@ function applySelection(sel) {
       source.setFrameLine(frame.source.path, frame.source.line).catch(reportError);
     }
   }
-  // The machine view follows the selected frame too, when it is showing.
+  // The machine and decompiled views follow the selected frame too, when they
+  // are showing.
   refreshDisasm(frame?.address);
+  refreshDecomp(frame?.address);
 }
 
 // --- actions ---------------------------------------------------------------
@@ -562,6 +635,37 @@ function toggleBreakpoint(path, line) {
     return;
   }
   send("bp.setSource", { path, line }).catch(reportError);
+}
+
+// toggleAddressBreakpoint is the machine-level counterpart of toggleBreakpoint.
+//
+// Deleting an existing one rather than stacking a second is what makes a
+// gutter a toggle in both panes; without it a second click on the same line
+// silently accumulates breakpoints at one address.
+function toggleAddressBreakpoint(address) {
+  if (!address) return;
+  const existing = breakpoints.findAddress(address);
+  if (existing) {
+    send("bp.delete", { number: existing.number }).catch(reportError);
+    return;
+  }
+  send("bp.setAddress", { location: address })
+    .then((bp) => setStatus(`breakpoint ${bp.number} at ${bp.address ?? address}`))
+    .catch(reportError);
+}
+
+// setFunctionBreakpoint breaks on a symbol by *name*, not by its address.
+//
+// The distinction matters and is easy to get backwards: gdb skips the prologue
+// for a named function — on the vwfw firmware `break process_packet` stops at
+// entry+24, past the register spills — while an address stops on the very
+// first instruction, before the frame exists and before any argument has been
+// stored. The name is what a user means by "break on this function".
+function setFunctionBreakpoint(name) {
+  if (!name) return;
+  send("bp.setAddress", { location: name })
+    .then((bp) => setStatus(`breakpoint ${bp.number} at ${name}${bp.address ? ` (${bp.address})` : ""}`))
+    .catch(reportError);
 }
 
 // exec sends one exec command, guarded so a held-down key cannot queue.
@@ -630,14 +734,44 @@ ui.memAddr.addEventListener("keydown", (ev) => {
     .catch(reportError);
 });
 
+// stepOver and stepInto choose their granularity from what is actually on
+// screen.
+//
+// gdb's own next and step need a line table. Without one its step range is the
+// whole function, so "step over" in a binary with no debug info runs to the
+// function's exit — which makes the decompiled view unusable for the thing it
+// is mostly for. When that view is showing and knows which line the pc is on,
+// the step walks out of that line's addresses instead.
+//
+// Source keeps using gdb's own stepping. Where DWARF exists it is better than
+// anything reconstructed: it knows about inlining, and about statements the
+// decompiler merged.
+function decompStepMap() {
+  if (centerTab !== "decomp") return null;
+  const map = decomp.stepMap();
+  return map?.lines?.length ? map : null;
+}
+
+function stepOver() {
+  const map = decompStepMap();
+  if (map) exec("exec.stepLine", { ...map, over: true });
+  else exec("exec.next");
+}
+
+function stepInto() {
+  const map = decompStepMap();
+  if (map) exec("exec.stepLine", { ...map, over: false });
+  else exec("exec.step");
+}
+
 // showCenter switches the centre tab programmatically.
 function showCenter(name) {
   document.querySelector(`.tab[data-center="${name}"]`)?.click();
 }
 ui.buttons.continue.addEventListener("click", () => exec("exec.continue"));
 ui.buttons.pause.addEventListener("click", () => exec("exec.pause"));
-ui.buttons.next.addEventListener("click", () => exec("exec.next"));
-ui.buttons.step.addEventListener("click", () => exec("exec.step"));
+ui.buttons.next.addEventListener("click", () => stepOver());
+ui.buttons.step.addEventListener("click", () => stepInto());
 ui.buttons.finish.addEventListener("click", () => exec("exec.finish"));
 ui.buttons.stepi.addEventListener("click", () => exec("exec.stepi"));
 ui.buttons.nexti.addEventListener("click", () => exec("exec.nexti"));
@@ -836,6 +970,32 @@ ui.tree.addEventListener("contextmenu", (ev) => {
   ]);
 });
 
+// Right-clicking a symbol is the no-typing route to a breakpoint on it, which
+// in a stripped binary is otherwise a console command and a hand-copied
+// address. The contextmenu event covers the keyboard menu key too.
+ui.symbols.addEventListener("contextmenu", (ev) => {
+  const row = ev.target.closest(".sym-row");
+  if (!row) return;
+  const sym = symbols.symbolAt(row);
+  if (!sym) return;
+  ev.preventDefault();
+
+  const items = [];
+  if (sym.kind === "function") {
+    items.push({
+      label: "Set breakpoint",
+      title: "break by name — gdb skips the prologue, which is where you mean to stop",
+      run: () => setFunctionBreakpoint(sym.name),
+    });
+  }
+  items.push({
+    label: "Go to",
+    title: "source, disassembly or memory, depending on what the symbol knows about itself",
+    run: () => jumpToSymbol(sym),
+  });
+  showContextMenu(ev.clientX, ev.clientY, sym.name, items);
+});
+
 // --- loading symbols --------------------------------------------------------
 
 // Separate from loading a program, because they are separate acts that only
@@ -1018,8 +1178,8 @@ createKeymap({
       const path = source.path;
       if (path) toggleBreakpoint(path, currentLine());
     },
-    F10: () => exec("exec.next"),
-    F11: () => exec("exec.step"),
+    F10: () => stepOver(),
+    F11: () => stepInto(),
     "Shift+F11": () => exec("exec.finish"),
     "Alt+F11": () => exec("exec.stepi"),
     "Alt+F10": () => exec("exec.nexti"),
@@ -1082,8 +1242,72 @@ function refreshDisasm(pc) {
 }
 
 function updateCenterMeta() {
-  if (centerTab !== "disasm") return;
-  ui.sourceMeta.textContent = disasm.summary();
+  if (centerTab === "disasm") ui.sourceMeta.textContent = disasm.summary();
+  else if (centerTab === "decomp") ui.sourceMeta.textContent = decomp.summary();
+}
+
+// refreshDecomp keeps the decompiled view in step with the program counter.
+//
+// Same three cases as the disassembly, cheapest first: hidden, so do nothing;
+// the pc is already in the function on screen, so move the marker; otherwise
+// fetch. The middle case matters more here than there — a decompiled function
+// is one round trip to Ghidra, and stepping within one should not pay it.
+function refreshDecomp(pc) {
+  if (centerTab !== "decomp") return;
+  if (pc && decomp.has(pc)) {
+    const { line, ambiguous } = decomp.lineFor(pc);
+    decomp.setPCLine(line, ambiguous);
+    updateCenterMeta();
+    return;
+  }
+  send("decomp.function", {
+    thread: store.get("selection.thread"),
+    frame: store.get("selection.frame"),
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((out) => {
+      decomp.set(out);
+      decomp.setBreakpoints(breakpoints.all());
+      updateCenterMeta();
+    })
+    .catch((err) => {
+      if (err?.code === "busy") return;
+      // not_ready is the ordinary answer while the decompiler is starting or
+      // absent, and the pane says so in place of the code rather than putting
+      // it in the status bar where it would be missed.
+      decomp.message(decompMessage(err), "src-empty");
+      updateCenterMeta();
+    });
+}
+
+// decompMessage turns the server's refusal into something actionable. "Not
+// ready" alone leaves a user with no idea whether to wait, configure something
+// or give up.
+function decompMessage(err) {
+  const msg = err?.message ?? String(err);
+  if (/still starting/i.test(msg)) {
+    return "Ghidra is starting. Importing and analysing a binary takes " +
+      "seconds for a small one and minutes for firmware; this pane fills in " +
+      "when it finishes.";
+  }
+  if (/no decompiler is configured/i.test(msg)) {
+    return "No decompiler configured. Start gdb-wui with -ghidra pointing at " +
+      "a Ghidra installation, or set GHIDRA_INSTALL_DIR.";
+  }
+  return msg;
+}
+
+// refreshDecompStatus reports what the decompiler is doing, and the two
+// caveats that a user cannot otherwise discover: that it may hold a different
+// build than gdb does, and that it may be starting.
+function refreshDecompStatus() {
+  return send("decomp.status", {})
+    .then((st) => {
+      store.set("session.decomp", st);
+      if (st.mismatch) setStatus(st.mismatch, true);
+      return st;
+    })
+    .catch(() => null);
 }
 
 // showDisasmAt disassembles the function containing a target, which may be an
@@ -1223,6 +1447,7 @@ for (const tab of document.querySelectorAll(".tab")) {
 for (const tab of document.querySelectorAll(".tab[data-center]")) {
   tab.addEventListener("click", () => {
     centerTab = tab.dataset.center;
+    hover.hide();
     for (const other of document.querySelectorAll(".tab[data-center]")) {
       other.classList.toggle("is-active", other === tab);
     }
@@ -1243,6 +1468,10 @@ for (const tab of document.querySelectorAll(".tab[data-center]")) {
     if (centerTab === "disasm") {
       const frame = stack.frameAt(store.get("selection.frame"));
       refreshDisasm(frame?.address);
+    } else if (centerTab === "decomp") {
+      const frame = stack.frameAt(store.get("selection.frame"));
+      refreshDecompStatus();
+      refreshDecomp(frame?.address);
     } else if (centerTab === "memory") {
       ui.sourceMeta.textContent = memory.summary();
       ui.memAddr.focus();

@@ -193,6 +193,16 @@ func (s *Session) onStopped(rec mi.Record) {
 		s.logf("-stack-list-frames after stop: %s", werr.Message)
 	}
 
+	// A step-by-line walk in progress swallows this stop and issues the next
+	// one. Ten instructions inside one decompiled line must look like one step,
+	// not ten: the browser would otherwise repaint the stack, the locals and
+	// the registers for every instruction. Placed after the frames are fetched
+	// because the walk ends when it leaves the frame it started in.
+	if s.advanceStepLine(ctx, reason) {
+		s.st.runState = wire.RunStateRunning
+		return
+	}
+
 	if locals, werr := s.fetchLocals(ctx, s.st.selThread, 0); werr == nil {
 		s.st.locals = locals
 		out.Locals = locals
