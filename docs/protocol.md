@@ -101,6 +101,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `disasm.range` | `{start, end, stopSeq?}` | [`Disassembly`](#disassembly) | Capped at 1 MiB of address space. |
 | `exec.stepi` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction. |
 | `exec.nexti` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction, over calls. |
+| `exec.stepLine` | `{lines?, bodyStart?, bodyEnd?, over?, thread?, stopSeq?}` | [`ExecAck`](#execack) | Step until the pc reaches a different decompiled line. For views with no line table. |
 | `mem.read` | `{address, offset?, count, stopSeq?}` | [`Memory`](#memory) | `address` is any gdb expression. Capped at 64 KiB per read. |
 | `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. Also the hover evaluator, which is why the client debounces it. |
 | `symbols.list` | `{filter?, kind?, limit?}` | [`SymbolsList`](#symbols) | Allowed while the inferior runs: the symbol table is a property of the file. |
@@ -646,6 +647,37 @@ a guess. See [docs/decompilation.md](decompilation.md).
 function — `break process_packet` on a MIPS firmware stops at entry+24, past
 the register spills — and `*name` would defeat that and stop on the first
 instruction instead, which is not where anyone means.
+
+`exec.stepLine` exists because gdb's `next` and `step` need a line table. With
+none, gdb's step range is the whole function, so "step over" in a binary
+without debug info runs to the function's exit — measured on a
+symbols-but-no-DWARF build, `break main` then `next` lands at `0x7ffff7c2a601`,
+inside libc, having returned out of `main` altogether.
+
+It does what gdb does internally when it *does* have a line table: single-step
+until the pc reaches a different line. Only the source of the map differs —
+Ghidra's instead of DWARF's.
+
+The rule is "a different line", and it has to be, rather than anything simpler.
+A line's address set is **sparse** — the addresses its tokens carry, not every
+instruction between them — so stepping until the pc leaves the set ends at the
+first unlisted instruction, usually the second one. A line's *span* is no good
+either: a loop header's addresses wrap around the body, so its span covers the
+whole loop and stepping out of it would step out of the loop. Resolving "which
+line" reuses the pc marker's rule, fallback included, so an instruction between
+a line's tokens maps back to that line and the walk continues.
+
+The client sends the whole map because it already holds it, which saves the
+server decompiling the function again on every step — a few kilobytes at human
+stepping speeds.
+
+The intermediate stops are not broadcast. Ten instructions inside one
+decompiled line are one step, and emitting ten `stopped` events would repaint
+the stack, the locals and the registers ten times. The walk also ends on
+anything that is not `end-stepping-range` — a breakpoint, a signal — and on
+leaving the frame it started in, so a step over the last statement of a
+function stops on return rather than following the caller's addresses by
+coincidence.
 
 ## Errors
 

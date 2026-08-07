@@ -124,6 +124,45 @@ type DecompFunction struct {
 	PCLineApprox bool `json:"pcLineApprox,omitempty"`
 }
 
+// ExecStepLineRequest steps until the program counter leaves a set of
+// addresses — the addresses of the line currently showing.
+//
+// It exists because gdb's own `next` and `step` are useless without a line
+// table. With none, gdb's step range is the whole function, so "step over" in
+// a binary with no debug info runs to the function's exit: measured on a
+// symbols-but-no-DWARF build, `break main` then `next` lands at 0x7ffff7c2a601,
+// inside libc, having returned out of main entirely.
+//
+// The rule is "step until the pc belongs to a different line", and it has to
+// be that rather than anything simpler. A line's address set is *sparse* — the
+// addresses its tokens carry, not every instruction between them — so stepping
+// until the pc leaves the set ends at the first unlisted instruction, which is
+// usually the second one. And a line's span is no good either: a loop header's
+// addresses are genuinely disjoint, wrapped around the body, so its span covers
+// the whole loop and stepping out of it would step out of the loop.
+//
+// Resolving "which line" uses the same rule the pc marker does, fallback
+// included, so an instruction between a line's tokens maps back to that line
+// and the walk continues.
+//
+// The client sends the map because it already holds it, which saves the server
+// decompiling the function again on every step. A few kilobytes per step at
+// human speeds.
+type ExecStepLineRequest struct {
+	// Lines is the function's map. Empty degrades to a single instruction
+	// step, which is honest: with nothing to step over, one instruction is the
+	// most that can be claimed.
+	Lines []DecompLine `json:"lines,omitempty"`
+	// BodyStart and BodyEnd bound the function, so a walk that returns into a
+	// caller does not keep matching by coincidence.
+	BodyStart string `json:"bodyStart,omitempty"`
+	BodyEnd   string `json:"bodyEnd,omitempty"`
+	// Over steps over calls rather than into them.
+	Over    bool   `json:"over,omitempty"`
+	Thread  int    `json:"thread,omitempty"`
+	StopSeq uint64 `json:"stopSeq,omitempty"`
+}
+
 // DecompLine maps one line of Text to the addresses its tokens carry.
 //
 // Addrs is a set, not a range. A decompiled line's addresses are routinely
@@ -143,6 +182,9 @@ const (
 	// DecompStorageRegister is readable only near PC: in optimised code the
 	// decompiler packs many variables into one register.
 	DecompStorageRegister = "register"
+	// DecompStorageGlobal is a fixed address: valid at every pc, needing no
+	// frame, and therefore the most readable kind there is.
+	DecompStorageGlobal = "global"
 	// DecompStorageNone covers a decompiler temporary and anything else
 	// without a machine location. It can never show a value, and a UI that
 	// omits these rather than blanking them is lying by omission.

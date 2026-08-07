@@ -114,6 +114,12 @@ type state struct {
 	stopSeq  uint64
 
 	exePath string
+	// stepping is a step-by-line walk in progress. Not a request that blocks:
+	// exec commands are acknowledgements and the stop arrives later on this
+	// same actor, so a handler that waited for one would deadlock against
+	// itself.
+	stepping *stepLine
+
 	// exeSHA256 is the loaded executable's hash. It exists for the decompiler
 	// mismatch guard: showing a decompilation of a different build than the
 	// one being debugged is a confidently wrong answer, and the hash is the
@@ -453,6 +459,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 	case wire.TypeDisasmRange:
 		return s.disasmRange(r)
 
+	case wire.TypeExecStepLine:
+		return s.execStepLine(r)
 	case wire.TypeExecStepI:
 		return s.execStepI(r)
 	case wire.TypeExecNextI:
@@ -543,7 +551,7 @@ func (s *Session) gate(typ string) *wire.Error {
 		wire.TypeRegsNames, wire.TypeRegsValues,
 		wire.TypeThreadsList, wire.TypeThreadSelect,
 		wire.TypeDisasmFunction, wire.TypeDisasmRange,
-		wire.TypeExecStepI, wire.TypeExecNextI,
+		wire.TypeExecStepI, wire.TypeExecNextI, wire.TypeExecStepLine,
 		wire.TypeMemRead, wire.TypeEvalExpr:
 		if s.st.runState != wire.RunStateStopped {
 			return wire.NewError(wire.CodeNotReady,

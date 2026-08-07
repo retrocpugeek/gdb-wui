@@ -7,8 +7,9 @@ const (
 	TypeDisasmFunction = "disasm.function"
 	TypeDisasmRange    = "disasm.range"
 
-	TypeExecStepI = "exec.stepi"
-	TypeExecNextI = "exec.nexti"
+	TypeExecStepI    = "exec.stepi"
+	TypeExecStepLine = "exec.stepLine"
+	TypeExecNextI    = "exec.nexti"
 )
 
 // Instruction is one disassembled instruction.

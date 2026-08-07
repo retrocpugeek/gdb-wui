@@ -127,6 +127,11 @@ counter marked, and hovering a local reads its value out of the frame. It needs
 `-ghidra`; without it the tab says so and nothing else changes. See
 [docs/decompilation.md](docs/decompilation.md).
 
+**Step over and step into work there**, which they do not otherwise: gdb's own
+stepping needs a line table, and without one its step range is the whole
+function, so a step over runs to the function's exit. With the Decompiled tab
+showing, the step walks to the next decompiled line instead.
+
 It is a model of the program, not its source, and the pane says where it is
 guessing: a highlight the address map could not pin exactly is drawn as an
 outline rather than a fill, an ambiguous one is marked, and a local the

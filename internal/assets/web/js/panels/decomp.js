@@ -263,6 +263,23 @@ export function createDecomp({ element, onGutterClick }) {
       return Boolean(fn?.pcLineApprox);
     },
 
+    // stepMap is what a step-by-line walk needs: the whole map, not just the
+    // current line. A line's addresses are sparse — the ones its tokens carry
+    // — so "step until the pc leaves this line's addresses" would end at the
+    // first instruction between them. The server steps until the pc resolves
+    // to a different line, which needs every line to resolve against.
+    //
+    // Null when the pc could only be placed approximately: stepping out of a
+    // line the program is not actually on would step out of the wrong thing.
+    stepMap() {
+      if (!fn?.pcLine || fn.pcLineApprox) return null;
+      return {
+        lines: fn.lines ?? [],
+        bodyStart: fn.bodyStart,
+        bodyEnd: fn.bodyEnd,
+      };
+    },
+
     // setBreakpoints takes the whole mirror; the server is authoritative.
     setBreakpoints(list_) {
       allBreakpoints = list_ ?? [];

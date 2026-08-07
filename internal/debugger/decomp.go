@@ -363,6 +363,20 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 			PC:      shiftAddr(v.PC, bias),
 		})
 	}
+	// Globals last, and they are the readable ones: a fixed address is valid at
+	// every pc and needs no frame. Addressed by number rather than by name,
+	// because in a stripped image Ghidra's name for one is DAT_<address>,
+	// which gdb has never heard of.
+	for _, g := range fn.Globals {
+		addr := shiftAddr(g.Address, bias)
+		out.Vars = append(out.Vars, wire.DecompVar{
+			Name:    g.Name,
+			Type:    g.Type,
+			Storage: wire.DecompStorageGlobal,
+			Expr:    fmt.Sprintf("*(%s *)%s", gdbCType(g.Type, g.Size), addr),
+			PC:      "",
+		})
+	}
 	return out
 }
 
@@ -761,4 +775,130 @@ func (s *Session) hashExe(rel string) string {
 // to the caller: one is bad_request, the other is internal.
 func asGhidraError(err error, target **ghidra.Error) bool {
 	return errors.As(err, target)
+}
+
+// Stepping by decompiled line.
+//
+// gdb's own `next` and `step` need a line table, and without one its step range
+// is the whole function — so "step over" in a binary with no debug info runs to
+// the function's exit. Measured on a symbols-but-no-DWARF build: `break main`
+// then `next` lands at 0x7ffff7c2a601, inside libc, having returned out of main
+// altogether. That makes the decompiled view unusable for stepping, which is
+// most of what it is for.
+//
+// The fix is what gdb does internally when it does have a line table: single
+// step until the program counter leaves the current line's addresses. The
+// difference is only where the range comes from — Ghidra's map instead of
+// DWARF's.
+//
+// It cannot be a loop inside the request handler. Exec commands are
+// acknowledgements, not completions: the stop arrives later as an async record
+// processed by this same actor, so a handler that waited for one would deadlock
+// against itself. It is a mode instead — set here, advanced by onStopped.
+
+// stepLineMax bounds the walk. A decompiled line is a handful of instructions,
+// so this is a runaway guard rather than a limit anyone should reach: a line
+// whose addresses somehow never stop matching would otherwise step forever.
+const stepLineMax = 2000
+
+// stepLine is the state of a step in progress.
+type stepLine struct {
+	// lines is the function's map, and line is where the walk began. The walk
+	// continues while the pc still resolves to that line.
+	lines []wire.DecompLine
+	line  int
+	// body bounds the function.
+	bodyStart, bodyEnd string
+	// over steps over calls rather than into them.
+	over bool
+	// left counts down; zero ends the walk wherever it is.
+	left int
+	// startFrame is the stack depth when the walk began. Returning out of the
+	// frame ends it, or a step-over of the last statement would keep walking
+	// through the caller's line addresses by coincidence.
+	startFrame int
+}
+
+func (s *Session) execStepLine(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.ExecStepLineRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+	if werr := s.checkStopSeq(req.StopSeq); werr != nil {
+		return nil, werr
+	}
+
+	// Which line the walk is leaving, decided the same way the marker is.
+	start, _, _ := pcLine(req.Lines, s.currentPC(), req.BodyStart, req.BodyEnd)
+	// With no map, or a pc that belongs to no line, there is nothing to step
+	// out of and one instruction is all that can honestly be claimed.
+	if len(req.Lines) == 0 || start == 0 {
+		s.st.stepping = nil
+	} else {
+		s.st.stepping = &stepLine{
+			lines:      req.Lines,
+			line:       start,
+			bodyStart:  req.BodyStart,
+			bodyEnd:    req.BodyEnd,
+			over:       req.Over,
+			left:       stepLineMax,
+			startFrame: len(s.st.frames),
+		}
+	}
+	return s.instructionStep(r.ctx, req.Over)
+}
+
+// instructionStep issues one machine step.
+func (s *Session) instructionStep(ctx context.Context, over bool) (any, *wire.Error) {
+	cmd := "-exec-step-instruction"
+	if over {
+		cmd = "-exec-next-instruction"
+	}
+	if _, werr := s.send(ctx, cmd); werr != nil {
+		s.st.stepping = nil
+		return nil, werr
+	}
+	s.st.runState = wire.RunStateRunning
+	return wire.ExecAck{RunState: s.st.runState, StopSeq: s.st.stopSeq}, nil
+}
+
+// advanceStepLine decides whether a stop is the end of a line step or the
+// middle of one. Returning true means the caller should issue another step and
+// say nothing to the browser: a walk of ten instructions must look like one
+// step, not ten.
+func (s *Session) advanceStepLine(ctx context.Context, reason string) bool {
+	st := s.st.stepping
+	if st == nil {
+		return false
+	}
+	// Anything other than finishing an instruction step is a real event — a
+	// breakpoint, a signal, a watchpoint — and ends the walk where it is.
+	if reason != "end-stepping-range" {
+		s.st.stepping = nil
+		return false
+	}
+	st.left--
+	if st.left <= 0 {
+		s.st.stepping = nil
+		return false
+	}
+	// Out of the frame the walk started in: a step over the last statement
+	// returned, and continuing would follow the caller's addresses by accident.
+	if len(s.st.frames) < st.startFrame {
+		s.st.stepping = nil
+		return false
+	}
+	// Still on the same line? The fallback inside pcLine is what makes this
+	// work at all: the instructions between a line's tokens are claimed by no
+	// line, and resolve back to the one they follow.
+	now, _, _ := pcLine(st.lines, s.currentPC(), st.bodyStart, st.bodyEnd)
+	if now == 0 || now != st.line {
+		s.st.stepping = nil
+		return false
+	}
+	if _, werr := s.instructionStep(ctx, st.over); werr != nil {
+		s.st.stepping = nil
+		return false
+	}
+	return true
 }

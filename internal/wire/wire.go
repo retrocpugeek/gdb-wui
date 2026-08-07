@@ -156,6 +156,7 @@ var RequestTypes = []string{
 	TypeDisasmRange,
 
 	TypeExecStepI,
+	TypeExecStepLine,
 	TypeExecNextI,
 
 	TypeMemRead,

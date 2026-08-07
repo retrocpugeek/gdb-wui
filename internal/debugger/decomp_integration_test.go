@@ -335,3 +335,132 @@ func currentPCOf(t *testing.T, do func(string, any) any) string {
 	}
 	return h.Frames[0].Address
 }
+
+// TestStepLineWalksOutOfTheLine is the reason exec.stepLine exists.
+//
+// gdb's `next` needs a line table; without one its step range is the whole
+// function, so a step over runs to the function's exit. Measured on a
+// symbols-but-no-DWARF build: `break main` then `next` lands inside libc,
+// having returned out of main.
+//
+// The assertion has to be that the walk crossed *several* instructions. An
+// earlier version only checked the pc had left the line, which a single
+// instruction step satisfies whenever the line claims one address — verified by
+// deleting the walk entirely and watching the test stay green. So this picks a
+// line claiming more than one address and requires the pc to end up past all
+// of them.
+func TestStepLineWalksOutOfTheLine(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "demo"})
+	waitReady(t, do)
+
+	// Stop inside the function FIRST. Addresses only mean anything once the
+	// program is running: this is a PIE, so a function fetched beforehand
+	// carries link-time addresses and a breakpoint set from one never hits.
+	do(wire.TypeBpSetAddress, wire.BreakpointAddressRequest{Location: "accumulate"})
+	do(wire.TypeExecRun, wire.ExecRequest{})
+	waitStopped(t, do, 30*time.Second)
+
+	// Walk forward until the pc is on a line covering several instructions.
+	// A single-address line cannot tell a walk from one instruction step.
+	var fn wire.DecompFunction
+	var addrs []string
+	var lo, hi uint64
+	for range 24 {
+		fn = do(wire.TypeDecompFunction, wire.DecompFunctionRequest{}).(wire.DecompFunction)
+		if fn.PCLine == 0 || fn.PCLineApprox {
+			do(wire.TypeExecStepLine, wire.ExecStepLineRequest{Over: true})
+			waitStopped(t, do, 30*time.Second)
+			continue
+		}
+		var here []string
+		for _, l := range fn.Lines {
+			if l.N == fn.PCLine {
+				here = l.Addrs
+			}
+		}
+		pc := mustAddr(t, currentPCOf(t, do))
+		a, b := pc, pc
+		for _, x := range here {
+			v := mustAddr(t, x)
+			if v < a {
+				a = v
+			}
+			if v > b {
+				b = v
+			}
+		}
+		// Forward-only, compact, and solely owned. The last is the subtle one:
+		// a loop header's addresses wrap around the body, so other lines'
+		// instructions sit inside its span and the walk leaves it almost
+		// immediately — correctly. Only a line that owns every address in its
+		// span can support "the pc must end up past the whole line".
+		owned := len(here) >= 2 && pc == a && b > a && b-a < 64
+		if owned {
+			for _, other := range fn.Lines {
+				if other.N == fn.PCLine {
+					continue
+				}
+				for _, x := range other.Addrs {
+					if v := mustAddr(t, x); v > a && v < b {
+						owned = false
+					}
+				}
+			}
+		}
+		if owned {
+			addrs, lo, hi = here, a, b
+			break
+		}
+		do(wire.TypeExecStepLine, wire.ExecStepLineRequest{Lines: fn.Lines, BodyStart: fn.BodyStart, BodyEnd: fn.BodyEnd, Over: true})
+		waitStopped(t, do, 30*time.Second)
+	}
+	if addrs == nil {
+		t.Skip("never landed at the start of a multi-address line; " +
+			"nothing here can distinguish a walk from one step")
+	}
+	t.Logf("stepping out of a line spanning %#x..%#x (%d addresses)", lo, hi, len(addrs))
+
+	do(wire.TypeExecStepLine, wire.ExecStepLineRequest{Lines: fn.Lines, BodyStart: fn.BodyStart, BodyEnd: fn.BodyEnd, Over: true})
+	waitStopped(t, do, 30*time.Second)
+	after := mustAddr(t, currentPCOf(t, do))
+
+	if after <= hi {
+		t.Errorf("stepped to %#x, still inside the line %#x..%#x — "+
+			"the walk stopped after one instruction instead of crossing the line",
+			after, lo, hi)
+	}
+	// And it must not have left the function, which is what plain next does.
+	bodyLo, bodyHi := mustAddr(t, fn.BodyStart), mustAddr(t, fn.BodyEnd)
+	if after < bodyLo || after > bodyHi {
+		t.Errorf("stepped clean out of the function: %#x is outside %s..%s "+
+			"(this is the bug exec.stepLine exists to avoid)",
+			after, fn.BodyStart, fn.BodyEnd)
+	}
+}
+
+// TestStepLineWithNoRangeIsOneInstruction. Empty addresses must degrade to a
+// single instruction step rather than running away.
+func TestStepLineWithNoRangeIsOneInstruction(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "demo"})
+	do(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "demo.c", Line: 5})
+	do(wire.TypeExecRun, wire.ExecRequest{})
+	waitStopped(t, do, 30*time.Second)
+
+	before := mustAddr(t, currentPCOf(t, do))
+	do(wire.TypeExecStepLine, wire.ExecStepLineRequest{Over: true})
+	waitStopped(t, do, 30*time.Second)
+	after := mustAddr(t, currentPCOf(t, do))
+
+	if after == before {
+		t.Error("the pc did not move")
+	}
+	// One instruction. x86-64 tops out at 15 bytes; anything further means the
+	// walk kept going with no range to stop it.
+	if after < before || after-before > 16 {
+		t.Errorf("moved from %#x to %#x — that is not one instruction", before, after)
+	}
+}

@@ -722,14 +722,44 @@ ui.memAddr.addEventListener("keydown", (ev) => {
     .catch(reportError);
 });
 
+// stepOver and stepInto choose their granularity from what is actually on
+// screen.
+//
+// gdb's own next and step need a line table. Without one its step range is the
+// whole function, so "step over" in a binary with no debug info runs to the
+// function's exit — which makes the decompiled view unusable for the thing it
+// is mostly for. When that view is showing and knows which line the pc is on,
+// the step walks out of that line's addresses instead.
+//
+// Source keeps using gdb's own stepping. Where DWARF exists it is better than
+// anything reconstructed: it knows about inlining, and about statements the
+// decompiler merged.
+function decompStepMap() {
+  if (centerTab !== "decomp") return null;
+  const map = decomp.stepMap();
+  return map?.lines?.length ? map : null;
+}
+
+function stepOver() {
+  const map = decompStepMap();
+  if (map) exec("exec.stepLine", { ...map, over: true });
+  else exec("exec.next");
+}
+
+function stepInto() {
+  const map = decompStepMap();
+  if (map) exec("exec.stepLine", { ...map, over: false });
+  else exec("exec.step");
+}
+
 // showCenter switches the centre tab programmatically.
 function showCenter(name) {
   document.querySelector(`.tab[data-center="${name}"]`)?.click();
 }
 ui.buttons.continue.addEventListener("click", () => exec("exec.continue"));
 ui.buttons.pause.addEventListener("click", () => exec("exec.pause"));
-ui.buttons.next.addEventListener("click", () => exec("exec.next"));
-ui.buttons.step.addEventListener("click", () => exec("exec.step"));
+ui.buttons.next.addEventListener("click", () => stepOver());
+ui.buttons.step.addEventListener("click", () => stepInto());
 ui.buttons.finish.addEventListener("click", () => exec("exec.finish"));
 ui.buttons.stepi.addEventListener("click", () => exec("exec.stepi"));
 ui.buttons.nexti.addEventListener("click", () => exec("exec.nexti"));
@@ -1136,8 +1166,8 @@ createKeymap({
       const path = source.path;
       if (path) toggleBreakpoint(path, currentLine());
     },
-    F10: () => exec("exec.next"),
-    F11: () => exec("exec.step"),
+    F10: () => stepOver(),
+    F11: () => stepInto(),
     "Shift+F11": () => exec("exec.finish"),
     "Alt+F11": () => exec("exec.stepi"),
     "Alt+F10": () => exec("exec.nexti"),

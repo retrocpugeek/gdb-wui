@@ -70,6 +70,7 @@ public class DecompJson {
 		b.append(",\"signature\":").append(str(f.getPrototypeString(true, false)));
 		b.append(",\"frame\":").append(frame(f));
 		b.append(",\"variables\":").append(variables(res.getHighFunction()));
+		b.append(",\"globals\":").append(globals(res.getHighFunction()));
 
 		// The text is rebuilt from the very lines the map indexes, so line N of
 		// this string is line N of the map by construction. Emitting getC() and
@@ -178,6 +179,43 @@ public class DecompJson {
 			b.append(",\"pc\":").append(
 				pc == null || !pc.getAddressSpace().isMemorySpace() ? "null" : str(hex(pc)));
 			b.append(",\"storage\":").append(storage(sym.getStorage()));
+			b.append("}");
+		}
+		return b.append("]").toString();
+	}
+
+	// globals lists the module-scope symbols this function touches.
+	//
+	// A separate map from the locals, and easy to miss: getLocalSymbolMap()
+	// holds only the frame, so a decompiled body full of counters and flags
+	// yields nothing addressable for any of them. They are the *most* readable
+	// things in the function — a fixed address, live whether or not the frame
+	// is set up, and valid at every pc — so leaving them out gets the value
+	// backwards.
+	private static String globals(HighFunction high) {
+		if (high == null) {
+			return "[]";
+		}
+		StringBuilder b = new StringBuilder("[");
+		boolean first = true;
+		Iterator<HighSymbol> syms = high.getGlobalSymbolMap().getSymbols();
+		while (syms.hasNext()) {
+			HighSymbol sym = syms.next();
+			VariableStorage store = sym.getStorage();
+			// Only a real memory location is useful. Anything else here is not
+			// something a debugger can read.
+			if (store == null || !store.isMemoryStorage()) {
+				continue;
+			}
+			if (!first) {
+				b.append(",");
+			}
+			first = false;
+			b.append("{\"name\":").append(str(sym.getName()));
+			b.append(",\"type\":").append(
+				str(sym.getDataType() == null ? "" : sym.getDataType().getDisplayName()));
+			b.append(",\"size\":").append(sym.getSize());
+			b.append(",\"address\":").append(str(hex(store.getMinAddress())));
 			b.append("}");
 		}
 		return b.append("]").toString();

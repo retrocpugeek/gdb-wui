@@ -37,9 +37,14 @@ type Function struct {
 	Signature string `json:"signature"`
 	Frame     Frame  `json:"frame"`
 	Variables []Var  `json:"variables"`
-	LineCount int    `json:"lineCount"`
-	Text      string `json:"text"`
-	Lines     []Line `json:"lines"`
+	// Globals are the module-scope symbols the function touches. A separate
+	// map in Ghidra, and the readable half of the picture: a fixed address is
+	// valid at every pc, unlike a register, and needs no frame, unlike a stack
+	// slot.
+	Globals   []Global `json:"globals"`
+	LineCount int      `json:"lineCount"`
+	Text      string   `json:"text"`
+	Lines     []Line   `json:"lines"`
 }
 
 // Line maps one line of Text to the addresses its tokens carry.
@@ -102,6 +107,15 @@ type Storage struct {
 	Register string `json:"register"`
 	// Text is Ghidra's own rendering, for StorageOther.
 	Text string `json:"text"`
+}
+
+// Global is a module-scope symbol with a fixed address.
+type Global struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Size int    `json:"size"`
+	// Address is Ghidra's link-time address, before any bias.
+	Address string `json:"address"`
 }
 
 // FunctionRef is one entry in the browsable index: enough to list and to ask
