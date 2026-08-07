@@ -225,6 +225,35 @@ bias = gdb_address(sym) - sidecar_entry(sym)
 For that binary the answer is `0x555555454000`, and it is the same arithmetic
 the symbols pane already avoids by jumping to names instead of addresses.
 
+**A stripped image has no such symbol**, and that is the case the whole
+decompiled view exists for. Measured on a buildroot busybox: all 372 of its
+function symbols are undefined imports and not one is defined, so there is no
+name gdb and Ghidra share. The anchor there is the entry point, which always
+exists — its link-time value is in the ELF header, which gdb-wui reads itself,
+and its runtime value is what gdb prints for `info files`. Neither needs a
+symbol table.
+
+Reading it is the one place gdb-wui asks gdb something in prose:
+`-file-list-shared-libraries` omits the main executable and no MI command
+reports a section address, so `info files` is parsed. Its console output is
+captured at the MI handler rather than from the actor's queue, because `send`
+blocks the actor until the reply and a command whose *answer* is its console
+output could not otherwise be read at all.
+
+### An address in another module
+
+The commonest reason a lookup fails is not a bad bias — it is that the program
+counter is somewhere the decompiler does not have. Stopping in the dynamic
+loader is enough. The consumer knows the image's extent from the ELF and should
+say so, because Ghidra's own answer names a translated address the user never
+saw:
+
+```
+no function 0x111b900
+0x00007d3aecfae900 is not inside busybox, which is the only program the
+decompiler has. It is in a shared library or the dynamic loader.
+```
+
 Not every target needs it. `vwfw-linux_64` is a statically linked `EXEC`, not a
 PIE, and Ghidra loaded it at its true `0x120000000`; the bias there is zero.
 Firmware is often the easy case and a desktop hello-world the hard one.

@@ -74,6 +74,9 @@ type Session struct {
 	files  *srcfs.FS
 	logf   func(string, ...any)
 
+	// capture diverts console output for one internal command. See runConsole.
+	capture atomic.Pointer[consoleCapture]
+
 	// decomp is the optional decompiler. Deliberately not in st: its cold
 	// start is seconds to minutes, and that must not happen on the actor.
 	decomp decomp
@@ -254,7 +257,53 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 }
 
 // HandleRecord is the mi.Handler. It must never block: see recordQueue.
-func (s *Session) HandleRecord(rec mi.Record) { s.intake.push(rec) }
+//
+// A capture, when one is active, takes console text here rather than from the
+// actor's queue. That is the only place it can be taken synchronously: send()
+// blocks the actor until the reply arrives, so records produced by the command
+// sit in the queue until afterwards, and a command whose *answer* is its
+// console output could not be read at all. Draining the queue mid-handler
+// instead would run a stop event from inside another request.
+func (s *Session) HandleRecord(rec mi.Record) {
+	if rec.Type == mi.RecConsole {
+		if buf := s.capture.Load(); buf != nil {
+			buf.mu.Lock()
+			buf.text.WriteString(rec.Text)
+			buf.mu.Unlock()
+			// Swallowed on purpose: this is gdb-wui asking gdb something for
+			// its own reasons, and the user did not type it.
+			return
+		}
+	}
+	s.intake.push(rec)
+}
+
+// consoleCapture collects the console output of one internal command.
+type consoleCapture struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+// runConsole issues a console command and returns what it printed.
+//
+// For the handful of things gdb will only say in prose. `info files` is the
+// one that matters: it names the runtime entry point, which is the only way to
+// locate a stripped position-independent executable, since it has no symbol
+// either side could anchor to.
+func (s *Session) runConsole(ctx context.Context, line string) (string, *wire.Error) {
+	buf := &consoleCapture{}
+	if !s.capture.CompareAndSwap(nil, buf) {
+		return "", wire.NewError(wire.CodeBusy, "another console capture is in flight")
+	}
+	defer s.capture.Store(nil)
+
+	if _, werr := s.send(ctx, "-interpreter-exec console "+quote(line)); werr != nil {
+		return "", werr
+	}
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	return buf.text.String(), nil
+}
 
 // Close stops the actor and the gdb process.
 func (s *Session) Close(ctx context.Context) error {

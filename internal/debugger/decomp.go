@@ -3,6 +3,7 @@ package debugger
 import (
 	"context"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -374,7 +375,19 @@ func (s *Session) decompFunction(r *request) (any, *wire.Error) {
 	// decompiler will recognise it. Names pass through untouched.
 	lookup := target
 	if n, err := parseAddress(target); err == nil {
-		lookup = fmt.Sprintf("0x%x", uint64(int64(n)-bias))
+		ghidraAddr := uint64(int64(n) - bias)
+		// An address in a different module is the commonest reason a lookup
+		// fails, and Ghidra's answer for it — "no function 0x111b900" — names
+		// a translated address the user never saw and does not explain that
+		// the decompiler simply does not have that code. Stopping in the
+		// dynamic loader is enough to produce it.
+		if lo, hi, ok := s.exeImageRange(client); ok && (ghidraAddr < lo || ghidraAddr > hi) {
+			name := client.Ready().Program.Name
+			return nil, wire.NewError(wire.CodeBadRequest, fmt.Sprintf(
+				"%s is not inside %s, which is the only program the decompiler has. "+
+					"It is in a shared library or the dynamic loader.", target, name))
+		}
+		lookup = fmt.Sprintf("0x%x", ghidraAddr)
 	}
 
 	started := time.Now()
@@ -703,7 +716,16 @@ func (s *Session) decompBias(r *request, client *ghidra.Client) (int64, string) 
 
 	// Re-resolve the known symbol: one gdb round trip, and correct across the
 	// relocation that happens when a PIE starts running.
-	if from != "" {
+	if from == entryAnchor {
+		// Re-read rather than cache the number: the entry point moves when a
+		// position-independent executable is loaded, exactly as a symbol does.
+		if runtimeEntry, ok := s.runtimeEntryPoint(r); ok {
+			return int64(runtimeEntry) - int64(ghidraAddr), from
+		}
+		s.decomp.mu.Lock()
+		s.decomp.biasFrom, s.decomp.biasAddr = "", 0
+		s.decomp.mu.Unlock()
+	} else if from != "" {
 		if gdbAddr, werr := s.addressOfSymbol(r, from); werr == nil {
 			return int64(gdbAddr) - int64(ghidraAddr), from
 		}
@@ -713,8 +735,7 @@ func (s *Session) decompBias(r *request, client *ghidra.Client) (int64, string) 
 		s.decomp.mu.Unlock()
 	}
 
-	// A handful of candidates. Each costs one gdb round trip, and only the
-	// winner's name is remembered.
+	// No cached anchor. Try a shared symbol first, then the entry point.
 	list, err := client.Functions(r.ctx, 0, 200, "")
 	if err != nil {
 		return 0, ""
@@ -741,7 +762,130 @@ func (s *Session) decompBias(r *request, client *ghidra.Client) (int64, string) 
 		s.decomp.mu.Unlock()
 		return int64(gdbAddr) - int64(addr), f.Name
 	}
-	return 0, ""
+	return s.biasFromEntryPoint(r, client)
+}
+
+// biasFromEntryPoint locates a program with no symbols at all.
+//
+// A stripped position-independent executable is the case the whole decompiled
+// view exists for, and it defeats the symbol anchor completely: measured on a
+// buildroot busybox, all 372 of its function symbols are undefined imports and
+// not one is defined, so there is no name gdb and Ghidra share. Without an
+// anchor the bias stayed zero and every lookup by address missed, which is
+// what "no function 0x7f2fd396dc80" meant.
+//
+// The entry point is the anchor that always exists. Its link-time value is in
+// the ELF header, which gdb-wui can read itself; its runtime value is what gdb
+// prints in `info files`. Neither needs a symbol table.
+func (s *Session) biasFromEntryPoint(r *request, client *ghidra.Client) (int64, string) {
+	if s.files == nil || s.st.exePath == "" {
+		return 0, ""
+	}
+	abs, err := s.files.AbsPath(s.st.exePath)
+	if err != nil {
+		return 0, ""
+	}
+	f, err := elf.Open(abs)
+	if err != nil {
+		return 0, ""
+	}
+	defer f.Close()
+
+	// Ghidra places the image at its own base, so a file address maps to a
+	// Ghidra address by the difference between that base and the lowest
+	// address the ELF asks to be loaded at. Zero for a non-relocatable image
+	// Ghidra loaded where it was linked.
+	var minVaddr uint64 = ^uint64(0)
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_LOAD && p.Vaddr < minVaddr {
+			minVaddr = p.Vaddr
+		}
+	}
+	if minVaddr == ^uint64(0) {
+		return 0, ""
+	}
+	base, err := parseAddress(client.Ready().Program.ImageBase)
+	if err != nil {
+		return 0, ""
+	}
+	ghidraEntry := f.Entry + (base - minVaddr)
+
+	runtimeEntry, ok := s.runtimeEntryPoint(r)
+	if !ok {
+		return 0, ""
+	}
+	bias := int64(runtimeEntry) - int64(ghidraEntry)
+	s.decomp.mu.Lock()
+	s.decomp.biasFrom, s.decomp.biasAddr = entryAnchor, ghidraEntry
+	s.decomp.mu.Unlock()
+	return bias, entryAnchor
+}
+
+// exeImageRange is the span of the loaded executable, in Ghidra's addresses.
+//
+// Read from the ELF rather than asked of Ghidra, which reports where the image
+// starts but not how far it goes.
+func (s *Session) exeImageRange(client *ghidra.Client) (lo, hi uint64, ok bool) {
+	if s.files == nil || s.st.exePath == "" {
+		return 0, 0, false
+	}
+	abs, err := s.files.AbsPath(s.st.exePath)
+	if err != nil {
+		return 0, 0, false
+	}
+	f, err := elf.Open(abs)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer f.Close()
+
+	minV, maxV := ^uint64(0), uint64(0)
+	for _, p := range f.Progs {
+		if p.Type != elf.PT_LOAD {
+			continue
+		}
+		if p.Vaddr < minV {
+			minV = p.Vaddr
+		}
+		if end := p.Vaddr + p.Memsz; end > maxV {
+			maxV = end
+		}
+	}
+	if minV == ^uint64(0) || maxV <= minV {
+		return 0, 0, false
+	}
+	base, err := parseAddress(client.Ready().Program.ImageBase)
+	if err != nil {
+		return 0, 0, false
+	}
+	return base, base + (maxV - minV), true
+}
+
+// entryAnchor names the entry-point anchor in BiasFrom. Not a symbol name, and
+// deliberately not one a program could have.
+const entryAnchor = "<entry point>"
+
+// runtimeEntryPoint reads the relocated entry point out of `info files`.
+//
+// Prose, because gdb offers it no other way: -file-list-shared-libraries omits
+// the main executable, and no MI command reports a section address.
+func (s *Session) runtimeEntryPoint(r *request) (uint64, bool) {
+	out, werr := s.runConsole(r.ctx, "info files")
+	if werr != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		_, after, found := strings.Cut(line, "Entry point:")
+		if !found {
+			continue
+		}
+		n, err := parseAddress(strings.TrimSpace(after))
+		if err != nil {
+			continue
+		}
+		return n, true
+	}
+	return 0, false
 }
 
 // addressOfSymbol asks gdb where a named function lives.
