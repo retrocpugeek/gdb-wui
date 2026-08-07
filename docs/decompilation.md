@@ -21,6 +21,20 @@ An optional second script argument is a regular expression; only functions whose
 names match are decompiled. On an image with thousands of functions that is the
 difference between a prototype and a batch job.
 
+## Reading one
+
+`scripts/ghidra/show-decomp.py` prints a sidecar in a form you can look at:
+
+```sh
+show-decomp.py out.json                     # functions, most ambiguous first
+show-decomp.py out.json FUN_001028c0        # one function, annotated
+show-decomp.py out.json main --bias 0x555555554000
+```
+
+`--bias` shifts every address into the running program's coordinates, so what
+it prints lines up with what gdb shows. Lines marked `!` share an address with
+another line. Variables are rendered as expressions you can paste into gdb.
+
 gdb-wui would spawn this exactly as it spawns gdb — a separate process, no
 linking, nothing vendored. Ghidra is Apache-2.0, so unlike gdb there is no
 licence pressure here; the rule is kept anyway because Ghidra is a gigabyte with
@@ -250,6 +264,24 @@ way rather than implying the decompiled line is where the program "is".
   per connected browser.
 - **Decompiling is the cost, not analysis.** Ghidra's own `ParallelDecompiler`
   exists; this script is deliberately serial and single purpose.
-- **83% of variables have a usable location.** On `/usr/bin/gzip`: 630
-  register, 163 stack, 143 `unique`, 24 other. So roughly one variable in six
-  in a decompiled function can never show a value, and the UI has to say so.
+- **Far fewer variables are usefully readable than the storage kinds suggest.**
+  On `/usr/bin/gzip`, of 960 variables:
+
+  | | | |
+  |---|---|---|
+  | `stack` | 17% | readable anywhere in the frame |
+  | `register` | 66% | readable **only near one pc** — the register is reused |
+  | `unique` / other | 17% | never readable |
+
+  The middle row is the trap. Counting it as "has a location" gives a cheerful
+  83%, but in optimised code the decompiler packs many variables into one
+  register: `FUN_001028c0` maps eight of its locals onto `$rax`, and one
+  function maps ten. Reading `$rax` for `pcVar5` while stopped anywhere except
+  `0x1028f4` gives a confident, wrong answer.
+
+  So a decompiled pane should show a value for a register variable only when
+  the pc is within its live range, and blank it otherwise. `pc` is exported for
+  exactly this; the live range itself is not, and getting it would mean asking
+  the decompiler for the HighVariable's p-code cover rather than a single
+  address. That is the real work in a live decompiled view, and it is worth
+  knowing before starting rather than after.
