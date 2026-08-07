@@ -150,6 +150,10 @@ bias = gdb_address(sym) - sidecar_entry(sym)
 For that binary the answer is `0x555555454000`, and it is the same arithmetic
 the symbols pane already avoids by jumping to names instead of addresses.
 
+Not every target needs it. `vwfw-linux_64` is a statically linked `EXEC`, not a
+PIE, and Ghidra loaded it at its true `0x120000000`; the bias there is zero.
+Firmware is often the easy case and a desktop hello-world the hard one.
+
 ### Stack offsets
 
 A `stack` offset is relative to **Ghidra's frame base**, not to any register
@@ -173,12 +177,47 @@ ghidra local_10 Stack[-16] via $rbp+(-16+8) = 2      ground truth -0x8(%rbp) = 2
 ghidra local_c  Stack[-12] via $rbp+(-12+8) = 8      ground truth -0x4(%rbp) = 8
 ```
 
-This constant is **not** portable. It follows from the ABI's return-address
-convention and from the function actually having a frame pointer, and it must
-be established per architecture by measurement — a link register on ARM means
-no return address on the stack at all. `frame.returnAddressOffset` and
-`frame.growsNegative` are exported so a consumer has the inputs rather than a
-hardcoded eight.
+This constant is **not** portable, and the general rule is simpler than it
+looks. Ghidra's frame base is always **the stack pointer at function entry**,
+so the address is always:
+
+```
+address = entry_sp + ghidra_offset
+```
+
+All that changes per ABI is how `entry_sp` is recovered from a register gdb
+has. That has to be measured per architecture.
+
+#### MIPS64, measured
+
+Established on `vwfw-linux_64.symbols`, a 2 MB statically linked big-endian
+MIPS64 Octeon firmware:
+
+```
+sp_offset = ghidra_offset + frame.size
+```
+
+`process_packet` opens with `daddiu sp,sp,-352`, which is Ghidra's
+`frame.size` exactly, and there is no frame pointer: `jal` leaves the return
+address in `$ra` and touches no memory, so the whole frame is that one
+instruction. All 16 of its stack variables land on offsets the instruction
+stream really uses — ten as a direct `N(sp)` and six as `daddiu rX,sp,N` for an
+array base. The prologue's eleven register spills at `264(sp)`…`344(sp)` map to
+Ghidra `-88`…`-8`, with `ra` at `-8`, which is the same frame base seen from
+the other end.
+
+#### A correction
+
+An earlier draft said `frame.returnAddressOffset` gives a consumer "the inputs
+rather than a hardcoded eight". It does not. Ghidra reports
+`returnAddressOffset: 0` for **both** x86-64 and MIPS64, so it does not
+distinguish the two conventions at all, even though one pushes a return address
+onto the stack at the call and the other does not.
+
+What actually carries the information is `frame.size` together with knowing
+which register the ABI leaves usable — and that last part is knowledge about
+the architecture, not a field in the sidecar. `scripts/ghidra/show-decomp.py`
+holds the two rules established so far and refuses to guess for anything else.
 
 ## How good is the mapping?
 
@@ -253,11 +292,13 @@ way rather than implying the decompiled line is where the program "is".
   |---|---|---|---|---|
   | `build/structs` | 16 KiB | 9 | 31 ms | 6.5 s |
   | `/usr/bin/gzip` | 97 KiB | 72 | 3.8 s | 12.1 s |
+  | `vwfw-linux_64` (MIPS64, static) | 2.0 MiB | 21 of 1703 | 0.5 s | 68 s |
 
-  That is ~50 ms per function, so a few thousand functions is minutes, not
-  hours. The fixed ~5 s of JVM startup and analysis is why one function per
-  invocation is not viable: export in bulk, as this does, or keep a Ghidra
-  process alive.
+  Analysis, not decompilation, dominates on a large image: the firmware's 68
+  seconds is almost all auto-analysis, and decompiling 21 named functions from
+  it cost half a second. Decompiling is ~50 ms per function, so even all 1703
+  would be under two minutes. The fixed cost is why one function per invocation
+  is not viable: export in bulk, as this does, or keep a Ghidra process alive.
 - **The sidecar is not small.** `/usr/bin/gzip` produces 819 KiB of JSON from a
   97 KiB binary — roughly 8× the input, most of it the address sets. It
   compresses well and it is a cache, but it is not something to hold in memory
@@ -272,6 +313,9 @@ way rather than implying the decompiled line is where the program "is".
   | `stack` | 17% | readable anywhere in the frame |
   | `register` | 66% | readable **only near one pc** — the register is reused |
   | `unique` / other | 17% | never readable |
+
+  The firmware splits almost identically — 71% register, 18% stack, 11%
+  `unique` across its 21 functions — so this is not an artefact of one binary.
 
   The middle row is the trap. Counting it as "has a location" gives a cheerful
   83%, but in optimised code the decompiler packs many variables into one

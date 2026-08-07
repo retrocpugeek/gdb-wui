@@ -101,22 +101,36 @@ if any(len(ls) > 1 for ls in m.values()):
         if len(m[a]) > 1:
             print(f"      {rt(a):#x} claimed by lines {m[a]}")
 
+def stack_expr(v):
+    """Ghidra's stack offset -> something gdb can evaluate.
+
+    Ghidra's frame base is the stack pointer at function entry, so the address
+    is always `entry_sp + offset`. All that changes per ABI is how entry_sp is
+    recovered from a register gdb has, and that has to be measured per
+    architecture — see docs/decompilation.md.
+    """
+    off = v["storage"]["offset"]
+    ctype = v["type"] or "long"
+    if lang.startswith("x86"):
+        # `call` pushed the return address, then `push %rbp` put the saved
+        # frame pointer one word below it, so entry_sp = $rbp + pointerSize.
+        base, delta = "$rbp", off + psize
+    elif lang.startswith("MIPS"):
+        # `jal` touches no memory; the prologue's single `daddiu sp,sp,-N` is
+        # the whole frame, so entry_sp = $sp + frameSize.
+        base, delta = "$sp", off + fn["frame"]["size"]
+    else:
+        return f"<stack {off}: entry_sp rule not established for {lang}>"
+    sign = "+" if delta >= 0 else "-"
+    return f"*({ctype} *)({base} {sign} {abs(delta):#x})"
+
+
 print("\nvariables:")
-x86 = lang.startswith("x86")
 for v in fn["variables"]:
     st = v["storage"]
     kind = st["kind"]
     if kind == "stack":
-        if x86:
-            # Verified on x86-64 SysV with a frame pointer: Ghidra's frame base
-            # is the entry stack pointer, which points at the return address,
-            # and `push %rbp` puts %rbp one pointer below it. NOT portable —
-            # see docs/decompilation.md.
-            off = st["offset"] + psize
-            sign = "+" if off >= 0 else "-"
-            expr = f"*({v['type'] or 'long'} *)($rbp {sign} {abs(off):#x})"
-        else:
-            expr = f"<stack {st['offset']}: frame-base rule unverified for {lang}>"
+        expr = stack_expr(v)
     elif kind == "register":
         expr = f"${st['register'].lower()}"
         if v["pc"]:
