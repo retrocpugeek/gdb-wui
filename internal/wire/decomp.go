@@ -1,5 +1,7 @@
 package wire
 
+import "strings"
+
 // Decompilation: recovered C shown beside a live session, for a binary with no
 // source. gdb stays in charge — this is a view, not a second debugger.
 //
@@ -15,6 +17,12 @@ const (
 
 // Events.
 const (
+	// EventDecompLog carries one line about what the decompiler is doing, for
+	// the log pane. Unlike the raw MI stream it is not behind a flag: the
+	// volume is one line per human-paced operation, and the alternative is a
+	// pane that shows "starting" for a minute with no way to tell whether
+	// anything is happening.
+	EventDecompLog = "decompLog"
 	// EventDecompChanged reports that the decompiler's availability or the
 	// program it holds has changed — it started, it died, or a different
 	// executable was loaded. Clients refetch status rather than being sent it,
@@ -58,6 +66,23 @@ type DecompStatus struct {
 	// than the one being debugged is a confidently wrong answer, and the user
 	// has to be told which they are looking at.
 	Mismatch string `json:"mismatch,omitempty"`
+}
+
+// Decompiler log levels. The pane colours them; nothing else reads them.
+const (
+	DecompLogInfo  = "info"
+	DecompLogWarn  = "warn"
+	DecompLogError = "error"
+)
+
+// DecompLog is one line of decompiler activity.
+type DecompLog struct {
+	Text  string `json:"text"`
+	Level string `json:"level,omitempty"`
+	// Millis times an operation that finished. Zero for anything else. Kept
+	// separate from Text so a client can render it consistently rather than
+	// parsing it back out.
+	Millis int64 `json:"millis,omitempty"`
 }
 
 // DecompProgram identifies the decompiled binary.
@@ -161,6 +186,15 @@ type ExecStepLineRequest struct {
 	Over    bool   `json:"over,omitempty"`
 	Thread  int    `json:"thread,omitempty"`
 	StopSeq uint64 `json:"stopSeq,omitempty"`
+}
+
+// LineCount is how many lines Text has, which is not len(Lines): only lines
+// carrying addresses appear there.
+func (f DecompFunction) LineCount() int {
+	if f.Text == "" {
+		return 0
+	}
+	return strings.Count(strings.TrimSuffix(f.Text, "\n"), "\n") + 1
 }
 
 // DecompLine maps one line of Text to the addresses its tokens carry.

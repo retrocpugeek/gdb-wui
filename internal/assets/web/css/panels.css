@@ -321,6 +321,13 @@
 .log-mi-out   { color: var(--tok-keyword); }
 .log-mi-in    { color: var(--fg-2); }
 
+/* The decompiler's own activity. Distinct from gdb's console and from the MI
+ * stream, because when something is slow or wrong it matters a great deal
+ * which of the two processes it was. */
+.log-decomp       { color: var(--tok-func); }
+.log-decomp-warn  { color: var(--warn); }
+.log-decomp-error { color: var(--danger); }
+
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;

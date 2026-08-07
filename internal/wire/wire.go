@@ -214,6 +214,7 @@ var EventNames = []string{
 	EventSymbolsInvalidated,
 	EventRemoteChanged,
 	EventDecompChanged,
+	EventDecompLog,
 }
 
 // Hello is pushed to every connection the moment it opens, before anything is

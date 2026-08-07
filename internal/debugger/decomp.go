@@ -53,6 +53,28 @@ type DecompConfig struct {
 // 71 seconds for a 2 MB firmware image and longer for anything bigger.
 const decompStartTimeout = 20 * time.Minute
 
+// decompLog puts one line about the decompiler in front of the user.
+//
+// emitOffActor because almost every caller is the background start goroutine
+// or the process watcher, neither of which may touch session state. The two
+// callers that do run on the actor are broadcasting the same shape, and the
+// snapshot has nothing decompiler-shaped in it to publish, so the off-actor
+// form is right for both.
+func (s *Session) decompLog(level, format string, args ...any) {
+	s.decompLogTimed(level, 0, format, args...)
+}
+
+func (s *Session) decompLogTimed(level string, ms int64, format string, args ...any) {
+	text := fmt.Sprintf(format, args...)
+	// The server's own log gets it too. A browser that was not connected when
+	// something failed is the commonest way to lose the one line that explains
+	// a failure.
+	s.logf("decomp: %s", text)
+	s.emitOffActor(wire.EventDecompLog, wire.DecompLog{
+		Text: text, Level: level, Millis: ms,
+	})
+}
+
 // decomp holds the decompiler and its state, under its own lock.
 type decomp struct {
 	mu    sync.Mutex
@@ -187,8 +209,13 @@ func (s *Session) maybeStartDecomp() {
 		// the postScript returns, and the resident server never returns, so
 		// importing and serving together leaves an empty project behind.
 		if importPath != "" {
+			s.decompLog(wire.DecompLogInfo,
+				"importing %s — analysis is seconds for a small binary and minutes for firmware",
+				filepath.Base(importPath))
+			started := time.Now()
 			if err := ghidra.Import(context.Background(), cfg.Install,
-				cfg.ProjectDir, cfg.ProjectName, importPath, s.logf); err != nil {
+				cfg.ProjectDir, cfg.ProjectName, importPath, s.ghidraProcessLog); err != nil {
+				s.decompLog(wire.DecompLogError, "import failed: %v", err)
 				s.decomp.mu.Lock()
 				s.decomp.starting = false
 				s.decomp.state = wire.DecompFailed
@@ -197,14 +224,20 @@ func (s *Session) maybeStartDecomp() {
 				s.emitOffActor(wire.EventDecompChanged, map[string]any{})
 				return
 			}
+			s.decompLogTimed(wire.DecompLogInfo, time.Since(started).Milliseconds(),
+				"imported %s", filepath.Base(importPath))
+		} else {
+			s.decompLog(wire.DecompLogInfo, "opening %s (%s) read-only",
+				cfg.Program, cfg.ProjectName)
 		}
+		startedAt := time.Now()
 		client, err := ghidra.Start(context.Background(), ghidra.Options{
 			Install:     cfg.Install,
 			ProjectDir:  cfg.ProjectDir,
 			ProjectName: cfg.ProjectName,
 			Program:     cfg.Program,
 			Timeout:     decompStartTimeout,
-			Logf:        s.logf,
+			Logf:        s.ghidraProcessLog,
 		})
 		s.decomp.mu.Lock()
 		s.decomp.starting = false
@@ -223,6 +256,18 @@ func (s *Session) maybeStartDecomp() {
 			s.decomp.client = client
 		}
 		s.decomp.mu.Unlock()
+
+		switch {
+		case err != nil:
+			s.decompLog(wire.DecompLogError, "failed to start: %v", err)
+		case closed:
+			s.decompLog(wire.DecompLogInfo, "discarded: the session closed while it was starting")
+		default:
+			r := client.Ready()
+			s.decompLogTimed(wire.DecompLogInfo, time.Since(startedAt).Milliseconds(),
+				"ready — %s, %s, %d functions", r.Program.Name,
+				r.Program.LanguageID, r.FunctionCount)
+		}
 
 		if closed && client != nil {
 			_ = client.Close()
@@ -249,6 +294,10 @@ func (s *Session) watchDecomp(client *ghidra.Client) {
 		s.decomp.state = wire.DecompFailed
 		s.decomp.err = reason().Error()
 		s.decomp.biasFrom, s.decomp.biasAddr = "", 0
+		s.decomp.mu.Unlock()
+		s.decompLog(wire.DecompLogError, "died: %v", reason())
+		s.emitOffActor(wire.EventDecompChanged, map[string]any{})
+		return
 	}
 	s.decomp.mu.Unlock()
 	s.emitOffActor(wire.EventDecompChanged, map[string]any{})
@@ -317,16 +366,27 @@ func (s *Session) decompFunction(r *request) (any, *wire.Error) {
 		lookup = fmt.Sprintf("0x%x", uint64(int64(n)-bias))
 	}
 
+	started := time.Now()
 	fn, err := client.Decompile(r.ctx, lookup)
 	if err != nil {
 		var gerr *ghidra.Error
 		if ok := asGhidraError(err, &gerr); ok {
+			s.decompLog(wire.DecompLogWarn, "decompile %s: %s", target, gerr.Msg)
 			return nil, wire.NewError(wire.CodeBadRequest, gerr.Msg)
 		}
+		s.decompLog(wire.DecompLogError, "decompile %s: %v", target, err)
 		return nil, wire.NewError(wire.CodeInternal, err.Error())
 	}
 
-	return s.renderDecomp(fn, bias, biasFrom, s.currentPC()), nil
+	out := s.renderDecomp(fn, bias, biasFrom, s.currentPC())
+	mapped := 0
+	for _, l := range out.Lines {
+		mapped += len(l.Addrs)
+	}
+	s.decompLogTimed(wire.DecompLogInfo, time.Since(started).Milliseconds(),
+		"decompiled %s — %d lines, %d mapped addresses, %d variables",
+		out.Name, out.LineCount(), mapped, len(out.Vars))
+	return out, nil
 }
 
 // renderDecomp projects a Ghidra function onto the wire, applying the bias so
@@ -901,4 +961,56 @@ func (s *Session) advanceStepLine(ctx context.Context, reason string) bool {
 		return false
 	}
 	return true
+}
+
+// ghidraProcessLog filters the child's own output on its way to the browser.
+//
+// analyzeHeadless emits hundreds of lines — a JVM banner, every analyzer's
+// timing, log4j noise — and forwarding all of it would bury the pane. But
+// forwarding none of it leaves a user watching "starting" for a minute with no
+// way to tell whether anything is happening, or why it failed. So the
+// milestones and the complaints go through, and the rest goes to the server's
+// log where -v can find it.
+func (s *Session) ghidraProcessLog(format string, args ...any) {
+	line := fmt.Sprintf(format, args...)
+	s.logf("%s", line)
+
+	// The JVM's own deprecation warnings are four lines about Ghidra's
+	// dependencies calling sun.misc.Unsafe, and only some of them name it —
+	// the "Please consider reporting this" line does not. The reliable
+	// distinction is the spelling: the JVM writes "WARNING:", Ghidra's log4j
+	// writes "WARN ".
+	if strings.HasPrefix(trimGhidraNoise(line), "WARNING:") {
+		return
+	}
+
+	switch {
+	case strings.Contains(line, "ERROR"):
+		s.emitOffActor(wire.EventDecompLog, wire.DecompLog{
+			Text: trimGhidraNoise(line), Level: wire.DecompLogError})
+	case strings.Contains(line, "REPORT:"),
+		strings.Contains(line, "Packed database"),
+		strings.Contains(line, "WARN") && !strings.Contains(line, "sun.misc.Unsafe"):
+		// REPORT: lines are analyzeHeadless's own milestones — import
+		// succeeded, analysis succeeded, which file it is working on. The
+		// Unsafe warnings are the JVM complaining about Ghidra's own
+		// dependencies and mean nothing here.
+		s.emitOffActor(wire.EventDecompLog, wire.DecompLog{
+			Text: trimGhidraNoise(line), Level: wire.DecompLogInfo})
+	}
+}
+
+// trimGhidraNoise strips the log4j decoration so a line reads as a sentence.
+func trimGhidraNoise(line string) string {
+	line = strings.TrimSpace(line)
+	line = strings.TrimPrefix(line, "ghidra: ")
+	line = strings.TrimPrefix(line, "ghidra import: ")
+	for _, p := range []string{"INFO  ", "WARN  ", "ERROR "} {
+		line = strings.TrimPrefix(line, p)
+	}
+	// The trailing "(SomeClassName)" is Ghidra's logger name.
+	if i := strings.LastIndex(line, " ("); i > 0 && strings.HasSuffix(line, ")") {
+		line = line[:i]
+	}
+	return strings.TrimSpace(line)
 }

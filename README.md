@@ -132,6 +132,12 @@ stepping needs a line table, and without one its step range is the whole
 function, so a step over runs to the function's exit. With the Decompiled tab
 showing, the step walks to the next decompiled line instead.
 
+The **Log** tab carries the decompiler's own activity — what it imported, how
+long analysis took, one line per decompiled function with its timing, and
+Ghidra's own complaints. Not behind a flag like the raw MI stream: it is one
+line per operation, and without it a slow start is indistinguishable from a
+stuck one.
+
 It is a model of the program, not its source, and the pane says where it is
 guessing: a highlight the address map could not pin exactly is drawn as an
 outline rather than a fill, an ambiguous one is marked, and a local the

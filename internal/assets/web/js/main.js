@@ -363,6 +363,9 @@ function handleEvent(msg) {
     case "symbolsInvalidated":
       symbols.refresh();
       break;
+    case "decompLog":
+      log.decomp(msg.payload?.text ?? "", msg.payload?.level, msg.payload?.millis);
+      break;
     case "decompChanged":
       refreshDecompStatus().then((st) => {
         if (st?.state === "ready" && centerTab === "decomp") {

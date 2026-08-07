@@ -170,6 +170,7 @@ later. Requesting one today returns `unsupported`.
 | `symbolsInvalidated` | The cached symbol table belongs to a program that is no longer loaded. | `{}` |
 | `remoteChanged` | A remote target was connected or disconnected. | `{connected, address?}` |
 | `decompChanged` | The decompiler started, died, or now holds a different program. | `{}` |
+| `decompLog` | One line of decompiler activity, for the log pane. | `{text, level?, millis?}` |
 | `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
 | `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
@@ -620,6 +621,18 @@ Reporting "no line" there is accurate and useless: it makes the marker blink
 out mid-step. The nearest *preceding* line is used instead and flagged
 `pcLineApprox`, which a client draws differently — "the program is here" and
 "the program is somewhere after here" are different claims.
+
+`decompLog` is **not** behind a flag, unlike the raw MI stream. Its volume is
+one line per human-paced operation — start, import, ready, one per decompile —
+and the alternative is a pane that says "starting" for a minute with no way to
+tell whether anything is happening or why it failed. Ghidra's own output is
+filtered on the way through: its `REPORT:` milestones and its complaints go to
+the browser, while the JVM banner, every analyzer's timing and the log4j noise
+stay in the server's log where `-v` can find them.
+
+`level` is `info`, `warn` or `error`. `millis` times an operation that
+finished, and is a separate field rather than part of `text` so a client can
+render durations consistently instead of parsing them back out.
 
 `expr` uses gdb's type vocabulary, not Ghidra's. `undefined4`, `uint` and the
 name of a struct Ghidra invented all fail to parse — measured, `p *(config *

@@ -9,6 +9,15 @@
 
 const MAX_LINES = 2000;
 
+// formatMillis keeps a duration readable at both ends: analysis is minutes and
+// a decompile is milliseconds.
+function formatMillis(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  return `${m}m ${Math.round((ms % 60000) / 1000)}s`;
+}
+
 export function createLog({ element }) {
   let lines = [];
   let pinned = true;
@@ -47,6 +56,15 @@ export function createLog({ element }) {
     },
     mi(direction, text) {
       push(direction === "out" ? "mi-out" : "mi-in", text);
+    },
+    // decomp is the decompiler's own activity: lifecycle, one line per
+    // operation, and Ghidra's milestones. Not behind a flag like the MI
+    // stream, because the volume is human-paced and the alternative is a pane
+    // that says "starting" for a minute with nothing to show for it.
+    decomp(text, level = "info", millis = 0) {
+      const kind = level === "error" ? "decomp-error"
+        : level === "warn" ? "decomp-warn" : "decomp";
+      push(kind, millis > 0 ? `ghidra: ${text} (${formatMillis(millis)})` : `ghidra: ${text}`);
     },
     system(text) {
       push("system", text);
