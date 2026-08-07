@@ -78,6 +78,10 @@ func (s *Session) exeLoad(r *request) (any, *wire.Error) {
 	s.st.registerNames = nil
 	s.invalidateSymbols()
 	s.st.exePath = req.Path
+	// Hashed here rather than on demand: the decompiler's mismatch guard needs
+	// it, and reading the file once at load time is cheaper and more truthful
+	// than reading it later, when it may have been rebuilt underneath us.
+	s.st.exeSHA256 = s.hashExe(req.Path)
 	s.st.runState = wire.RunStateNoProgram
 	s.st.threads = nil
 	s.st.frames = nil

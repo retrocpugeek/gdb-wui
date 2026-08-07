@@ -225,18 +225,27 @@ func TestFunctionsListsWithoutDecompiling(t *testing.T) {
 	}
 }
 
-// TestCloseStopsTheProcess: a 2 GB JVM outliving the session is not acceptable,
-// and Setpgid plus a group kill is what prevents it. Verified by pid rather
-// than by trusting the call.
+// TestCloseStopsTheProcess: a 2 GB JVM outliving the session is not
+// acceptable, and Setpgid plus a group kill is what prevents it.
+//
+// This counts JVMs rather than trusting the call. An earlier version of this
+// test only checked that requests failed after Close, which they do the moment
+// the socket shuts — it would have passed with the process still running, and
+// a leaked JVM was in fact observed by hand while that version was green.
 func TestCloseStopsTheProcess(t *testing.T) {
+	before := countHeadlessJVMs(t)
 	c := start(t)
 	// A live request proves the JVM is up before we ask it to go away.
 	if _, err := c.Decompile(context.Background(), "accumulate"); err != nil {
 		t.Fatalf("Decompile: %v", err)
 	}
+	if n := countHeadlessJVMs(t); n <= before {
+		t.Fatalf("no JVM appeared (%d then %d); this test cannot prove anything", before, n)
+	}
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
+
 	// After Close every request must fail rather than block.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -245,6 +254,36 @@ func TestCloseStopsTheProcess(t *testing.T) {
 	} else if ctx.Err() != nil {
 		t.Error("a request after Close blocked until the context expired")
 	}
+
+	// And the process itself is gone. A JVM takes a moment to die.
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if countHeadlessJVMs(t) <= before {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a Ghidra JVM outlived Close (%d before, %d now)",
+				before, countHeadlessJVMs(t))
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// countHeadlessJVMs counts Ghidra processes started by this package,
+// identified by the temp script directory Start creates for them.
+func countHeadlessJVMs(t *testing.T) int {
+	t.Helper()
+	out, err := exec.Command("ps", "-eo", "args").Output()
+	if err != nil {
+		t.Skipf("cannot list processes: %v", err)
+	}
+	var n int
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "gdb-wui-ghidra-") && strings.Contains(line, "DecompServer") {
+			n++
+		}
+	}
+	return n
 }
 
 func parseAddr(t *testing.T, s string) uint64 {

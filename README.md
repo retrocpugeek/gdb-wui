@@ -74,6 +74,10 @@ breakpoints survive.
 | `-mi-log` | Stream raw MI traffic to the browser's log pane. |
 | `-idle-exit DUR` | Exit after this long with no browser connected. |
 | `-print-url` | Print a fresh login link for a running server and exit. |
+| `-ghidra DIR` | Ghidra installation, to enable decompilation. Defaults to `$GHIDRA_INSTALL_DIR`, then the usual locations. |
+| `-ghidra-project PATH` | An existing Ghidra project to read, **opened read-only** — your names and types, never written to. |
+| `-ghidra-program NAME` | Which program inside that project. Required with `-ghidra-project`: a real project holds several. |
+| `-decomp-dir DIR` | Where to cache projects gdb-wui creates itself (default `<project>/.gdb-wui/ghidra`). |
 
 The **Symbols** pane under the file tree lists the loaded program's functions
 and globals. Type in the filter box to narrow it, and double-click a symbol to
@@ -218,10 +222,11 @@ fails if that document and the code disagree.
 [docs/findings.md](docs/findings.md) records the GDB behaviours this had to
 establish by measurement; test comments cite them by number.
 
-[docs/decompilation.md](docs/decompilation.md) is a **prototype**, not a
-feature: a Ghidra headless exporter that maps recovered C back to addresses, so
-a future pane could show decompiled source beside a live session. Nothing reads
-it yet.
+[docs/decompilation.md](docs/decompilation.md) covers decompilation: gdb-wui
+supervises a resident Ghidra the same way it supervises gdb, and serves
+recovered C with a map back to real addresses. There is no pane yet — the
+protocol is there and the browser does not use it — and the whole feature is
+optional: without `-ghidra` nothing changes.
 
 ## Development
 

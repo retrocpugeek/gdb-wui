@@ -1,0 +1,606 @@
+package debugger
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/retrocpugeek/gdb-wui/internal/ghidra"
+	"github.com/retrocpugeek/gdb-wui/internal/wire"
+)
+
+// Decompilation.
+//
+// The decompiler is a separate resource with its own lifetime, deliberately
+// not part of the session's state machine. It lives behind its own mutex
+// rather than in s.st, and that is what keeps a cold start — seconds for an
+// existing project, minutes when a binary has to be analysed — off the actor
+// goroutine. Blocking the actor for a minute would freeze stepping,
+// breakpoints and the console, which is a poor trade for a view.
+//
+// Once running, a decompile is 100-200ms and happens on the actor like any
+// other round trip. That is consistent with disasm.function, which blocks the
+// actor on gdb for comparable time.
+
+// DecompConfig describes where Ghidra is and what it should open.
+type DecompConfig struct {
+	// Install is the located Ghidra. Nil disables the feature entirely, which
+	// is an ordinary state and not an error.
+	Install *ghidra.Install
+	// ProjectDir and ProjectName address an existing Ghidra project. Program
+	// names one program inside it — required, because a real project holds
+	// several programs and, in the Debugger workflow, a pile of traces too.
+	ProjectDir  string
+	ProjectName string
+	Program     string
+	// CacheRoot is where gdb-wui creates its own Ghidra projects when no
+	// existing one is configured. Keyed by the executable's sha256 inside, so
+	// a restart reuses the analysis rather than paying for it again — that is
+	// 71 seconds on a 2 MB firmware image.
+	CacheRoot string
+}
+
+// decompStartTimeout has to cover importing and analysing a binary, which is
+// 71 seconds for a 2 MB firmware image and longer for anything bigger.
+const decompStartTimeout = 20 * time.Minute
+
+// decomp holds the decompiler and its state, under its own lock.
+type decomp struct {
+	mu    sync.Mutex
+	state string
+	err   string
+	// client is non-nil only in DecompReady.
+	client *ghidra.Client
+	// starting guards against a second start while one is in flight.
+	starting bool
+	// closed means the session is shutting down. A start already in flight
+	// will finish and hand back a live process afterwards; without this it
+	// would assign it to a client nobody is left to close, orphaning a JVM.
+	closed bool
+	// biasFrom names the symbol the bias is established from, and biasAddr is
+	// that symbol's Ghidra address. The *numeric* bias is deliberately not
+	// cached: a position-independent executable relocates when it starts
+	// running, so a bias computed before `run` is wrong after it — measured,
+	// by watching a decompiled entry stay at its link-time 0x11e9 while gdb
+	// had moved the program to 0x5555555551e9. Only the choice of symbol is
+	// stable; its address has to be asked for again.
+	biasFrom string
+	biasAddr uint64
+}
+
+// decompStatus answers what the pane can offer right now, and starts the
+// decompiler if this is the first time anyone asked.
+//
+// Starting on first ask rather than at session start is deliberate: most
+// sessions never open the pane, and a 2 GB JVM that nobody wanted is a rude
+// thing to spawn.
+func (s *Session) decompStatus(r *request) (any, *wire.Error) {
+	cfg := s.cfg.Decomp
+	if cfg.Install == nil {
+		return wire.DecompStatus{
+			State: wire.DecompOff,
+			Error: "no Ghidra installation configured; pass -ghidra or set " +
+				ghidra.EnvInstall,
+		}, nil
+	}
+
+	s.maybeStartDecomp()
+
+	s.decomp.mu.Lock()
+	state, errText, client := s.decomp.state, s.decomp.err, s.decomp.client
+	s.decomp.mu.Unlock()
+
+	if state == "" {
+		state = wire.DecompOff
+	}
+	out := wire.DecompStatus{
+		State:         state,
+		Error:         errText,
+		GhidraVersion: cfg.Install.Version,
+	}
+	if client == nil {
+		return out, nil
+	}
+	ready := client.Ready()
+	out.FunctionCount = ready.FunctionCount
+	out.Program = &wire.DecompProgram{
+		Name:        ready.Program.Name,
+		SHA256:      ready.Program.SHA256,
+		LanguageID:  ready.Program.LanguageID,
+		ImageBase:   ready.Program.ImageBase,
+		PointerSize: ready.Program.PointerSize,
+	}
+	// The mismatch guard. Two builds of one program share every address, so
+	// this is a warning rather than a refusal — but reading a decompilation of
+	// a different build than the one being debugged is a confidently wrong
+	// answer, and the user has to be told which they are looking at.
+	if want := s.st.exeSHA256; want != "" && ready.Program.SHA256 != "" &&
+		!strings.EqualFold(want, ready.Program.SHA256) {
+		out.Mismatch = fmt.Sprintf(
+			"the decompiler has %s (sha256 %s), but gdb has loaded a different build (%s)",
+			ready.Program.Name, short(ready.Program.SHA256), short(want))
+	}
+	return out, nil
+}
+
+// maybeStartDecomp kicks off a start in the background, at most once.
+//
+// Called from the actor, so it may read session state; the goroutine it
+// launches may not, and everything it needs is captured first.
+func (s *Session) maybeStartDecomp() {
+	cfg := s.cfg.Decomp
+	if cfg.Install == nil {
+		return
+	}
+	// With no configured project, decompile whatever gdb has loaded. Resolved
+	// here rather than at startup because the executable is usually chosen
+	// after the session begins.
+	var importPath string
+	if cfg.ProjectDir == "" {
+		if s.st.exePath == "" || s.st.exeSHA256 == "" || s.files == nil {
+			return
+		}
+		abs, err := s.files.AbsPath(s.st.exePath)
+		if err != nil {
+			return
+		}
+		root := cfg.CacheRoot
+		if root == "" {
+			return
+		}
+		// Keyed on the hash, not the path: a rebuilt binary must not be served
+		// a stale analysis of its predecessor.
+		cfg.ProjectDir = filepath.Join(root, s.st.exeSHA256[:16])
+		cfg.ProjectName = "gdb-wui"
+		cfg.Program = filepath.Base(abs)
+		if _, err := os.Stat(filepath.Join(cfg.ProjectDir, cfg.ProjectName+".gpr")); err != nil {
+			// No project yet, so this run pays for the analysis.
+			if err := os.MkdirAll(cfg.ProjectDir, 0o755); err != nil {
+				s.logf("decompilation: %v", err)
+				return
+			}
+			importPath = abs
+		}
+	}
+	s.decomp.mu.Lock()
+	if s.decomp.closed || s.decomp.starting || s.decomp.state == wire.DecompReady ||
+		s.decomp.state == wire.DecompFailed {
+		s.decomp.mu.Unlock()
+		return
+	}
+	s.decomp.starting = true
+	s.decomp.state = wire.DecompStarting
+	s.decomp.mu.Unlock()
+
+	go func() {
+		client, err := ghidra.Start(context.Background(), ghidra.Options{
+			Install:     cfg.Install,
+			ProjectDir:  cfg.ProjectDir,
+			ProjectName: cfg.ProjectName,
+			Program:     cfg.Program,
+			Import:      importPath,
+			Timeout:     decompStartTimeout,
+			Logf:        s.logf,
+		})
+		s.decomp.mu.Lock()
+		s.decomp.starting = false
+		closed := s.decomp.closed
+		switch {
+		case err != nil:
+			s.decomp.state = wire.DecompFailed
+			s.decomp.err = err.Error()
+		case closed:
+			// The session shut down while this was starting. Nobody is left to
+			// close it, so close it here rather than leave a 2 GB JVM behind.
+			s.decomp.state = wire.DecompOff
+		default:
+			s.decomp.state = wire.DecompReady
+			s.decomp.err = ""
+			s.decomp.client = client
+		}
+		s.decomp.mu.Unlock()
+
+		if closed && client != nil {
+			_ = client.Close()
+			return
+		}
+
+		// Off-actor: this goroutine must not touch session state, and the
+		// snapshot has nothing decompiler-shaped in it to publish.
+		s.emitOffActor(wire.EventDecompChanged, map[string]any{})
+
+		if err == nil {
+			// Notice the process dying so the pane stops claiming to work.
+			go s.watchDecomp(client)
+		}
+	}()
+}
+
+func (s *Session) watchDecomp(client *ghidra.Client) {
+	dead, reason := client.Dead()
+	<-dead
+	s.decomp.mu.Lock()
+	if s.decomp.client == client {
+		s.decomp.client = nil
+		s.decomp.state = wire.DecompFailed
+		s.decomp.err = reason().Error()
+		s.decomp.biasFrom, s.decomp.biasAddr = "", 0
+	}
+	s.decomp.mu.Unlock()
+	s.emitOffActor(wire.EventDecompChanged, map[string]any{})
+}
+
+// closeDecomp stops the decompiler. A 2 GB JVM outliving the session is not
+// acceptable.
+func (s *Session) closeDecomp() {
+	s.decomp.mu.Lock()
+	client := s.decomp.client
+	s.decomp.client = nil
+	s.decomp.closed = true
+	s.decomp.state = wire.DecompOff
+	s.decomp.mu.Unlock()
+	if client != nil {
+		_ = client.Close()
+	}
+}
+
+func (s *Session) decompFunction(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.DecompFunctionRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+
+	s.decomp.mu.Lock()
+	client, state, errText := s.decomp.client, s.decomp.state, s.decomp.err
+	s.decomp.mu.Unlock()
+
+	if client == nil {
+		s.maybeStartDecomp()
+		msg := "the decompiler is not ready"
+		switch state {
+		case wire.DecompStarting:
+			msg = "the decompiler is still starting"
+		case wire.DecompFailed:
+			msg = "the decompiler failed: " + errText
+		case "", wire.DecompOff:
+			msg = "no decompiler is configured"
+		}
+		return nil, wire.NewError(wire.CodeNotReady, msg)
+	}
+
+	target := strings.TrimSpace(req.Target)
+	if target == "" {
+		// Follow the selected frame. This is what the pane wants on a stop,
+		// and it is the reason Decompile accepts an interior address: a
+		// program counter is rarely a function entry.
+		frame := req.Frame
+		if frame == 0 {
+			frame = s.st.selFrame
+		}
+		f, ok := s.frameAt(frame)
+		if !ok || f.Address == "" {
+			return nil, wire.NewError(wire.CodeNotReady, "no frame to decompile")
+		}
+		target = f.Address
+	}
+
+	bias, biasFrom := s.decompBias(r, client)
+
+	// A runtime address has to go back into Ghidra's coordinates before the
+	// decompiler will recognise it. Names pass through untouched.
+	lookup := target
+	if n, err := parseAddress(target); err == nil {
+		lookup = fmt.Sprintf("0x%x", uint64(int64(n)-bias))
+	}
+
+	fn, err := client.Decompile(r.ctx, lookup)
+	if err != nil {
+		var gerr *ghidra.Error
+		if ok := asGhidraError(err, &gerr); ok {
+			return nil, wire.NewError(wire.CodeBadRequest, gerr.Msg)
+		}
+		return nil, wire.NewError(wire.CodeInternal, err.Error())
+	}
+
+	return s.renderDecomp(fn, bias, biasFrom, s.currentPC()), nil
+}
+
+// renderDecomp projects a Ghidra function onto the wire, applying the bias so
+// every address a client sees is one gdb would print.
+func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc string) wire.DecompFunction {
+	out := wire.DecompFunction{
+		Name:      fn.Name,
+		Signature: fn.Signature,
+		Entry:     shiftAddr(fn.Entry, bias),
+		BodyStart: shiftAddr(fn.BodyStart, bias),
+		BodyEnd:   shiftAddr(fn.BodyEnd, bias),
+		Text:      fn.Text,
+		Bias:      bias,
+		BiasFrom:  biasFrom,
+		Frame:     &wire.DecompFrame{Size: fn.Frame.Size, GrowsNegative: fn.Frame.GrowsNegative},
+	}
+	for _, l := range fn.Lines {
+		shifted := make([]string, 0, len(l.Addrs))
+		for _, a := range l.Addrs {
+			shifted = append(shifted, shiftAddr(a, bias))
+		}
+		out.Lines = append(out.Lines, wire.DecompLine{N: l.N, Addrs: shifted})
+	}
+	out.PCLine, out.PCLineAmbiguous = pcLine(out.Lines, pc)
+
+	for _, v := range fn.Variables {
+		out.Vars = append(out.Vars, wire.DecompVar{
+			Name:    v.Name,
+			Type:    v.Type,
+			Param:   v.Param,
+			Storage: storageKind(v.Storage.Kind),
+			Expr:    varExpr(v, fn.Frame, s.decompLanguage(), s.decompPointerSize()),
+			PC:      shiftAddr(v.PC, bias),
+		})
+	}
+	return out
+}
+
+// pcLine finds the line the program counter is on.
+//
+// Resolved here rather than in every client, because the tie-break is not
+// obvious: on optimised code about one address in five is claimed by two
+// lines. The rule is the lowest line number that claims it, and the ambiguity
+// is reported rather than hidden — it is the same imprecision as stepping
+// through -O2 code with DWARF.
+func pcLine(lines []wire.DecompLine, pc string) (int, bool) {
+	if pc == "" {
+		return 0, false
+	}
+	want, err := parseAddress(pc)
+	if err != nil {
+		return 0, false
+	}
+	best, count := 0, 0
+	for _, l := range lines {
+		for _, a := range l.Addrs {
+			if n, err := parseAddress(a); err == nil && n == want {
+				count++
+				if best == 0 || l.N < best {
+					best = l.N
+				}
+				break
+			}
+		}
+	}
+	return best, count > 1
+}
+
+// storageKind collapses Ghidra's kinds onto what a client can act on. A
+// decompiler temporary and an unrecognised storage are the same to a UI: there
+// is no value to show, and saying so is better than omitting the row.
+func storageKind(k string) string {
+	switch k {
+	case ghidra.StorageStack:
+		return wire.DecompStorageStack
+	case ghidra.StorageRegister:
+		return wire.DecompStorageRegister
+	default:
+		return wire.DecompStorageNone
+	}
+}
+
+// varExpr turns Ghidra's storage into a gdb expression.
+//
+// Ghidra's frame base is the stack pointer at function entry, so a stack
+// variable is always at entry_sp + offset. Only recovering entry_sp is
+// per-ABI, and each rule below was established by measurement — see
+// docs/decompilation.md. An architecture with no established rule gets no
+// expression rather than a guess: a plausible wrong address is worse than a
+// blank, because it reads as a value.
+func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) string {
+	switch v.Storage.Kind {
+	case ghidra.StorageRegister:
+		if v.Storage.Register == "" {
+			return ""
+		}
+		// Valid only near v.PC — the decompiler packs many variables into one
+		// register. The caveat travels with the row as Storage and PC rather
+		// than being enforced here, so a client can show it instead of
+		// silently having nothing to render.
+		return "$" + strings.ToLower(v.Storage.Register)
+	case ghidra.StorageStack:
+		ctype := v.Type
+		if ctype == "" {
+			ctype = "long"
+		}
+		var base string
+		var delta int
+		switch {
+		case strings.HasPrefix(lang, "x86"):
+			// `call` pushed the return address and `push %rbp` put the saved
+			// frame pointer one word below it: entry_sp = $rbp + pointerSize.
+			base, delta = "$rbp", v.Storage.Offset+pointerSize
+		case strings.HasPrefix(lang, "MIPS"):
+			// `jal` touches no memory; the prologue's single stack adjustment
+			// is the whole frame, so entry_sp = $sp + frameSize.
+			base, delta = "$sp", v.Storage.Offset+frame.Size
+		default:
+			return ""
+		}
+		sign := "+"
+		if delta < 0 {
+			sign, delta = "-", -delta
+		}
+		return fmt.Sprintf("*(%s *)(%s %s 0x%x)", ctype, base, sign, delta)
+	default:
+		return ""
+	}
+}
+
+// decompBias establishes what to add to a Ghidra address to get gdb's.
+//
+// Not computed from image bases: that arithmetic is right for a non-PIE and
+// silently wrong for everything else. Instead a symbol both sides know is
+// resolved through gdb and subtracted, which is the same reasoning the symbols
+// pane uses when it jumps by name rather than by address.
+//
+// A stripped image has no such symbol — Ghidra's names are FUN_<address>,
+// which gdb has never heard of — and there the answer is zero with biasFrom
+// empty, so a client can say the addresses are link-time rather than implying
+// they are runtime ones.
+func (s *Session) decompBias(r *request, client *ghidra.Client) (int64, string) {
+	s.decomp.mu.Lock()
+	from, ghidraAddr := s.decomp.biasFrom, s.decomp.biasAddr
+	s.decomp.mu.Unlock()
+
+	// Re-resolve the known symbol: one gdb round trip, and correct across the
+	// relocation that happens when a PIE starts running.
+	if from != "" {
+		if gdbAddr, werr := s.addressOfSymbol(r, from); werr == nil {
+			return int64(gdbAddr) - int64(ghidraAddr), from
+		}
+		// It stopped resolving — a new program was loaded, say. Pick again.
+		s.decomp.mu.Lock()
+		s.decomp.biasFrom, s.decomp.biasAddr = "", 0
+		s.decomp.mu.Unlock()
+	}
+
+	// A handful of candidates. Each costs one gdb round trip, and only the
+	// winner's name is remembered.
+	list, err := client.Functions(r.ctx, 0, 200, "")
+	if err != nil {
+		return 0, ""
+	}
+	tried := 0
+	for _, f := range list.Functions {
+		if f.Thunk || !plausibleSymbol(f.Name) {
+			continue
+		}
+		if tried >= 8 {
+			break
+		}
+		tried++
+		addr, err := parseAddress(f.Entry)
+		if err != nil {
+			continue
+		}
+		gdbAddr, werr := s.addressOfSymbol(r, f.Name)
+		if werr != nil {
+			continue
+		}
+		s.decomp.mu.Lock()
+		s.decomp.biasFrom, s.decomp.biasAddr = f.Name, addr
+		s.decomp.mu.Unlock()
+		return int64(gdbAddr) - int64(addr), f.Name
+	}
+	return 0, ""
+}
+
+// addressOfSymbol asks gdb where a named function lives.
+func (s *Session) addressOfSymbol(r *request, name string) (uint64, *wire.Error) {
+	rec, werr := s.send(r.ctx, "-data-evaluate-expression "+quote("&"+name))
+	if werr != nil {
+		return 0, wire.NewError(wire.CodeGDBError, werr.Message)
+	}
+	n, ok := addressFromValue(rec.Results.Str("value"))
+	if !ok {
+		return 0, wire.NewError(wire.CodeGDBError, "not an address")
+	}
+	return n, nil
+}
+
+// plausibleSymbol rejects the names Ghidra invents from an address. They are
+// exactly the ones gdb cannot resolve, and asking about them is a wasted round
+// trip per candidate.
+func plausibleSymbol(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, prefix := range []string{"FUN_", "LAB_", "DAT_", "SUB_", "thunk_"} {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	// A leading underscore is usually CRT glue, present in both but not worth
+	// preferring over a real name.
+	return true
+}
+
+// shiftAddr moves one address by the bias, preserving the 0x form.
+func shiftAddr(addr string, bias int64) string {
+	if addr == "" {
+		return ""
+	}
+	n, err := parseAddress(addr)
+	if err != nil {
+		return addr
+	}
+	return "0x" + strconv.FormatUint(uint64(int64(n)+bias), 16)
+}
+
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
+func (s *Session) decompLanguage() string {
+	s.decomp.mu.Lock()
+	defer s.decomp.mu.Unlock()
+	if s.decomp.client == nil {
+		return ""
+	}
+	return s.decomp.client.Ready().Program.LanguageID
+}
+
+func (s *Session) decompPointerSize() int {
+	s.decomp.mu.Lock()
+	defer s.decomp.mu.Unlock()
+	if s.decomp.client == nil {
+		return 8
+	}
+	if n := s.decomp.client.Ready().Program.PointerSize; n > 0 {
+		return n
+	}
+	return 8
+}
+
+// hashExe reads the loaded executable and returns its sha256, or "" if it
+// cannot. A missing hash disables the mismatch warning rather than blocking
+// the feature: not knowing is a weaker position than knowing, but it is not a
+// reason to refuse to decompile.
+func (s *Session) hashExe(rel string) string {
+	if s.files == nil {
+		return ""
+	}
+	// AbsPath is the containment-checked path — the same one exe.load hands to
+	// gdb — so opening it directly is consistent rather than a way around the
+	// project root.
+	abs, err := s.files.AbsPath(rel)
+	if err != nil {
+		return ""
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// asGhidraError reports whether err is a *ghidra.Error, which is the far end
+// refusing a request rather than the process failing. The distinction matters
+// to the caller: one is bad_request, the other is internal.
+func asGhidraError(err error, target **ghidra.Error) bool {
+	return errors.As(err, target)
+}

@@ -104,6 +104,8 @@ Everything below needs a debugger session except the `session.*` group; with
 | `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. Also the hover evaluator, which is why the client debounces it. |
 | `symbols.list` | `{filter?, kind?, limit?}` | [`SymbolsList`](#symbols) | Allowed while the inferior runs: the symbol table is a property of the file. |
 | `symbols.load` | `{path, mode?, offset?}` | `{path, mode, available}` | Symbols without an exec file. `mode` is `replace` or `add`. |
+| `decomp.status` | `{}` | [`DecompStatus`](#decompilation) | Answered even with no program loaded: it is how a client learns the feature exists. |
+| `decomp.function` | `{target?, thread?, frame?, stopSeq?}` | [`DecompFunction`](#decompilation) | `target` is a name or any address inside a function; empty follows the selected frame. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is frequently blocked in a gdb round-trip, and that is
@@ -160,6 +162,7 @@ later. Requesting one today returns `unsupported`.
 | `threadsChanged` | Threads appeared or disappeared. | [`ThreadsList`](#threads) |
 | `symbolsInvalidated` | The cached symbol table belongs to a program that is no longer loaded. | `{}` |
 | `remoteChanged` | A remote target was connected or disconnected. | `{connected, address?}` |
+| `decompChanged` | The decompiler started, died, or now holds a different program. | `{}` |
 | `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
 | `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
@@ -538,6 +541,81 @@ Breakpoint state is **event-driven**: `-break-insert -f` can return
 The mirror hides temporary breakpoints the server did not create. `-exec-run
 --start` injects one at `main`, and a marker the user cannot delete because they
 never made it is worse than no marker.
+
+### Decompilation
+
+Recovered C beside a live session, for a binary with no source. The producer is
+Ghidra, supervised as a separate process exactly as gdb is — no linking,
+nothing vendored. The feature is optional: with no `-ghidra` and no
+`GHIDRA_INSTALL_DIR`, `decomp.status` reports `off` and nothing else changes.
+
+`decomp.status`:
+
+```json
+{ "state": "ready",
+  "ghidraVersion": "12.1.2",
+  "functionCount": 1415,
+  "program": { "name": "vwfw-linux_64.symbols", "sha256": "27763cc2…",
+               "languageId": "MIPS:BE:64:default", "imageBase": "0x120000000",
+               "pointerSize": 8 } }
+```
+
+`state` is `off`, `starting`, `ready` or `failed`. `starting` is a state a
+client genuinely observes: opening an existing project is seconds, importing
+and analysing a binary is minutes.
+
+`mismatch` is set when the decompiler's program is not the binary gdb loaded,
+compared by sha256. A warning rather than a refusal — a stripped and an
+unstripped link of one program share every address, so the decompilation is
+often still correct — but reading one build while debugging another is a
+confidently wrong answer and has to be visible.
+
+`decomp.function` returns the recovered text with a line map:
+
+```json
+{ "name": "process_packet", "entry": "0x120007ee0",
+  "text": "void process_packet(…)\n{\n…",
+  "lines": [ {"n": 26, "addrs": ["0x1200068d5"]},
+             {"n": 28, "addrs": ["0x1200068e2", "0x1200068e5"]} ],
+  "vars":  [ {"name": "local_70", "type": "undefined1 *", "storage": "stack",
+              "expr": "*(undefined1 * *)($sp + 0xf0)"} ],
+  "bias": 0, "biasFrom": "main", "pcLine": 28 }
+```
+
+**`addrs` is a set, not a range.** A decompiled line's addresses are routinely
+disjoint and consecutive lines interleave — a loop's init, increment and test
+sit either side of its body — so a min/max range would claim instructions
+belonging to a different line.
+
+**Every address has `bias` already applied**, so it is directly comparable with
+`stopped`, the disassembly and everything else on the wire. `biasFrom` names
+the symbol the bias was established from, by resolving it through gdb and
+subtracting Ghidra's address for it. Image bases are *not* used for this: that
+arithmetic is right for a non-PIE and silently wrong for everything else. An
+empty `biasFrom` means no shared symbol was found — the ordinary case for a
+stripped image, where Ghidra's names are `FUN_<address>` and gdb has never
+heard of them — and then `bias` is zero and the addresses are link-time, which
+a client must say rather than imply otherwise.
+
+`pcLine` is the line the program counter is on, resolved server-side so every
+client does not reimplement the tie-break: on optimised code about one address
+in five is claimed by two lines, and the rule is the lowest line number that
+claims it. `pcLineAmbiguous` reports when that happened, because it is the same
+imprecision as stepping `-O2` code with DWARF and hiding it would be a lie.
+
+`storage` is `stack`, `register` or `none`, and the three are not
+interchangeable. `stack` is readable anywhere in the frame. `register` is
+readable only near `pc` — in optimised code the decompiler packs many variables
+into one register, so a value read elsewhere is confidently wrong. `none` is a
+decompiler temporary that exists nowhere in the machine and can never show a
+value; it is reported rather than omitted, because a blank row is honest and a
+missing one is not.
+
+`expr` is a gdb expression, formed from Ghidra's frame base — the stack pointer
+at function entry — using a per-ABI rule established by measurement:
+`$rbp + pointerSize` on x86-64 with a frame pointer, `$sp + frame.size` on
+MIPS64. An architecture with no established rule gets no expression rather than
+a guess. See [docs/decompilation.md](decompilation.md).
 
 ## Errors
 
