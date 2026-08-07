@@ -838,3 +838,6 @@
  * after here" are different claims and must not look identical. */
 .dec-row.is-pc-approx { background: transparent; box-shadow: inset 2px 0 0 var(--exec-line); }
 .dec-row.is-pc-approx .dec-gutter { background: var(--bg-1); color: var(--fg-1); }
+
+.dec-row.has-bp .dec-gutter { color: var(--bg-0); background: var(--bp-fill); }
+.dec-row.is-pc.has-bp .dec-gutter { background: var(--bp-fill); }

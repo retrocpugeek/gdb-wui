@@ -17,6 +17,7 @@ const (
 	TypeExecKill     = "exec.kill"
 
 	TypeBpSetSource  = "bp.setSource"
+	TypeBpSetAddress = "bp.setAddress"
 	TypeBpDelete     = "bp.delete"
 	TypeBpSetEnabled = "bp.setEnabled"
 	TypeBpList       = "bp.list"
@@ -76,6 +77,23 @@ type BreakpointRequest struct {
 	// Path is root-relative.
 	Path string `json:"path"`
 	Line int    `json:"line"`
+	// Temporary deletes the breakpoint once it is hit.
+	Temporary bool `json:"temporary,omitempty"`
+	// Condition is an optional gdb expression.
+	Condition string `json:"condition,omitempty"`
+}
+
+// BreakpointAddressRequest sets a breakpoint by address or by symbol.
+//
+// The counterpart to BreakpointRequest for everything without source: a
+// decompiled line, a disassembly row, a function in the symbol pane. It is the
+// only way to break in a stripped binary, where there is no file and line to
+// name.
+type BreakpointAddressRequest struct {
+	// Location is an address, or a function name. A name is preferred where
+	// one exists: gdb skips the prologue for a named function, which is where
+	// a user expects to stop, and an address does not get that treatment.
+	Location string `json:"location"`
 	// Temporary deletes the breakpoint once it is hit.
 	Temporary bool `json:"temporary,omitempty"`
 	// Condition is an optional gdb expression.

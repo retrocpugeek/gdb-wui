@@ -87,6 +87,16 @@ only an address. `fn` and `var` sigils say which is which, and dimmed rows are
 the ones with no debug info. It works on a stripped binary, where the ELF symbol
 table is the only map you have.
 
+**Right-click a symbol** in the Symbols pane to break on it or jump to it.
+Breaking by *name* is not the same as breaking at the symbol's address: gdb
+skips the prologue for a name — on a MIPS firmware `break process_packet`
+stops at entry+24, past the register spills — while an address stops on the
+first instruction, before the frame exists and before an argument has been
+stored anywhere you can read it.
+
+The gutters in the disassembly and decompiled views set breakpoints too, by
+address, and clicking one again removes it.
+
 **Right-click an ELF** in the file tree for the three things you can do with
 one: *Load program* (`file` — the program to run, and the only thing that sets
 the architecture), *Replace symbols* (`symbol-file`), and *Add symbols…*
@@ -137,7 +147,7 @@ Inside a terminal panel only function keys and `Ctrl+Shift+…` are intercepted,
 | C and C++ with `-g` | Rust, Go, or any other language |
 | Stripped binaries, disassembly-first | Launching `gdbserver` or an emulator for you |
 | Multiple threads, all-stop, thread switching | Non-stop mode, per-thread run control |
-| Breakpoints by source line, conditions | Watchpoints, catchpoints, tracepoints |
+| Breakpoints by source line, address or symbol | Watchpoints, catchpoints, tracepoints |
 | Locals, nested structs, watch expressions | Editing values, register writes, memory writes |
 | Hover a variable or register for its value | Hovering a call — it would run the function |
 | Decompiled C from Ghidra, with the PC marked | Editing Ghidra's names or types from here |

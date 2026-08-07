@@ -178,15 +178,15 @@ func TestPCLineTieBreak(t *testing.T) {
 		{N: 15, Addrs: []string{"0x1258"}},
 	}
 
-	if n, amb, ap := pcLine(lines, "0x1188"); n != 11 || amb || ap {
+	if n, amb, ap := pcLine(lines, "0x1188", "0x1100", "0x1300"); n != 11 || amb || ap {
 		t.Errorf("exact address gave (%d, %v, %v), want (11, false, false)", n, amb, ap)
 	}
 	// A loop's increment belongs to the loop header, not to the body between.
-	if n, amb, ap := pcLine(lines, "0x1190"); n != 10 || amb || ap {
+	if n, amb, ap := pcLine(lines, "0x1190", "0x1100", "0x1300"); n != 10 || amb || ap {
 		t.Errorf("loop increment gave (%d, %v, %v), want (10, false, false)", n, amb, ap)
 	}
 	// Two lines claim 0x1258: lowest wins, and the caller is told.
-	n, amb, ap := pcLine(lines, "0x1258")
+	n, amb, ap := pcLine(lines, "0x1258", "0x1100", "0x1300")
 	if n != 14 {
 		t.Errorf("shared address gave line %d, want the lowest (14)", n)
 	}
@@ -203,7 +203,7 @@ func TestPCLineTieBreak(t *testing.T) {
 	// The greatest mapped address below 0x1248 is 0x1198, on line 10 — not
 	// line 11's 0x1188, which is lower. "Nearest" means nearest by address,
 	// not by line number, and the loop header legitimately owns the tail.
-	n, amb, ap = pcLine(lines, "0x1248")
+	n, amb, ap = pcLine(lines, "0x1248", "0x1100", "0x1300")
 	if n != 10 {
 		t.Errorf("unclaimed 0x1248 gave line %d, want 10 (nearest below is 0x1198)", n)
 	}
@@ -214,12 +214,68 @@ func TestPCLineTieBreak(t *testing.T) {
 		t.Error("a fallback was flagged ambiguous")
 	}
 
-	// Below everything mapped, there is genuinely no answer.
-	if n, _, _ := pcLine(lines, "0x1000"); n != 0 {
-		t.Errorf("address below the whole map gave line %d, want 0", n)
+	// The prologue. gdb skips it when breaking on a function, so the pc at a
+	// freshly-hit breakpoint is routinely below every mapped address —
+	// measured on the vwfw firmware, `break process_packet` lands at
+	// 0x120007ef8 while the lowest mapped address is 0x120007f28. Reporting
+	// nothing there makes the marker vanish exactly when a breakpoint is hit.
+	n, _, ap = pcLine(lines, "0x1110", "0x1100", "0x1300")
+	if n != 10 {
+		t.Errorf("prologue address gave line %d, want 10 (the first mapped line)", n)
 	}
-	if n, _, _ := pcLine(lines, ""); n != 0 {
+	if !ap {
+		t.Error("the prologue fallback was not flagged approximate")
+	}
+
+	// But only inside this function. Asking for a function the program is not
+	// stopped in must mark nothing, rather than assert it is at line 1.
+	if n, _, _ := pcLine(lines, "0x9000", "0x1100", "0x1300"); n != 0 {
+		t.Errorf("a pc outside the body gave line %d, want 0", n)
+	}
+	if n, _, _ := pcLine(lines, "0x1000", "0x1100", "0x1300"); n != 0 {
+		t.Errorf("a pc below the body gave line %d, want 0", n)
+	}
+	if n, _, _ := pcLine(lines, "", "0x1100", "0x1300"); n != 0 {
 		t.Errorf("empty pc gave line %d, want 0", n)
+	}
+}
+
+// TestPCLineInThePrologueOnRealFirmware is the reported bug, with the numbers
+// it was reported with.
+//
+// Breaking on process_packet in the vwfw MIPS64 image put gdb at 0x120007ef8 —
+// it skips the prologue for a named function — while the lowest address any
+// decompiled line claims is 0x120007f28, seventy-two bytes further in. Nothing
+// preceded the pc, so the marker vanished at exactly the moment a breakpoint
+// was hit.
+func TestPCLineInThePrologueOnRealFirmware(t *testing.T) {
+	const (
+		bodyStart = "0x120007ee0"
+		bodyEnd   = "0x120008857"
+		// Where gdb actually put the breakpoint, from `break process_packet`.
+		breakAt = "0x120007ef8"
+	)
+	lines := []wire.DecompLine{
+		{N: 26, Addrs: []string{"0x120007f28", "0x120007f34"}},
+		{N: 28, Addrs: []string{"0x120007f50"}},
+		{N: 30, Addrs: []string{"0x120008100"}},
+	}
+
+	n, amb, ap := pcLine(lines, breakAt, bodyStart, bodyEnd)
+	if n != 26 {
+		t.Errorf("pc %s in the prologue gave line %d, want 26 (the first mapped line)",
+			breakAt, n)
+	}
+	if !ap {
+		t.Error("the prologue fallback was not flagged approximate")
+	}
+	if amb {
+		t.Error("the prologue fallback was flagged ambiguous")
+	}
+
+	// An address in a different function still marks nothing.
+	if n, _, _ := pcLine(lines, "0x120009000", bodyStart, bodyEnd); n != 0 {
+		t.Errorf("a pc past the body gave line %d, want 0", n)
 	}
 }
 

@@ -404,6 +404,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 
 	case wire.TypeBpSetSource:
 		return s.bpSetSource(r)
+	case wire.TypeBpSetAddress:
+		return s.bpSetAddress(r)
 	case wire.TypeBpDelete:
 		return s.bpDelete(r)
 	case wire.TypeBpSetEnabled:
@@ -551,7 +553,8 @@ func (s *Session) gate(typ string) *wire.Error {
 		if s.st.exePath == "" {
 			return wire.NewError(wire.CodeNotReady, "no program is loaded")
 		}
-	case wire.TypeBpSetSource, wire.TypeBpDelete, wire.TypeBpSetEnabled:
+	case wire.TypeBpSetSource, wire.TypeBpSetAddress,
+		wire.TypeBpDelete, wire.TypeBpSetEnabled:
 		if s.st.exePath == "" {
 			return wire.NewError(wire.CodeNotReady, "no program is loaded")
 		}

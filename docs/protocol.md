@@ -77,6 +77,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `exec.pause` | — | `{paused}` | Allowed while running. |
 | `exec.kill` | — | [`ExecAck`](#execack) | Allowed while running. |
 | `bp.setSource` | `{path, line, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | |
+| `bp.setAddress` | `{location, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | `location` is an address or a function name. The only way to break in a stripped binary. |
 | `bp.delete` | `{number}` | [`BreakpointList`](#breakpoints-1) | |
 | `bp.setEnabled` | `{number, enabled}` | [`BreakpointList`](#breakpoints-1) | |
 | `bp.list` | — | [`BreakpointList`](#breakpoints-1) | Re-reads from gdb. Allowed while running. |
@@ -135,13 +136,18 @@ mechanism covers a double-clicked step, a panel refreshing against a stop that
 has been superseded, and — from M4 — a variable tree built from a frame that no
 longer exists.
 
+`bp.setFunction` stayed reserved rather than being implemented alongside
+`bp.setAddress`: that request takes a function name as readily as an address,
+and two requests differing only in which spelling they accept would be one too
+many.
+
 ### Reserved
 
 These names are fixed now so the frontend and the docs do not have to be renamed
 later. Requesting one today returns `unsupported`.
 
 `exe.unload` · `exec.until` `exec.return` ·
-`bp.setFunction` `bp.setAddress` `bp.setWatch` `bp.setCondition`
+`bp.setFunction` `bp.setWatch` `bp.setCondition`
 `bp.setIgnoreCount` · `vars.setFormat` `vars.assign`
 
 ## Events
@@ -634,6 +640,12 @@ at function entry — using a per-ABI rule established by measurement:
 `$rbp + pointerSize` on x86-64 with a frame pointer, `$sp + frame.size` on
 MIPS64. An architecture with no established rule gets no expression rather than
 a guess. See [docs/decompilation.md](decompilation.md).
+
+`bp.setAddress` passes a name to gdb verbatim and only wraps a bare address in
+`*`. The difference is not cosmetic: gdb skips the prologue for a named
+function — `break process_packet` on a MIPS firmware stops at entry+24, past
+the register spills — and `*name` would defeat that and stop on the first
+instruction instead, which is not where anyone means.
 
 ## Errors
 

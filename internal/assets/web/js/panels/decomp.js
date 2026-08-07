@@ -30,6 +30,12 @@ export function createDecomp({ element, onGutterClick }) {
   // put a breakpoint on a line, the other to mark the line a pc is on.
   let addrsByLine = new Map();
   let vars = new Map();
+  // bpLines is derived from the whole breakpoint mirror rather than filtered at
+  // arrival, because the order of "which function is shown" and "which
+  // breakpoints exist" is not fixed: a reload delivers the snapshot's
+  // breakpoints before any function is fetched.
+  let allBreakpoints = [];
+  let bpLines = new Set();
   let list = null;
 
   function cssLineHeight() {
@@ -66,6 +72,7 @@ export function createDecomp({ element, onGutterClick }) {
           // cannot hold a breakpoint and must not look like it can.
           const mapped = addrsByLine.has(n);
           row.classList.toggle("is-mapped", mapped);
+          row.classList.toggle("has-bp", bpLines.has(n));
           row.classList.toggle("is-pc", n === fn?.pcLine);
           row.classList.toggle("is-pc-ambiguous",
             n === fn?.pcLine && Boolean(fn?.pcLineAmbiguous));
@@ -78,6 +85,23 @@ export function createDecomp({ element, onGutterClick }) {
         },
       },
     });
+  }
+
+  // refilterBreakpoints maps the mirror's addresses onto lines of the function
+  // currently shown. A breakpoint lands on the line that claims its address,
+  // by the same lowest-wins rule as the program counter.
+  function refilterBreakpoints() {
+    bpLines = new Set();
+    for (const bp of allBreakpoints) {
+      if (!bp.address) continue;
+      const want = normalise(bp.address);
+      for (const [n, addrs] of addrsByLine) {
+        if (addrs.some((a) => normalise(a) === want)) {
+          bpLines.add(n);
+          break;
+        }
+      }
+    }
   }
 
   function reveal(n) {
@@ -167,6 +191,7 @@ export function createDecomp({ element, onGutterClick }) {
       }
       vars = new Map();
       for (const v of out.vars ?? []) vars.set(v.name, v);
+      refilterBreakpoints();
 
       element.replaceChildren();
       list = null;
@@ -236,6 +261,13 @@ export function createDecomp({ element, onGutterClick }) {
 
     pcLineApprox() {
       return Boolean(fn?.pcLineApprox);
+    },
+
+    // setBreakpoints takes the whole mirror; the server is authoritative.
+    setBreakpoints(list_) {
+      allBreakpoints = list_ ?? [];
+      refilterBreakpoints();
+      list?.refresh();
     },
 
     message: showMessage,

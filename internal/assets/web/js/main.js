@@ -175,9 +175,7 @@ let centerTab = "source";
 
 const disasm = createDisasm({
   element: ui.disasm,
-  onGutterClick(address) {
-    setStatus(`${address} — address breakpoints arrive with bp.setAddress`);
-  },
+  onGutterClick: (address) => toggleAddressBreakpoint(address),
 });
 
 // The decompiled view. Its data comes from Ghidra by way of the server, and
@@ -185,9 +183,7 @@ const disasm = createDisasm({
 // explains itself and nothing else changes.
 const decomp = createDecomp({
   element: ui.decomp,
-  onGutterClick(address, line) {
-    setStatus(`${address} (line ${line}) — address breakpoints arrive with bp.setAddress`);
-  },
+  onGutterClick: (address) => toggleAddressBreakpoint(address),
 });
 decomp.clear();
 
@@ -356,6 +352,7 @@ function handleEvent(msg) {
       breakpoints.set(msg.payload.breakpoints);
       source.setBreakpoints(msg.payload.breakpoints);
       disasm.setBreakpoints(msg.payload.breakpoints);
+      decomp.setBreakpoints(msg.payload.breakpoints);
       break;
     case "selectionChanged":
       applySelection(msg.payload);
@@ -441,6 +438,7 @@ function applySnapshot(hello) {
 
   breakpoints.set(hello.breakpoints ?? []);
   source.setBreakpoints(hello.breakpoints ?? []);
+  decomp.setBreakpoints(hello.breakpoints ?? []);
 
   const frames = hello.frames ?? [];
   const selectedFrame = hello.selection?.frame ?? 0;
@@ -625,6 +623,37 @@ function toggleBreakpoint(path, line) {
     return;
   }
   send("bp.setSource", { path, line }).catch(reportError);
+}
+
+// toggleAddressBreakpoint is the machine-level counterpart of toggleBreakpoint.
+//
+// Deleting an existing one rather than stacking a second is what makes a
+// gutter a toggle in both panes; without it a second click on the same line
+// silently accumulates breakpoints at one address.
+function toggleAddressBreakpoint(address) {
+  if (!address) return;
+  const existing = breakpoints.findAddress(address);
+  if (existing) {
+    send("bp.delete", { number: existing.number }).catch(reportError);
+    return;
+  }
+  send("bp.setAddress", { location: address })
+    .then((bp) => setStatus(`breakpoint ${bp.number} at ${bp.address ?? address}`))
+    .catch(reportError);
+}
+
+// setFunctionBreakpoint breaks on a symbol by *name*, not by its address.
+//
+// The distinction matters and is easy to get backwards: gdb skips the prologue
+// for a named function — on the vwfw firmware `break process_packet` stops at
+// entry+24, past the register spills — while an address stops on the very
+// first instruction, before the frame exists and before any argument has been
+// stored. The name is what a user means by "break on this function".
+function setFunctionBreakpoint(name) {
+  if (!name) return;
+  send("bp.setAddress", { location: name })
+    .then((bp) => setStatus(`breakpoint ${bp.number} at ${name}${bp.address ? ` (${bp.address})` : ""}`))
+    .catch(reportError);
 }
 
 // exec sends one exec command, guarded so a held-down key cannot queue.
@@ -899,6 +928,32 @@ ui.tree.addEventListener("contextmenu", (ev) => {
   ]);
 });
 
+// Right-clicking a symbol is the no-typing route to a breakpoint on it, which
+// in a stripped binary is otherwise a console command and a hand-copied
+// address. The contextmenu event covers the keyboard menu key too.
+ui.symbols.addEventListener("contextmenu", (ev) => {
+  const row = ev.target.closest(".sym-row");
+  if (!row) return;
+  const sym = symbols.symbolAt(row);
+  if (!sym) return;
+  ev.preventDefault();
+
+  const items = [];
+  if (sym.kind === "function") {
+    items.push({
+      label: "Set breakpoint",
+      title: "break by name — gdb skips the prologue, which is where you mean to stop",
+      run: () => setFunctionBreakpoint(sym.name),
+    });
+  }
+  items.push({
+    label: "Go to",
+    title: "source, disassembly or memory, depending on what the symbol knows about itself",
+    run: () => jumpToSymbol(sym),
+  });
+  showContextMenu(ev.clientX, ev.clientY, sym.name, items);
+});
+
 // --- loading symbols --------------------------------------------------------
 
 // Separate from loading a program, because they are separate acts that only
@@ -1170,6 +1225,7 @@ function refreshDecomp(pc) {
   })
     .then((out) => {
       decomp.set(out);
+      decomp.setBreakpoints(breakpoints.all());
       updateCenterMeta();
     })
     .catch((err) => {

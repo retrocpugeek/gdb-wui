@@ -350,7 +350,8 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 		}
 		out.Lines = append(out.Lines, wire.DecompLine{N: l.N, Addrs: shifted})
 	}
-	out.PCLine, out.PCLineAmbiguous, out.PCLineApprox = pcLine(out.Lines, pc)
+	out.PCLine, out.PCLineAmbiguous, out.PCLineApprox =
+		pcLine(out.Lines, pc, out.BodyStart, out.BodyEnd)
 
 	for _, v := range fn.Variables {
 		out.Vars = append(out.Vars, wire.DecompVar{
@@ -382,7 +383,19 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 // are 0x1243 and 0x124d. Reporting "no line" there is accurate and useless: it
 // makes the highlight blink out mid-step. So the nearest preceding line is
 // used instead, flagged approximate, which a client shows differently.
-func pcLine(lines []wire.DecompLine, pc string) (n int, ambiguous, approx bool) {
+//
+// The prologue is the case that made this visible. `break process_packet` on
+// the vwfw firmware lands at 0x120007ef8 — gdb skips the prologue for a named
+// function — while the lowest address any decompiled line claims is
+// 0x120007f28, seventy-two bytes further in. A "nearest preceding" rule finds
+// nothing there and the marker vanishes at exactly the moment a breakpoint is
+// hit, which is the moment a user is most certainly looking. Below everything
+// mapped, the first mapped line is the answer.
+//
+// body bounds both fallbacks. Without it, asking for a function other than the
+// one the program is stopped in would mark its first line, asserting the
+// program is somewhere it is not.
+func pcLine(lines []wire.DecompLine, pc, bodyStart, bodyEnd string) (n int, ambiguous, approx bool) {
 	if pc == "" {
 		return 0, false, false
 	}
@@ -391,8 +404,10 @@ func pcLine(lines []wire.DecompLine, pc string) (n int, ambiguous, approx bool) 
 		return 0, false, false
 	}
 	best, count := 0, 0
-	// nearest tracks the greatest mapped address at or below the pc.
+	// nearest tracks the greatest mapped address at or below the pc; first
+	// tracks the lowest mapped address anywhere, for the prologue case.
 	nearestLine, nearestAddr, haveNearest := 0, uint64(0), false
+	firstLine, firstAddr, haveFirst := 0, uint64(0), false
 	for _, l := range lines {
 		var claims bool
 		for _, a := range l.Addrs {
@@ -407,6 +422,9 @@ func pcLine(lines []wire.DecompLine, pc string) (n int, ambiguous, approx bool) 
 				(v == nearestAddr && l.N < nearestLine)) {
 				nearestLine, nearestAddr, haveNearest = l.N, v, true
 			}
+			if !haveFirst || v < firstAddr || (v == firstAddr && l.N < firstLine) {
+				firstLine, firstAddr, haveFirst = l.N, v, true
+			}
 		}
 		if claims {
 			count++
@@ -418,10 +436,30 @@ func pcLine(lines []wire.DecompLine, pc string) (n int, ambiguous, approx bool) 
 	if best != 0 {
 		return best, count > 1, false
 	}
+	// Only guess for a pc inside this function.
+	if !within(want, bodyStart, bodyEnd) {
+		return 0, false, false
+	}
 	if haveNearest {
 		return nearestLine, false, true
 	}
+	if haveFirst {
+		// Still in the prologue: below every mapped address.
+		return firstLine, false, true
+	}
 	return 0, false, false
+}
+
+// within reports whether an address falls inside a function body. An
+// unparseable bound is treated as no bound, because refusing to mark anything
+// is a worse failure than marking approximately.
+func within(addr uint64, start, end string) bool {
+	lo, err1 := parseAddress(start)
+	hi, err2 := parseAddress(end)
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	return addr >= lo && addr <= hi
 }
 
 // storageKind collapses Ghidra's kinds onto what a client can act on. A
