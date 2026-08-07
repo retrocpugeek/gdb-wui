@@ -192,6 +192,13 @@ pc, unlike a register, and needs no frame, unlike a stack slot. They are
 addressed by number rather than by name, because in a stripped image Ghidra
 calls one `DAT_<address>` and gdb has never heard of it.
 
+A symbol in Ghidra's synthetic `EXTERNAL` block is **not** exported. An
+undefined symbol resolved from a shared library — `__stack_chk_guard` in any
+dynamically linked binary — is parked past the end of the image, and biasing
+that address yields a plausible pointer into nothing. Measured on an AArch64
+busybox: Ghidra `0x1c9638` against LOAD segments ending at `0xc8938`, which gdb
+answers with "Cannot access memory".
+
 ## The two things a consumer must get right
 
 ### Relocation
@@ -222,6 +229,20 @@ two different binaries:
 ```
 rbp_offset = ghidra_offset + 8
 ```
+
+**AArch64 has no rule yet, so its stack variables get no expression.** Not an
+oversight but a measurement: `bb_full_fd_action` in busybox opens
+`stp x19, x20, [sp, #-96]!` and then `sub sp, sp, #4112`, a 4208-byte frame,
+while Ghidra reports `frame.size` as 104. The MIPS rule does not transfer, and
+neither does anything else derivable from the sidecar alone. What does work is
+gdb's own CFA — `info frame` reports "Previous frame's sp", which equals
+Ghidra's frame base exactly, and is correct even mid-prologue. It is reachable
+over MI as `$sp` evaluated in the caller's frame, and it generalises: `bl` and
+`jal` push nothing, `call` pushes 8, so `entry_sp = caller_sp - callPush`
+covers x86-64, MIPS64 and AArch64 with one constant per ISA. Verified on all
+three. Adopting it means expressions become frame-dependent rather than static,
+which is a change to what `expr` promises, so it is written down here rather
+than half-done.
 
 `inspect`: `buf` at Ghidra `-0x58` is `-0x50(%rbp)` in the instruction stream.
 `FUN_00101167`: `local_10` at Ghidra `-16` is `-0x8(%rbp)`. The 8 is the saved

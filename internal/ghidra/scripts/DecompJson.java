@@ -21,6 +21,7 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.StackFrame;
 import ghidra.program.model.listing.VariableStorage;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.symbol.IdentityNameTransformer;
@@ -196,6 +197,7 @@ public class DecompJson {
 		if (high == null) {
 			return "[]";
 		}
+		Program prog = high.getFunction().getProgram();
 		StringBuilder b = new StringBuilder("[");
 		boolean first = true;
 		Iterator<HighSymbol> syms = high.getGlobalSymbolMap().getSymbols();
@@ -205,6 +207,21 @@ public class DecompJson {
 			// Only a real memory location is useful. Anything else here is not
 			// something a debugger can read.
 			if (store == null || !store.isMemoryStorage()) {
+				continue;
+			}
+			// And only one that exists. An undefined symbol resolved from a
+			// shared library — __stack_chk_guard in a dynamically linked
+			// binary — is parked by Ghidra in a synthetic EXTERNAL block past
+			// the end of the image. Its address is a fabrication, and biasing
+			// it produces a plausible pointer into nothing: measured on an
+			// AArch64 busybox, 0x1c9638 against LOAD segments ending at
+			// 0xc8938, which gdb answers with "Cannot access memory".
+			//
+			// A wrong address that reads like a value is the failure this
+			// whole schema is arranged to avoid, so these are dropped rather
+			// than exported and left for the consumer to notice.
+			MemoryBlock block = prog.getMemory().getBlock(store.getMinAddress());
+			if (block == null || block.isExternalBlock() || !block.isLoaded()) {
 				continue;
 			}
 			if (!first) {
