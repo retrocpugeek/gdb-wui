@@ -4,6 +4,7 @@
     show-decomp.py out.json                    # list functions, worst first
     show-decomp.py out.json FUN_001028c0       # one function, annotated
     show-decomp.py out.json main --bias 0x555555554000
+    show-decomp.py out.json --pc 0x120007f34   # where am I? (paste gdb-wui's pc)
 
 Without a function it lists what is in the sidecar, sorted by how ambiguous the
 address map is, so the awkward functions are the ones you look at first.
@@ -28,6 +29,9 @@ p.add_argument("function", nargs="?")
 p.add_argument("--bias", default=None,
                help="runtime load bias, e.g. 0x555555554000")
 p.add_argument("--limit", type=int, default=25, help="functions to list")
+p.add_argument("--pc", default=None,
+               help="an address from the debugger: show the decompiled line it is on")
+p.add_argument("--context", type=int, default=6, help="lines either side of --pc")
 args = p.parse_args()
 
 doc = json.load(open(args.sidecar))
@@ -54,6 +58,42 @@ def owners(fn):
             m[int(a, 16)].append(e["n"])
     return m
 
+
+if args.pc:
+    # The debugger's address, back through the bias into Ghidra's coordinates.
+    want = int(args.pc, 16) - bias + image_base if bias else int(args.pc, 16)
+    hits = []
+    for fn in doc["functions"]:
+        for e in fn["lines"]:
+            if any(int(a, 16) == want for a in e["addrs"]):
+                hits.append((fn, e["n"]))
+    if not hits:
+        containing = [f for f in doc["functions"]
+                      if int(f["bodyStart"], 16) <= want <= int(f["bodyEnd"], 16)]
+        if containing:
+            print(f"{args.pc} is inside {containing[0]['name']} but no decompiled line "
+                  f"claims it.\nThat is normal — prologue, spills and padding belong to "
+                  f"no expression.")
+        else:
+            print(f"{args.pc} is in no function in this sidecar. If the program was "
+                  f"loaded\nsomewhere other than {doc['program']['imageBase']}, pass "
+                  f"--bias.")
+        sys.exit(1)
+
+    # More than one line can claim an address; show them all rather than
+    # picking silently. See docs/decompilation.md.
+    for fn, n in hits:
+        lines = fn["text"].split("\n")
+        print(f"=== {fn['name']}  line {n}"
+              + ("   [ambiguous: also " +
+                 ", ".join(str(m) for g, m in hits if g is fn and m != n) + "]"
+                 if sum(1 for g, _ in hits if g is fn) > 1 else ""))
+        lo = max(1, n - args.context)
+        hi = min(len(lines), n + args.context)
+        for i in range(lo, hi + 1):
+            print(f"{i:>4}{'>' if i == n else ' '} | {lines[i - 1]}")
+        print()
+    sys.exit(0)
 
 if not args.function:
     rows = []
