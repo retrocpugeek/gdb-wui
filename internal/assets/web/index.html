@@ -69,6 +69,7 @@
     <div class="panel-head tabs" role="tablist">
       <button class="tab is-active" data-center="source" role="tab">Source</button>
       <button class="tab" data-center="disasm" role="tab">Disassembly</button>
+      <button class="tab" data-center="decomp" role="tab" title="Recovered C from Ghidra. A model of the program, not its source.">Decompiled</button>
       <button class="tab" data-center="memory" role="tab">Memory</button>
       <input id="mem-addr" class="addr-input is-hidden" type="text"
              placeholder="&amp;cfg, $sp, 0x7fff… — Enter to read" spellcheck="false">
@@ -104,6 +105,7 @@
     </div>
     <div id="source" class="panel-body source" data-center="source" tabindex="0"></div>
     <div id="disasm" class="panel-body asm is-hidden" data-center="disasm" tabindex="0"></div>
+    <div id="decomp" class="panel-body dec is-hidden" data-center="decomp" tabindex="0"></div>
     <div id="memory" class="panel-body mem is-hidden" data-center="memory" tabindex="0"></div>
   </main>
 

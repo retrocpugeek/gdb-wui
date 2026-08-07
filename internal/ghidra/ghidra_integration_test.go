@@ -69,13 +69,20 @@ func start(t *testing.T) *ghidra.Client {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	t.Cleanup(cancel)
 
+	// Two phases, because they cannot be one: see ghidra.Import.
+	projectDir := t.TempDir()
+	bin := fixture(t)
+	logf := func(f string, a ...any) { t.Logf(f, a...) }
+	if err := ghidra.Import(ctx, in, projectDir, "itest", bin, logf); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
 	c, err := ghidra.Start(ctx, ghidra.Options{
 		Install:     in,
-		ProjectDir:  t.TempDir(),
+		ProjectDir:  projectDir,
 		ProjectName: "itest",
-		Import:      fixture(t),
+		Program:     filepath.Base(bin),
 		Timeout:     4 * time.Minute,
-		Logf:        func(f string, a ...any) { t.Logf(f, a...) },
+		Logf:        logf,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)

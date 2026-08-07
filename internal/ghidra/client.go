@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -75,11 +76,6 @@ type Options struct {
 	// programs and, in Ghidra's Debugger workflow, a pile of traces as well.
 	// analyzeHeadless with no -process pattern sweeps all of them.
 	Program string
-
-	// Import is a binary to import and analyse instead of opening an existing
-	// program. Analysis is minutes on a large image, so Start blocks for that
-	// long; the caller is expected to be a job, not a click.
-	Import string
 
 	// Timeout bounds startup. Zero means DefaultStartTimeout.
 	Timeout time.Duration
@@ -158,7 +154,7 @@ func Start(ctx context.Context, opts Options) (*Client, error) {
 	if opts.Install == nil && opts.exec == nil {
 		return nil, errors.New("ghidra: Options.Install is required")
 	}
-	if opts.Import == "" && opts.Program == "" && opts.exec == nil {
+	if opts.Program == "" && opts.exec == nil {
 		return nil, errors.New("ghidra: Options.Program is required when opening a project")
 	}
 	timeout := opts.Timeout
@@ -243,15 +239,19 @@ func (c *Client) spawn(ctx context.Context, sockPath string) (func(), error) {
 		return nil, err
 	}
 
-	args := []string{c.opts.ProjectDir, c.opts.ProjectName}
-	if c.opts.Import != "" {
-		args = append(args, "-import", c.opts.Import)
-	} else {
-		// -readOnly is not an optimisation. A user's Ghidra project holds
-		// their names, types and comments; gdb-wui reads it and must never
-		// write to it. -noanalysis for the same reason: re-analysing someone's
-		// curated program would undo work.
-		args = append(args, "-process", c.opts.Program, "-noanalysis", "-readOnly")
+	// Always an existing program. Importing here would not work: analyzeHeadless
+	// commits an imported program only after the postScript returns, and this
+	// script never returns — it is the server. An import that way is analysed,
+	// served, and then thrown away, leaving an empty project for the next run
+	// to fail on. See Import below.
+	//
+	// -readOnly is not an optimisation either. A user's Ghidra project holds
+	// their names, types and comments; gdb-wui reads it and must never write to
+	// it. -noanalysis for the same reason: re-analysing someone's curated
+	// program would undo work.
+	args := []string{
+		c.opts.ProjectDir, c.opts.ProjectName,
+		"-process", c.opts.Program, "-noanalysis", "-readOnly",
 	}
 	args = append(args,
 		"-scriptPath", scriptDir,
@@ -532,4 +532,53 @@ func (c *Client) cleanup() {
 	if c.dir != "" {
 		_ = os.RemoveAll(c.dir)
 	}
+}
+
+// Import analyses a binary into a project and saves it, so a later Start can
+// open it.
+//
+// A separate invocation from Start, and it has to be. analyzeHeadless writes an
+// imported program to the project only once the postScript returns; the
+// resident server never returns, so importing and serving together analyses the
+// binary, serves it, and then discards it — leaving an empty project that the
+// next start fails to open. Found the hard way: the first run worked and every
+// run after it reported "Requested project program file(s) not found".
+//
+// This blocks for the length of the analysis, which is seconds for a
+// hello-world and minutes for firmware. The caller is expected to be a
+// background job.
+func Import(ctx context.Context, install *Install, projectDir, projectName, binary string,
+	logf func(string, ...any)) error {
+	if install == nil {
+		return errors.New("ghidra: no installation")
+	}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	cmd := exec.CommandContext(ctx, install.Headless,
+		projectDir, projectName, "-import", binary)
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"JAVA_HOME=" + os.Getenv("JAVA_HOME"),
+		"LC_ALL=C",
+		"LANG=C",
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	out, err := cmd.CombinedOutput()
+	for _, line := range strings.Split(string(out), "\n") {
+		if line != "" {
+			logf("ghidra import: %s", line)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("ghidra: importing %s: %w", binary, err)
+	}
+	// analyzeHeadless exits 0 on some failures and says so only in its log, so
+	// the absence of the success line is the real check.
+	if !strings.Contains(string(out), "REPORT: Import succeeded") {
+		return fmt.Errorf("ghidra: importing %s did not report success", binary)
+	}
+	return nil
 }

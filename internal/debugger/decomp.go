@@ -182,12 +182,27 @@ func (s *Session) maybeStartDecomp() {
 	s.decomp.mu.Unlock()
 
 	go func() {
+		// Import first, when there is no project yet. It has to be its own
+		// invocation: analyzeHeadless commits an imported program only after
+		// the postScript returns, and the resident server never returns, so
+		// importing and serving together leaves an empty project behind.
+		if importPath != "" {
+			if err := ghidra.Import(context.Background(), cfg.Install,
+				cfg.ProjectDir, cfg.ProjectName, importPath, s.logf); err != nil {
+				s.decomp.mu.Lock()
+				s.decomp.starting = false
+				s.decomp.state = wire.DecompFailed
+				s.decomp.err = err.Error()
+				s.decomp.mu.Unlock()
+				s.emitOffActor(wire.EventDecompChanged, map[string]any{})
+				return
+			}
+		}
 		client, err := ghidra.Start(context.Background(), ghidra.Options{
 			Install:     cfg.Install,
 			ProjectDir:  cfg.ProjectDir,
 			ProjectName: cfg.ProjectName,
 			Program:     cfg.Program,
-			Import:      importPath,
 			Timeout:     decompStartTimeout,
 			Logf:        s.logf,
 		})
@@ -335,7 +350,7 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 		}
 		out.Lines = append(out.Lines, wire.DecompLine{N: l.N, Addrs: shifted})
 	}
-	out.PCLine, out.PCLineAmbiguous = pcLine(out.Lines, pc)
+	out.PCLine, out.PCLineAmbiguous, out.PCLineApprox = pcLine(out.Lines, pc)
 
 	for _, v := range fn.Variables {
 		out.Vars = append(out.Vars, wire.DecompVar{
@@ -352,32 +367,61 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 
 // pcLine finds the line the program counter is on.
 //
-// Resolved here rather than in every client, because the tie-break is not
-// obvious: on optimised code about one address in five is claimed by two
-// lines. The rule is the lowest line number that claims it, and the ambiguity
-// is reported rather than hidden — it is the same imprecision as stepping
-// through -O2 code with DWARF.
-func pcLine(lines []wire.DecompLine, pc string) (int, bool) {
+// Resolved here rather than in every client, because neither of the two rules
+// is obvious.
+//
+// The tie-break: on optimised code about one address in five is claimed by two
+// lines, and the answer is the lowest line number that claims it. The
+// ambiguity is reported rather than hidden — it is the same imprecision as
+// stepping through -O2 code with DWARF.
+//
+// The fallback: plenty of addresses are claimed by no line at all. A prologue,
+// a register spill and an epilogue belong to no expression, and stepping lands
+// on them constantly — measured on a hello-world, stepping off the last
+// statement of a function lands on 0x1248 when the nearest mapped addresses
+// are 0x1243 and 0x124d. Reporting "no line" there is accurate and useless: it
+// makes the highlight blink out mid-step. So the nearest preceding line is
+// used instead, flagged approximate, which a client shows differently.
+func pcLine(lines []wire.DecompLine, pc string) (n int, ambiguous, approx bool) {
 	if pc == "" {
-		return 0, false
+		return 0, false, false
 	}
 	want, err := parseAddress(pc)
 	if err != nil {
-		return 0, false
+		return 0, false, false
 	}
 	best, count := 0, 0
+	// nearest tracks the greatest mapped address at or below the pc.
+	nearestLine, nearestAddr, haveNearest := 0, uint64(0), false
 	for _, l := range lines {
+		var claims bool
 		for _, a := range l.Addrs {
-			if n, err := parseAddress(a); err == nil && n == want {
-				count++
-				if best == 0 || l.N < best {
-					best = l.N
-				}
-				break
+			v, err := parseAddress(a)
+			if err != nil {
+				continue
+			}
+			if v == want {
+				claims = true
+			}
+			if v < want && (!haveNearest || v > nearestAddr ||
+				(v == nearestAddr && l.N < nearestLine)) {
+				nearestLine, nearestAddr, haveNearest = l.N, v, true
+			}
+		}
+		if claims {
+			count++
+			if best == 0 || l.N < best {
+				best = l.N
 			}
 		}
 	}
-	return best, count > 1
+	if best != 0 {
+		return best, count > 1, false
+	}
+	if haveNearest {
+		return nearestLine, false, true
+	}
+	return 0, false, false
 }
 
 // storageKind collapses Ghidra's kinds onto what a client can act on. A
@@ -414,10 +458,7 @@ func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) str
 		// silently having nothing to render.
 		return "$" + strings.ToLower(v.Storage.Register)
 	case ghidra.StorageStack:
-		ctype := v.Type
-		if ctype == "" {
-			ctype = "long"
-		}
+		ctype := gdbCType(v.Type, v.Size)
 		var base string
 		var delta int
 		switch {
@@ -439,6 +480,85 @@ func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) str
 		return fmt.Sprintf("*(%s *)(%s %s 0x%x)", ctype, base, sign, delta)
 	default:
 		return ""
+	}
+}
+
+// ghidraPrimitives maps the decompiler's spelling of a base type onto one gdb
+// will parse. Ghidra's names are its own: `undefined4`, `uint`, `qword` and
+// friends mean nothing to a C expression parser, and neither does the name of
+// a struct Ghidra invented.
+var ghidraPrimitives = map[string]string{
+	"char": "char", "uchar": "unsigned char", "sbyte": "signed char",
+	"byte": "unsigned char", "bool": "unsigned char",
+	"short": "short", "ushort": "unsigned short",
+	"word": "unsigned short", "sword": "short",
+	"int": "int", "uint": "unsigned int",
+	"dword": "unsigned int", "sdword": "int",
+	"long": "long", "ulong": "unsigned long",
+	"qword": "unsigned long", "sqword": "long",
+	"longlong": "long long", "ulonglong": "unsigned long long",
+	"float": "float", "double": "double", "void": "void",
+	"undefined": "unsigned char", "undefined1": "unsigned char",
+	"undefined2": "unsigned short", "undefined4": "unsigned int",
+	"undefined8": "unsigned long", "code": "void",
+	"size_t": "unsigned long", "ssize_t": "long",
+}
+
+// gdbCType turns a Ghidra type into one gdb can parse, or gives up gracefully.
+//
+// Measured against gdb 17.1: `*(config * *)(...)` and `*(undefined1 * *)(...)`
+// both fail with "No symbol in current context", which is the whole of the
+// decompiler's vocabulary for anything but the handful of names below. An
+// expression that cannot be evaluated shows the user nothing, so this degrades
+// instead:
+//
+//	a pointer to something unnameable becomes void *, which prints an address;
+//	anything else unnameable becomes an unsigned integer of the right size,
+//	which prints the bytes that are actually there.
+//
+// Both lose the type and neither loses the value, which is the right way round
+// — the pane already says the types are a decompiler's guess.
+func gdbCType(ghidraType string, size int) string {
+	t := strings.TrimSpace(ghidraType)
+	if t == "" {
+		return sizedInt(size)
+	}
+	// Peel a trailing array suffix, then pointer stars.
+	array := ""
+	if i := strings.Index(t, "["); i >= 0 && strings.HasSuffix(t, "]") {
+		array, t = t[i:], strings.TrimSpace(t[:i])
+	}
+	stars := 0
+	for strings.HasSuffix(t, "*") {
+		stars++
+		t = strings.TrimSpace(strings.TrimSuffix(t, "*"))
+	}
+
+	base, ok := ghidraPrimitives[strings.ToLower(t)]
+	if !ok {
+		// A struct, union or enum Ghidra named. gdb has never heard of it.
+		if stars > 0 {
+			base = "void"
+		} else {
+			return sizedInt(size)
+		}
+	}
+	return base + strings.Repeat(" *", stars) + array
+}
+
+// sizedInt names an unsigned integer of a given width, for a value whose type
+// cannot be expressed. Zero or an odd width falls back to a pointer-sized one,
+// which is the commonest slot.
+func sizedInt(size int) string {
+	switch size {
+	case 1:
+		return "unsigned char"
+	case 2:
+		return "unsigned short"
+	case 4:
+		return "unsigned int"
+	default:
+		return "unsigned long"
 	}
 }
 

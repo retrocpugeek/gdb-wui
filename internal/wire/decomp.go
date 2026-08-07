@@ -117,6 +117,11 @@ type DecompFunction struct {
 	// PCLineAmbiguous reports that more than one line claimed the pc. Shown,
 	// not hidden: it is the same imprecision as stepping -O2 code with DWARF.
 	PCLineAmbiguous bool `json:"pcLineAmbiguous,omitempty"`
+	// PCLineApprox reports that no line claimed the pc at all and the nearest
+	// preceding one was used. Prologues, spills and epilogues belong to no
+	// expression, and stepping lands on them constantly; a client shows this
+	// differently rather than asserting the program is on that line.
+	PCLineApprox bool `json:"pcLineApprox,omitempty"`
 }
 
 // DecompLine maps one line of Text to the addresses its tokens carry.

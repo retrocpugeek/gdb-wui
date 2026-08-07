@@ -21,6 +21,7 @@ import { createVariables } from "./panels/variables.js";
 import { createRegisters } from "./panels/registers.js";
 import { createThreads } from "./panels/threads.js";
 import { createDisasm } from "./panels/disasm.js";
+import { createDecomp } from "./panels/decomp.js";
 import { createMemory } from "./panels/memory.js";
 import { initLayout, initTheme } from "./core/layout.js";
 import { createGdbConsole } from "./panels/gdbconsole.js";
@@ -50,6 +51,7 @@ const ui = {
   registers: el("registers"),
   threads: el("threads"),
   disasm: el("disasm"),
+  decomp: el("decomp"),
   memory: el("memory"),
   memAddr: el("mem-addr"),
   ctxmenu: el("ctxmenu"),
@@ -104,6 +106,9 @@ const store = createStore({
     // remote is the server's word on whether gdb is attached to a target it
     // did not start. Null until the first snapshot says otherwise.
     remote: null,
+    // decomp is the decompiler's state, fetched rather than pushed: most
+    // sessions never open the pane and do not need to know.
+    decomp: null,
   },
   selection: { thread: 0, frame: 0 },
 });
@@ -175,6 +180,17 @@ const disasm = createDisasm({
   },
 });
 
+// The decompiled view. Its data comes from Ghidra by way of the server, and
+// the whole feature is optional: without a decompiler configured the tab
+// explains itself and nothing else changes.
+const decomp = createDecomp({
+  element: ui.decomp,
+  onGutterClick(address, line) {
+    setStatus(`${address} (line ${line}) — address breakpoints arrive with bp.setAddress`);
+  },
+});
+decomp.clear();
+
 const memory = createMemory({
   element: ui.memory,
   onRead: (req) => send("mem.read", req),
@@ -207,6 +223,7 @@ const hover = createHover({
 });
 hover.attach(ui.source, (ev) => source.expressionAt(ev));
 hover.attach(ui.disasm, (ev) => disasm.expressionAt(ev));
+hover.attach(ui.decomp, (ev) => decomp.expressionAt(ev));
 
 const threads = createThreads({
   element: ui.threads,
@@ -348,6 +365,13 @@ function handleEvent(msg) {
       break;
     case "symbolsInvalidated":
       symbols.refresh();
+      break;
+    case "decompChanged":
+      refreshDecompStatus().then((st) => {
+        if (st?.state === "ready" && centerTab === "decomp") {
+          refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address);
+        }
+      });
       break;
     case "remoteChanged":
       store.set("session.remote", msg.payload);
@@ -499,6 +523,7 @@ function applyStopped(stopped) {
   threads.set(stopped.threads ?? [], stopped.threadId);
   disasmPin = null;
   refreshDisasm(stopped.frames?.[0]?.address);
+  refreshDecomp(stopped.frames?.[0]?.address);
   // Memory is the thing most likely to have changed, so the cache goes.
   memory.onStop(stopped.stopSeq);
   // The stop event already carries frame-0 locals, so the panel repaints with
@@ -584,8 +609,10 @@ function applySelection(sel) {
       source.setFrameLine(frame.source.path, frame.source.line).catch(reportError);
     }
   }
-  // The machine view follows the selected frame too, when it is showing.
+  // The machine and decompiled views follow the selected frame too, when they
+  // are showing.
   refreshDisasm(frame?.address);
+  refreshDecomp(frame?.address);
 }
 
 // --- actions ---------------------------------------------------------------
@@ -1118,8 +1145,71 @@ function refreshDisasm(pc) {
 }
 
 function updateCenterMeta() {
-  if (centerTab !== "disasm") return;
-  ui.sourceMeta.textContent = disasm.summary();
+  if (centerTab === "disasm") ui.sourceMeta.textContent = disasm.summary();
+  else if (centerTab === "decomp") ui.sourceMeta.textContent = decomp.summary();
+}
+
+// refreshDecomp keeps the decompiled view in step with the program counter.
+//
+// Same three cases as the disassembly, cheapest first: hidden, so do nothing;
+// the pc is already in the function on screen, so move the marker; otherwise
+// fetch. The middle case matters more here than there — a decompiled function
+// is one round trip to Ghidra, and stepping within one should not pay it.
+function refreshDecomp(pc) {
+  if (centerTab !== "decomp") return;
+  if (pc && decomp.has(pc)) {
+    const { line, ambiguous } = decomp.lineFor(pc);
+    decomp.setPCLine(line, ambiguous);
+    updateCenterMeta();
+    return;
+  }
+  send("decomp.function", {
+    thread: store.get("selection.thread"),
+    frame: store.get("selection.frame"),
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((out) => {
+      decomp.set(out);
+      updateCenterMeta();
+    })
+    .catch((err) => {
+      if (err?.code === "busy") return;
+      // not_ready is the ordinary answer while the decompiler is starting or
+      // absent, and the pane says so in place of the code rather than putting
+      // it in the status bar where it would be missed.
+      decomp.message(decompMessage(err), "src-empty");
+      updateCenterMeta();
+    });
+}
+
+// decompMessage turns the server's refusal into something actionable. "Not
+// ready" alone leaves a user with no idea whether to wait, configure something
+// or give up.
+function decompMessage(err) {
+  const msg = err?.message ?? String(err);
+  if (/still starting/i.test(msg)) {
+    return "Ghidra is starting. Importing and analysing a binary takes " +
+      "seconds for a small one and minutes for firmware; this pane fills in " +
+      "when it finishes.";
+  }
+  if (/no decompiler is configured/i.test(msg)) {
+    return "No decompiler configured. Start gdb-wui with -ghidra pointing at " +
+      "a Ghidra installation, or set GHIDRA_INSTALL_DIR.";
+  }
+  return msg;
+}
+
+// refreshDecompStatus reports what the decompiler is doing, and the two
+// caveats that a user cannot otherwise discover: that it may hold a different
+// build than gdb does, and that it may be starting.
+function refreshDecompStatus() {
+  return send("decomp.status", {})
+    .then((st) => {
+      store.set("session.decomp", st);
+      if (st.mismatch) setStatus(st.mismatch, true);
+      return st;
+    })
+    .catch(() => null);
 }
 
 // showDisasmAt disassembles the function containing a target, which may be an
@@ -1280,6 +1370,10 @@ for (const tab of document.querySelectorAll(".tab[data-center]")) {
     if (centerTab === "disasm") {
       const frame = stack.frameAt(store.get("selection.frame"));
       refreshDisasm(frame?.address);
+    } else if (centerTab === "decomp") {
+      const frame = stack.frameAt(store.get("selection.frame"));
+      refreshDecompStatus();
+      refreshDecomp(frame?.address);
     } else if (centerTab === "memory") {
       ui.sourceMeta.textContent = memory.summary();
       ui.memAddr.focus();

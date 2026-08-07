@@ -111,6 +111,18 @@ Only names, fields and subscripts are evaluated. `f(x)` is not, and that is
 deliberate: gdb would answer by *calling f*, which is not a thing a mouse
 should do by accident.
 
+**Decompiled** is a fourth centre tab, for a binary with no source. It shows
+Ghidra's recovered C for the function you are stopped in, with the program
+counter marked, and hovering a local reads its value out of the frame. It needs
+`-ghidra`; without it the tab says so and nothing else changes. See
+[docs/decompilation.md](docs/decompilation.md).
+
+It is a model of the program, not its source, and the pane says where it is
+guessing: a highlight the address map could not pin exactly is drawn as an
+outline rather than a fill, an ambiguous one is marked, and a local the
+decompiler invented with no machine location shows no value at all rather than
+a plausible wrong one.
+
 Keys: **F5** continue, **F6** pause, **F9** toggle breakpoint, **F10** step over,
 **F11** step into, **Shift+F11** step out, **Alt+F10/F11** instruction step,
 **Ctrl+F5** run, **Ctrl+Shift+F5** run to `main`.
@@ -128,6 +140,7 @@ Inside a terminal panel only function keys and `Ctrl+Shift+…` are intercepted,
 | Breakpoints by source line, conditions | Watchpoints, catchpoints, tracepoints |
 | Locals, nested structs, watch expressions | Editing values, register writes, memory writes |
 | Hover a variable or register for its value | Hovering a call — it would run the function |
+| Decompiled C from Ghidra, with the PC marked | Editing Ghidra's names or types from here |
 | Registers, disassembly, memory (read-only) | Reverse debugging, `rr` |
 | A searchable symbol list, functions and globals | Types, macros, and other symbol domains |
 | The gdb console, with tab completion | Core dumps, attach-to-pid |

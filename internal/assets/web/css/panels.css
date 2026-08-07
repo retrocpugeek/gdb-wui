@@ -787,3 +787,54 @@
  * what gdb said. */
 .hovertip-alt::before { content: "  "; }
 .hovertip-alt { color: var(--fg-2); }
+
+/* --- decompiled view -------------------------------------------------------- */
+
+/* Recovered C. Deliberately styled like the source view rather than like the
+ * disassembly: it reads as code, and pretending otherwise would be a worse lie
+ * than the one the decompiler is already telling. */
+.dec { font-family: var(--font-mono); }
+
+.dec-row {
+  display: flex;
+  height: var(--line-h);
+  line-height: var(--line-h);
+  white-space: pre;
+}
+
+.dec-gutter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 5ch;
+  padding: 0 6px;
+  color: var(--fg-2);
+  background: var(--bg-1);
+  user-select: none;
+}
+
+/* Only a line with addresses can hold a breakpoint. Everything else — braces,
+ * declarations, blank lines — must not invite a click that does nothing. */
+.dec-row.is-mapped .dec-gutter { color: var(--fg-1); cursor: pointer; }
+.dec-row.is-mapped .dec-gutter:hover { background: var(--bg-3); color: var(--fg-0); }
+
+.dec-code { padding: 0 10px; color: var(--tok-plain); }
+
+.dec-row.is-pc { background: var(--exec-line); }
+.dec-row.is-pc .dec-gutter { background: var(--exec-line); color: var(--fg-0); }
+
+/* An ambiguous highlight is marked rather than hidden: on optimised code about
+ * one address in five is claimed by two lines, and a user working out what the
+ * compiler did is exactly who cannot afford to be told a guess is a fact. */
+.dec-row.is-pc-ambiguous .dec-gutter::after {
+  content: "?";
+  margin-left: 2px;
+  color: var(--warn);
+}
+
+/* No line claimed the pc, so this is the nearest one above it. An outline
+ * rather than a fill: "the program is here" and "the program is somewhere
+ * after here" are different claims and must not look identical. */
+.dec-row.is-pc-approx { background: transparent; box-shadow: inset 2px 0 0 var(--exec-line); }
+.dec-row.is-pc-approx .dec-gutter { background: var(--bg-1); color: var(--fg-1); }

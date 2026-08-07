@@ -598,10 +598,28 @@ heard of them — and then `bias` is zero and the addresses are link-time, which
 a client must say rather than imply otherwise.
 
 `pcLine` is the line the program counter is on, resolved server-side so every
-client does not reimplement the tie-break: on optimised code about one address
-in five is claimed by two lines, and the rule is the lowest line number that
-claims it. `pcLineAmbiguous` reports when that happened, because it is the same
+client does not reimplement two rules that are not obvious.
+
+The tie-break: on optimised code about one address in five is claimed by two
+lines, and the answer is the lowest line number that claims it.
+`pcLineAmbiguous` reports when that happened, because it is the same
 imprecision as stepping `-O2` code with DWARF and hiding it would be a lie.
+
+The fallback: plenty of addresses are claimed by *no* line. Prologues, register
+spills and epilogues belong to no expression, and stepping lands on them
+constantly — on a hello-world, stepping off a function's last statement lands
+on `0x1248` when the nearest mapped addresses are `0x1243` and `0x124d`.
+Reporting "no line" there is accurate and useless: it makes the marker blink
+out mid-step. The nearest *preceding* line is used instead and flagged
+`pcLineApprox`, which a client draws differently — "the program is here" and
+"the program is somewhere after here" are different claims.
+
+`expr` uses gdb's type vocabulary, not Ghidra's. `undefined4`, `uint` and the
+name of a struct Ghidra invented all fail to parse — measured, `p *(config *
+*)($rbp - 0x58)` answers `No symbol "config" in current context` — so a pointer
+to something unnameable becomes `void *` and anything else unnameable becomes
+an unsigned integer of the right width. Both lose the type; neither loses the
+value.
 
 `storage` is `stack`, `register` or `none`, and the three are not
 interchangeable. `stack` is readable anywhere in the frame. `register` is

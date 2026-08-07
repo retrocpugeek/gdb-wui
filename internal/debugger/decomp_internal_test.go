@@ -32,7 +32,7 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			lang:  "x86:LE:64:default",
 			ptr:   8,
 			frame: ghidra.Frame{Size: 96},
-			v: ghidra.Var{Name: "buf", Type: "char[64]",
+			v: ghidra.Var{Name: "buf", Type: "char[64]", Size: 64,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -0x58}},
 			want: "*(char[64] *)($rbp - 0x50)",
 			because: "inspect's buf is at Ghidra -0x58 and the instruction " +
@@ -43,9 +43,11 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			lang:  "MIPS:BE:64:default",
 			ptr:   8,
 			frame: ghidra.Frame{Size: 352},
-			v: ghidra.Var{Name: "local_70", Type: "undefined1 *",
+			v: ghidra.Var{Name: "local_70", Type: "undefined1 *", Size: 8,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -112}},
-			want: "*(undefined1 * *)($sp + 0xf0)",
+			// undefined1 is Ghidra's spelling, not C's, so it is translated:
+			// gdb answers "No symbol" for the original.
+			want: "*(unsigned char * *)($sp + 0xf0)",
 			because: "process_packet opens with daddiu sp,sp,-352 and uses " +
 				"240(sp) for this variable: entry_sp = $sp + frame.size",
 		},
@@ -54,7 +56,7 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			lang:  "MIPS:BE:64:default",
 			ptr:   8,
 			frame: ghidra.Frame{Size: 352},
-			v: ghidra.Var{Name: "local_140", Type: "char[2]",
+			v: ghidra.Var{Name: "local_140", Type: "char[2]", Size: 2,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -320}},
 			want:    "*(char[2] *)($sp + 0x20)",
 			because: "32(sp) appears six times in the instruction stream",
@@ -99,8 +101,8 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			frame: ghidra.Frame{Size: 32},
 			v: ghidra.Var{Name: "local_10",
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -16}},
-			want:    "*(long *)($rbp - 0x8)",
-			because: "an untyped slot is still a readable address",
+			want:    "*(unsigned long *)($rbp - 0x8)",
+			because: "an untyped slot of unknown width is read pointer-sized",
 		},
 	}
 
@@ -111,6 +113,57 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 				t.Errorf("varExpr = %q, want %q\n  because: %s", got, c.want, c.because)
 			}
 		})
+	}
+}
+
+// TestGDBCTypeIsParseable pins the type translation to what gdb 17.1 actually
+// accepts, checked at the console:
+//
+//	p *(config * *)($rbp - 0x58)     -> No symbol "config" in current context.
+//	p *(undefined1 * *)($rbp - 0x58) -> No symbol "undefined1" in current context.
+//	p *(unsigned long *)($rbp - 0x58) -> 140737488344784
+//	p *(char[64] *)($rbp - 0x50)      -> "label=demo count=3..."
+//
+// Ghidra's type vocabulary is almost entirely its own, so emitting it verbatim
+// produces expressions that silently evaluate to nothing.
+func TestGDBCTypeIsParseable(t *testing.T) {
+	cases := []struct {
+		in      string
+		size    int
+		want    string
+		because string
+	}{
+		{"int", 4, "int", "a real C type passes through"},
+		{"char[64]", 64, "char[64]", "gdb parses this array form"},
+		{"undefined1", 1, "unsigned char", "Ghidra's undefined1 is a byte"},
+		{"undefined4", 4, "unsigned int", ""},
+		{"undefined8", 8, "unsigned long", ""},
+		{"uint", 4, "unsigned int", ""},
+		{"ulong", 8, "unsigned long", ""},
+		{"undefined1[16]", 16, "unsigned char[16]", "the array survives the base mapping"},
+		{"undefined1 *", 8, "unsigned char *", ""},
+		{"char * *", 8, "char * *", "pointer depth is preserved"},
+		{
+			in: "config *", size: 8, want: "void *",
+			because: "gdb has never heard of Ghidra's struct; void * still prints the address",
+		},
+		{
+			in: "config", size: 24, want: "unsigned long",
+			because: "an unnameable value is read as bytes rather than not at all",
+		},
+		{
+			in: "undefined1 * *", size: 8, want: "unsigned char * *", because: "",
+		},
+		{"", 4, "unsigned int", "no type at all still has a width"},
+		{"", 0, "unsigned long", "and an unknown width falls back to pointer-sized"},
+	}
+	for _, c := range cases {
+		got := gdbCType(c.in, c.size)
+		if got != c.want {
+			t.Errorf("gdbCType(%q, %d) = %q, want %q%s",
+				c.in, c.size, got, c.want,
+				map[bool]string{true: "\n  because: " + c.because}[c.because != ""])
+		}
 	}
 }
 
@@ -125,26 +178,47 @@ func TestPCLineTieBreak(t *testing.T) {
 		{N: 15, Addrs: []string{"0x1258"}},
 	}
 
-	if n, amb := pcLine(lines, "0x1188"); n != 11 || amb {
-		t.Errorf("unambiguous address gave (%d, %v), want (11, false)", n, amb)
+	if n, amb, ap := pcLine(lines, "0x1188"); n != 11 || amb || ap {
+		t.Errorf("exact address gave (%d, %v, %v), want (11, false, false)", n, amb, ap)
 	}
 	// A loop's increment belongs to the loop header, not to the body between.
-	if n, amb := pcLine(lines, "0x1190"); n != 10 || amb {
-		t.Errorf("loop increment gave (%d, %v), want (10, false)", n, amb)
+	if n, amb, ap := pcLine(lines, "0x1190"); n != 10 || amb || ap {
+		t.Errorf("loop increment gave (%d, %v, %v), want (10, false, false)", n, amb, ap)
 	}
 	// Two lines claim 0x1258: lowest wins, and the caller is told.
-	n, amb := pcLine(lines, "0x1258")
+	n, amb, ap := pcLine(lines, "0x1258")
 	if n != 14 {
 		t.Errorf("shared address gave line %d, want the lowest (14)", n)
 	}
 	if !amb {
 		t.Error("shared address did not report ambiguity; hiding it is a lie")
 	}
-	// An address no line claims — a prologue or a spill — is not an error.
-	if n, _ := pcLine(lines, "0x1000"); n != 0 {
-		t.Errorf("unclaimed address gave line %d, want 0", n)
+	if ap {
+		t.Error("an exactly-claimed address was reported as approximate")
 	}
-	if n, _ := pcLine(lines, ""); n != 0 {
+
+	// An address no line claims — a prologue, a spill, an epilogue — falls back
+	// to the nearest preceding line and says so. Reporting nothing there is
+	// accurate and useless: it makes the marker blink out mid-step.
+	// The greatest mapped address below 0x1248 is 0x1198, on line 10 — not
+	// line 11's 0x1188, which is lower. "Nearest" means nearest by address,
+	// not by line number, and the loop header legitimately owns the tail.
+	n, amb, ap = pcLine(lines, "0x1248")
+	if n != 10 {
+		t.Errorf("unclaimed 0x1248 gave line %d, want 10 (nearest below is 0x1198)", n)
+	}
+	if !ap {
+		t.Error("a fallback was not flagged approximate; that asserts a guess as fact")
+	}
+	if amb {
+		t.Error("a fallback was flagged ambiguous")
+	}
+
+	// Below everything mapped, there is genuinely no answer.
+	if n, _, _ := pcLine(lines, "0x1000"); n != 0 {
+		t.Errorf("address below the whole map gave line %d, want 0", n)
+	}
+	if n, _, _ := pcLine(lines, ""); n != 0 {
 		t.Errorf("empty pc gave line %d, want 0", n)
 	}
 }
