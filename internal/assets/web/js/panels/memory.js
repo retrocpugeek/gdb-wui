@@ -12,12 +12,17 @@
 import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 
 const BYTES_PER_ROW = 16;
+
+// How long to wait after the last scroll before asking what the visible rows
+// are called. Symbolising costs one gdb round trip per row, so a drag through
+// a megabyte must not ask about every row it passes.
+const SYMBOL_DEBOUNCE_MS = 150;
 const CHUNK = 4096;
 // 512 chunks is 2 MiB of cache, which covers a lot of scrolling and is a
 // rounding error next to the page holding it.
 const MAX_CHUNKS = 512;
 
-export function createMemory({ element, onRead, onError }) {
+export function createMemory({ element, onRead, onSymbols, onError }) {
   let base = 0n;
   let rows = 0;
   let expression = "";
@@ -54,6 +59,50 @@ export function createMemory({ element, onRead, onError }) {
     while (order.length > MAX_CHUNKS) {
       chunks.delete(order.shift());
     }
+  }
+
+  // symbols maps a row address (as a decimal string, since BigInt is not a
+  // usable Map key across values) to gdb's name for it. Null records "asked,
+  // and there is none", so a stack row is not asked about repeatedly.
+  let symbols = new Map();
+  let symbolTimer = 0;
+
+  // requestSymbols asks about the rows actually on screen, and only those.
+  // The view is virtual over a 4 KiB chunk: symbolising the whole chunk would
+  // be 256 round trips for a screenful of forty.
+  function requestSymbols() {
+    if (!onSymbols || !list) return;
+    const wanted = [];
+    list.forEachRendered((_, index) => {
+      const addr = base + BigInt(index) * BigInt(BYTES_PER_ROW);
+      const key = addr.toString();
+      if (!symbols.has(key)) {
+        symbols.set(key, undefined); // in flight
+        wanted.push("0x" + addr.toString(16));
+      }
+    });
+    if (!wanted.length) return;
+    const seq = stopSeq;
+    onSymbols({ addresses: wanted, stopSeq: seq })
+      .then((res) => {
+        if (seq !== stopSeq) return;
+        // Everything asked for is now answered: a name, or null for none.
+        for (const a of wanted) symbols.set(BigInt(a).toString(), null);
+        for (const s of res.symbols ?? []) {
+          symbols.set(BigInt(s.addr).toString(), s.name);
+        }
+        list?.refresh();
+      })
+      .catch(() => {
+        // Leave them unasked rather than marked absent, so a transient
+        // failure does not permanently blank the column.
+        for (const a of wanted) symbols.delete(BigInt(a).toString());
+      });
+  }
+
+  function scheduleSymbols() {
+    clearTimeout(symbolTimer);
+    symbolTimer = setTimeout(requestSymbols, SYMBOL_DEBOUNCE_MS);
   }
 
   // fetchChunk asks for one 4 KiB chunk. Requests are deduplicated, so a scroll
@@ -111,6 +160,8 @@ export function createMemory({ element, onRead, onError }) {
     return chunk.known[Number(addr % BigInt(CHUNK))] === 1;
   }
 
+  element.addEventListener("scroll", scheduleSymbols, { passive: true });
+
   function ensureList() {
     if (list) return;
     list = createVirtualList({
@@ -122,7 +173,7 @@ export function createMemory({ element, onRead, onError }) {
           row.className = "mem-row";
           row.innerHTML =
             '<span class="mem-addr"></span><span class="mem-hex"></span>' +
-            '<span class="mem-ascii"></span>';
+            '<span class="mem-ascii"></span><span class="mem-sym"></span>';
           return row;
         },
         update(el, index) {
@@ -151,6 +202,9 @@ export function createMemory({ element, onRead, onError }) {
           el.querySelector(".mem-ascii").textContent = ascii;
           el.classList.toggle("has-holes", missing);
 
+          const sym = symbols.get(rowAddr.toString());
+          el.querySelector(".mem-sym").textContent = sym ? sym : "";
+
           // Fetch what this row needs. One request per chunk, deduplicated, so
           // a render pass over twenty rows in the same chunk asks once.
           for (const chunkIdx of new Set([
@@ -178,6 +232,7 @@ export function createMemory({ element, onRead, onError }) {
       ensureList();
       list.setCount(rows);
       list.scrollToRow(0, { center: false });
+      scheduleSymbols();
     },
     // onStop drops the cache: the bytes described the previous stop, and memory
     // is exactly the thing that changes while a program runs.
@@ -185,7 +240,12 @@ export function createMemory({ element, onRead, onError }) {
       stopSeq = seq;
       chunks.clear();
       order.length = 0;
+      // Names survive a stop only if the program did not move: a re-run
+      // relocates everything, and a stale name on a live address is worse
+      // than none.
+      symbols = new Map();
       list?.refresh();
+      scheduleSymbols();
     },
     summary() {
       if (!list) return "";

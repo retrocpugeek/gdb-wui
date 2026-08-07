@@ -123,6 +123,21 @@ Only names, fields and subscripts are evaluated. `f(x)` is not, and that is
 deliberate: gdb would answer by *calling f*, which is not a thing a mouse
 should do by accident.
 
+**Right-click the same thing** for the memory behind it. There are two
+different questions and the menu keeps them apart: *where a thing is kept*, and
+*what it points at*. A pointer variable has both, and they are different
+addresses; a register has only the second; a plain `int` has only the first.
+Each entry names the address it would show, so the choice is visible rather
+than guessed from a verb.
+
+Following a value is what makes a register useful here — `%rbp` or a `char *`
+in `$x0` leads straight to the bytes. A value below the first page is not
+offered as a pointer, since that page is never mapped.
+
+The memory viewer names what it is showing: each row carries the symbol it
+falls in, `inspect+16` rather than a bare number. Blank for the stack and the
+heap, which is the truth rather than an omission.
+
 **Decompiled** is a fourth centre tab, for a binary with no source. It shows
 Ghidra's recovered C for the function you are stopped in, with the program
 counter marked. The gutter sets breakpoints, and hovering a local or a global

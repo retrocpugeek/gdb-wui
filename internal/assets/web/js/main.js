@@ -190,6 +190,7 @@ decomp.clear();
 const memory = createMemory({
   element: ui.memory,
   onRead: (req) => send("mem.read", req),
+  onSymbols: (req) => send("mem.symbols", req),
   onError: reportError,
 });
 
@@ -220,6 +221,125 @@ const hover = createHover({
 hover.attach(ui.source, (ev) => source.expressionAt(ev));
 hover.attach(ui.disasm, (ev) => disasm.expressionAt(ev));
 hover.attach(ui.decomp, (ev) => decomp.expressionAt(ev));
+
+// Right-clicking whatever the pointer is over offers what can be done with it.
+// The same resolvers the hover uses, so the menu is about exactly the thing
+// whose value was just shown.
+//
+// There are two different questions and they are easy to conflate: *where a
+// thing is kept*, and *what it points at*. A pointer variable has both and
+// they are different addresses; a register has only the second; a plain int
+// has only the first. The menu offers whichever apply and names the address in
+// the label, so the choice is visible rather than inferred from a verb.
+for (const [pane, resolve] of [
+  [ui.source, (ev) => source.expressionAt(ev)],
+  [ui.disasm, (ev) => disasm.expressionAt(ev)],
+  [ui.decomp, (ev) => decomp.expressionAt(ev)],
+]) {
+  pane.addEventListener("contextmenu", (ev) => {
+    const hit = resolve(ev);
+    if (!hit) return;
+    ev.preventDefault();
+    hover.hide();
+    const x = ev.clientX;
+    const y = ev.clientY;
+
+    // The value decides half the menu, so it is fetched before the menu opens
+    // rather than the menu offering something that cannot work. One round
+    // trip, and the hover has usually just made the same one.
+    evaluateForMenu(hit.expr).then((res) => {
+      const items = [];
+      const label = hit.name ?? hit.expr;
+
+      // Where it is kept. A register is not in memory and has no answer here.
+      if (hit.storage !== "register") {
+        items.push({
+          label: "Show where it is stored",
+          title: `the bytes at &(${hit.expr})`,
+          run: () => showAddressOf(hit.expr, label),
+        });
+      }
+      // What it points at. Offered for anything whose value is address-shaped,
+      // which is how a register holding a pointer becomes followable.
+      if (res && res.addr >= LOWEST_PLAUSIBLE_ADDRESS) {
+        const target = "0x" + res.addr.toString(16);
+        items.push({
+          label: `Show what it points to — ${target}`,
+          title: "follow the value as an address",
+          run: () => showAtAddress(res.addr, `*${label}`),
+        });
+      }
+
+      if (!items.length) {
+        setStatus(res && res.value
+          ? `${label} is ${res.value}, which is neither in memory nor an address.`
+          : `${label} has no address to show.`);
+        return;
+      }
+      showContextMenu(x, y, label, items);
+    });
+  });
+}
+
+// LOWEST_PLAUSIBLE_ADDRESS keeps "show what it points to" off values that are
+// plainly not pointers. The first page is never mapped on any system this runs
+// on, so a value below it is a small integer wearing a hex hat — offering to
+// follow `3` would be noise on every int in the program.
+const LOWEST_PLAUSIBLE_ADDRESS = 0x1000;
+
+function evaluateForMenu(expr) {
+  if (store.get("session.runState") !== "stopped") return Promise.resolve(null);
+  return send("eval.expr", {
+    expr,
+    thread: store.get("selection.thread"),
+    frame: store.get("selection.frame"),
+    stopSeq: store.get("session.stopSeq"),
+  }).catch(() => null);
+}
+
+// showAtAddress points the memory viewer at an address already in hand.
+function showAtAddress(addr, label) {
+  send("mem.read", { address: "0x" + addr.toString(16), count: 64,
+    stopSeq: store.get("session.stopSeq") })
+    .then((res) => {
+      showCenter("memory");
+      memory.show(res.addr, { expr: label, seq: store.get("session.stopSeq") });
+      ui.memAddr.value = "0x" + res.addr.toString(16);
+      ui.sourceMeta.textContent = memory.summary();
+      setStatus(res.unreadable
+        ? `0x${res.addr.toString(16)} is not readable — ${label} is not a valid pointer.`
+        : `${label} — 0x${res.addr.toString(16)}`);
+    })
+    .catch(reportError);
+}
+
+// showAddressOf points the memory viewer at where a variable lives.
+//
+// The address, not the value: `&(...)` wrapped around whatever expression the
+// pane resolved. The parentheses matter — `&*(int *)($rbp - 8)` is the slot
+// and `&(*(int *)($rbp - 8))` is the same thing said unambiguously, while for
+// a bare name `&buf + 16` would be a different place entirely.
+function showAddressOf(expr, label) {
+  send("mem.read", {
+    address: `&(${expr})`,
+    count: 64,
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((res) => {
+      showCenter("memory");
+      memory.show(res.addr, { expr: label, seq: store.get("session.stopSeq") });
+      ui.memAddr.value = `&(${expr})`;
+      ui.sourceMeta.textContent = memory.summary();
+      setStatus(res.unreadable
+        ? `${label} is at 0x${res.addr.toString(16)}, which is not readable.`
+        : `${label} — 0x${res.addr.toString(16)}`);
+    })
+    .catch((err) => {
+      // gdb's own words are the useful ones here: "Address requested for
+      // identifier ... which is in register $rax" says exactly what is wrong.
+      setStatus(err?.message ?? String(err), true);
+    });
+}
 
 const threads = createThreads({
   element: ui.threads,

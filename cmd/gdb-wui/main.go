@@ -81,7 +81,7 @@ func main() {
 	flag.StringVar(&opt.ghidraDir, "ghidra", "", "Ghidra installation directory for decompilation (default $"+ghidra.EnvInstall+", then the usual locations)")
 	flag.StringVar(&opt.ghidraProject, "ghidra-project", "", "existing Ghidra project (.gpr) to read, opened read-only")
 	flag.StringVar(&opt.ghidraProgram, "ghidra-program", "", "which program inside -ghidra-project to decompile")
-	flag.StringVar(&opt.decompDir, "decomp-dir", "", "where to cache Ghidra projects gdb-wui creates (default <project>/.gdb-wui/ghidra)")
+	flag.StringVar(&opt.decompDir, "decomp-dir", "", "where to cache Ghidra projects gdb-wui creates (default <project>/gdb-wui-decomp)")
 	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
 		"exit after this long with no browser connected (0 disables)")
 	flag.Usage = usage

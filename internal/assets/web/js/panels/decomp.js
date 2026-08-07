@@ -147,7 +147,15 @@ export function createDecomp({ element, onGutterClick }) {
     const range = document.createRange();
     range.setStart(caret.node, found.start);
     range.setEnd(caret.node, found.end);
-    return { expr: v.expr, rect: range.getBoundingClientRect(), anchor: code };
+    // storage travels with the hit so a caller can tell what can be done with
+    // it: a register has no address to show in the memory view.
+    return {
+      expr: v.expr,
+      storage: v.storage,
+      name: v.name,
+      rect: range.getBoundingClientRect(),
+      anchor: code,
+    };
   }
 
   function caretAt(x, y) {

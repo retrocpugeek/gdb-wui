@@ -188,3 +188,63 @@ func (s *Session) evalExpr(r *request) (any, *wire.Error) {
 	}
 	return out, nil
 }
+
+// maxSymbolAddresses bounds one mem.symbols request. A screenful of hex is
+// forty-odd rows; anything much larger is a client asking for a whole chunk it
+// will not show.
+const maxSymbolAddresses = 128
+
+// memSymbols names the symbol each address falls in.
+//
+// gdb annotates a pointer with its symbol when it prints one — evaluating
+// `(void*)0x5555555551f9` yields `0x5555555551f9 <inspect+16>` — so this needs
+// no console command and no symbol table of our own. It is also the only
+// answer that stays right across relocation and across shared libraries, each
+// of which has its own load bias: gdb knows all of them and a table built from
+// `-symbol-info-*` link-time addresses would not.
+func (s *Session) memSymbols(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.MemSymbolsRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+	if werr := s.checkStopSeq(req.StopSeq); werr != nil {
+		return nil, werr
+	}
+
+	out := wire.MemSymbols{}
+	for i, a := range req.Addresses {
+		if i >= maxSymbolAddresses {
+			break
+		}
+		n, err := parseAddress(a)
+		if err != nil {
+			continue
+		}
+		rec, werr := s.send(r.ctx, fmt.Sprintf(
+			"-data-evaluate-expression %s", quote(fmt.Sprintf("(void*)0x%x", n))))
+		if werr != nil {
+			// One unreadable address must not lose the rest of the screenful.
+			continue
+		}
+		if name := symbolFromValue(rec.Results.Str("value")); name != "" {
+			out.Symbols = append(out.Symbols, wire.MemSymbol{Addr: a, Name: name})
+		}
+	}
+	return out, nil
+}
+
+// symbolFromValue pulls the name out of gdb's decoration.
+//
+// `0x5555555551f9 <inspect+16>` yields "inspect+16"; a bare `0x7fffffffd658`
+// yields "", which is the truthful answer for a stack address.
+func symbolFromValue(value string) string {
+	open := strings.IndexByte(value, '<')
+	if open < 0 {
+		return ""
+	}
+	close := strings.LastIndexByte(value, '>')
+	if close <= open {
+		return ""
+	}
+	return strings.TrimSpace(value[open+1 : close])
+}
