@@ -172,7 +172,7 @@ func TestThreadSwitching(t *testing.T) {
 	h := startReal(t, "threads")
 	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "threads"})
 	// Break in the worker so several threads exist and are inside it.
-	h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "threads.c", Line: 16})
+	h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{Path: "threads.c", Line: lineWorkerLoop})
 	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
 	h.rec.wait(t, wire.EventStopped)
 
