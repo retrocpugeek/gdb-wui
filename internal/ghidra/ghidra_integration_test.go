@@ -62,6 +62,15 @@ int main(void) { printf("%d\n", accumulate(7)); return 0; }
 // of a hello-world is seconds; a large image is minutes, which is why the
 // caller of this in production is a job rather than a click.
 func start(t *testing.T) *ghidra.Client {
+	c, _ := startIn(t)
+	return c
+}
+
+// startIn is start, also returning the project directory. That path is unique
+// to this test and appears on the spawned JVM's command line, which is what
+// lets a caller pick its own process out of a machine that may be running
+// other Ghidras — another test's, or the developer's own gdb-wui.
+func startIn(t *testing.T) (*ghidra.Client, string) {
 	t.Helper()
 	in := install(t)
 	t.Logf("ghidra %s at %s", in.Version, in.Dir)
@@ -88,7 +97,7 @@ func start(t *testing.T) *ghidra.Client {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return c
+	return c, projectDir
 }
 
 // TestResidentServerAnswers is the load-bearing one. If the embedded scripts do
@@ -239,15 +248,20 @@ func TestFunctionsListsWithoutDecompiling(t *testing.T) {
 // test only checked that requests failed after Close, which they do the moment
 // the socket shuts — it would have passed with the process still running, and
 // a leaked JVM was in fact observed by hand while that version was green.
+//
+// It counts only the processes carrying this test's own project directory. An
+// earlier version compared totals across every gdb-wui Ghidra on the machine,
+// which made it a lie in both directions: a previous test's JVM still dying
+// while this one started cancelled out to no change ("no JVM appeared"), and a
+// developer's own session running alongside would have masked a real leak.
 func TestCloseStopsTheProcess(t *testing.T) {
-	before := countHeadlessJVMs(t)
-	c := start(t)
+	c, projectDir := startIn(t)
 	// A live request proves the JVM is up before we ask it to go away.
 	if _, err := c.Decompile(context.Background(), "accumulate"); err != nil {
 		t.Fatalf("Decompile: %v", err)
 	}
-	if n := countHeadlessJVMs(t); n <= before {
-		t.Fatalf("no JVM appeared (%d then %d); this test cannot prove anything", before, n)
+	if n := countHeadlessJVMs(t, projectDir); n == 0 {
+		t.Fatal("no JVM for this project; this test cannot prove anything")
 	}
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -265,20 +279,22 @@ func TestCloseStopsTheProcess(t *testing.T) {
 	// And the process itself is gone. A JVM takes a moment to die.
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		if countHeadlessJVMs(t) <= before {
+		if countHeadlessJVMs(t, projectDir) == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("a Ghidra JVM outlived Close (%d before, %d now)",
-				before, countHeadlessJVMs(t))
+			t.Fatalf("%d Ghidra process(es) for %s outlived Close",
+				countHeadlessJVMs(t, projectDir), projectDir)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 }
 
-// countHeadlessJVMs counts Ghidra processes started by this package,
-// identified by the temp script directory Start creates for them.
-func countHeadlessJVMs(t *testing.T) int {
+// countHeadlessJVMs counts the Ghidra processes serving one project. Both the
+// project directory and the script name are required: the directory alone also
+// matches the import that ran before, and the script alone matches every other
+// Ghidra on the machine.
+func countHeadlessJVMs(t *testing.T, projectDir string) int {
 	t.Helper()
 	out, err := exec.Command("ps", "-eo", "args").Output()
 	if err != nil {
@@ -286,7 +302,7 @@ func countHeadlessJVMs(t *testing.T) int {
 	}
 	var n int
 	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, "gdb-wui-ghidra-") && strings.Contains(line, "DecompServer") {
+		if strings.Contains(line, projectDir) && strings.Contains(line, "DecompServer") {
 			n++
 		}
 	}

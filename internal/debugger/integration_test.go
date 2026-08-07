@@ -17,12 +17,14 @@ import (
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
 
-// Line numbers in testdata/fixtures/hello.c that these tests depend on. Named
-// rather than inlined so an edit to the fixture fails in one obvious place.
+// Line numbers in the fixtures that these tests depend on. Named rather than
+// inlined so an edit to a fixture fails in one obvious place.
 const (
-	lineAddSum   = 5  // int sum = a + b;
-	lineMainInit = 12 // int total = 0;
-	lineMainLoop = 14 // for (i = 0; i < 3; i++)
+	lineAddSum   = 5  // hello.c:   int sum = a + b;
+	lineMainInit = 12 // hello.c:   int total = 0;
+	lineMainLoop = 14 // hello.c:   for (i = 0; i < 3; i++)
+
+	lineWorkerLoop = 30 // threads.c: spins++;  (every worker, immediately)
 )
 
 // realProject copies a fixture into a fresh project directory and compiles it
