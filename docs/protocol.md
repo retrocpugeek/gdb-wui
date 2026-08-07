@@ -505,6 +505,12 @@ The client sends the addresses it is showing rather than a range. The memory
 view is virtual over a 4 KiB chunk, and symbolising a whole chunk would be 256
 lookups for a screenful of forty.
 
+`eval.expr`'s `addr` is what lets a client offer to follow a value: it is set
+whenever the value is address-shaped, including for a register. It is *not* a
+claim that the value is a pointer — an `int` holding 3 yields `addr: 3` — so a
+client wanting to follow it should ignore anything below one page, which is
+never mapped.
+
 ### Source paths
 
 ```jsonc
