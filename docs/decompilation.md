@@ -13,9 +13,14 @@ this adds a view, not a debugger.
 
 ```sh
 analyzeHeadless /tmp/proj decomp -import ./firmware.elf \
-    -scriptPath scripts/ghidra -postScript ExportDecomp.java out.json \
+    -scriptPath internal/ghidra/scripts -postScript ExportDecomp.java out.json \
     -deleteProject
 ```
+
+The Ghidra-side sources live in `internal/ghidra/scripts` because they are
+`go:embed`ed into the binary — a built gdb-wui carries its own decompiler glue
+and does not need the repository checked out. They are ordinary Ghidra scripts
+and can be run by hand, as above.
 
 An optional second script argument is a regular expression; only functions whose
 names match are decompiled. On an image with thousands of functions that is the
@@ -26,7 +31,7 @@ difference between a prototype and a batch job.
 `scripts/ghidra/show-decomp.py` prints a sidecar in a form you can look at:
 
 ```sh
-show-decomp.py out.json                     # functions, most ambiguous first
+scripts/ghidra/show-decomp.py out.json      # functions, most ambiguous first
 show-decomp.py out.json FUN_001028c0        # one function, annotated
 show-decomp.py out.json main --bias 0x555555554000
 ```
