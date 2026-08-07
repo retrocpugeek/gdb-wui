@@ -61,6 +61,15 @@ int main(void) { printf("%d\n", accumulate(7)); return 0; }
 	if err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
+	// A second build with no debug info, deliberately not stripped so its
+	// function symbols survive. That is what firmware looks like, and it is the
+	// only build where gdb's prologue skip lands in the gap between the
+	// function's entry and the first address any decompiled line claims.
+	out, err = exec.Command("gcc", "-O0", "-o", filepath.Join(dir, "nodebug"), src).
+		CombinedOutput()
+	if err != nil {
+		t.Fatalf("gcc (nodebug): %v\n%s", err, out)
+	}
 
 	files, err := srcfs.Open(dir)
 	if err != nil {
@@ -462,5 +471,82 @@ func TestStepLineWithNoRangeIsOneInstruction(t *testing.T) {
 	// walk kept going with no range to stop it.
 	if after < before || after-before > 16 {
 		t.Errorf("moved from %#x to %#x — that is not one instruction", before, after)
+	}
+}
+
+// TestStepLineFromAFunctionBreakpoint is the case that shipped broken.
+//
+// Breaking on a function leaves the pc in the prologue, which gdb skips and
+// which belongs to no decompiled line — so the line resolves only
+// approximately. The client refused to step by line from there, fell back to
+// gdb's own `next`, and with no line table that runs to the function's exit:
+// observed in a browser as a step from `main` landing in
+// __libc_start_call_main.
+//
+// It is not an edge case. It is where anyone starts stepping.
+func TestStepLineFromAFunctionBreakpoint(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	// The no-debug build: with a line table gdb's prologue skip lands on a real
+	// line and there is no gap to test.
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+	waitReady(t, do)
+
+	do(wire.TypeBpSetAddress, wire.BreakpointAddressRequest{Location: "accumulate"})
+	do(wire.TypeExecRun, wire.ExecRequest{})
+	waitStopped(t, do, 30*time.Second)
+
+	fn := do(wire.TypeDecompFunction, wire.DecompFunctionRequest{}).(wire.DecompFunction)
+	if !fn.PCLineApprox {
+		t.Skipf("the breakpoint landed exactly on line %d; this build has no "+
+			"prologue gap to test", fn.PCLine)
+	}
+	before := mustAddr(t, currentPCOf(t, do))
+	// The lowest address any line claims: where the walk must end up, because
+	// the prologue is everything below it.
+	var firstMapped uint64
+	for _, l := range fn.Lines {
+		for _, a := range l.Addrs {
+			if v := mustAddr(t, a); firstMapped == 0 || v < firstMapped {
+				firstMapped = v
+			}
+		}
+	}
+	t.Logf("prologue: pc %#x, approximately line %d, first mapped address %#x (%d bytes on)",
+		before, fn.PCLine, firstMapped, firstMapped-before)
+
+	do(wire.TypeExecStepLine, wire.ExecStepLineRequest{
+		Lines: fn.Lines, BodyStart: fn.BodyStart, BodyEnd: fn.BodyEnd, Over: true})
+	waitStopped(t, do, 30*time.Second)
+
+	after := do(wire.TypeDecompFunction, wire.DecompFunctionRequest{}).(wire.DecompFunction)
+	if after.Name != fn.Name {
+		t.Fatalf("stepped out of %s into %s — this is the bug: a step from a "+
+			"function breakpoint ran to the function's exit", fn.Name, after.Name)
+	}
+	if after.PCLine == 0 {
+		t.Fatal("no line for the pc after stepping")
+	}
+	if after.PCLineApprox {
+		t.Errorf("still between lines after stepping (approximately line %d); "+
+			"the walk should end on a line exactly", after.PCLine)
+	}
+	// The walk must land on the first address a line claims — not before it and
+	// not past it.
+	//
+	// One honest limitation: on x86-64 the prologue gap is one or two
+	// instructions, because Ghidra maps the stack-protector load that sits
+	// immediately after gdb's skip point. So this cannot distinguish a walk
+	// from a single instruction step; reverting the walk entirely leaves it
+	// green. It does catch the opposite error — treating an approximate start
+	// as a real line, which skips the line the step should have landed on —
+	// and that is the mistake the code actually made. The walk itself is
+	// verified in a browser on a no-debug build, and the gap is 72 bytes on the
+	// MIPS firmware where it was reported.
+	got := mustAddr(t, currentPCOf(t, do))
+	if firstMapped != 0 && got != firstMapped {
+		t.Errorf("stepped to %#x; the first address any line claims is %#x. "+
+			"A walk from the prologue must cross it, not advance one instruction",
+			got, firstMapped)
 	}
 }

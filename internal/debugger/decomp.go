@@ -866,7 +866,10 @@ type stepLine struct {
 	// lines is the function's map, and line is where the walk began. The walk
 	// continues while the pc still resolves to that line.
 	lines []wire.DecompLine
-	line  int
+	// line is the line the walk began on, and 0 when it began somewhere no
+	// line exactly claims — a prologue, a spill. The walk ends on reaching a
+	// line *exactly*, and a different one than this.
+	line int
 	// body bounds the function.
 	bodyStart, bodyEnd string
 	// over steps over calls rather than into them.
@@ -888,11 +891,21 @@ func (s *Session) execStepLine(r *request) (any, *wire.Error) {
 		return nil, werr
 	}
 
-	// Which line the walk is leaving, decided the same way the marker is.
-	start, _, _ := pcLine(req.Lines, s.currentPC(), req.BodyStart, req.BodyEnd)
-	// With no map, or a pc that belongs to no line, there is nothing to step
-	// out of and one instruction is all that can honestly be claimed.
-	if len(req.Lines) == 0 || start == 0 {
+	// Which line the walk is leaving. An approximate answer counts as *no*
+	// line: the pc is between lines, so the next line reached is a destination
+	// rather than somewhere to step past.
+	//
+	// This is the ordinary case, not an edge one. Breaking on a function puts
+	// the pc in the prologue — gdb skips it — and the prologue belongs to no
+	// line, so refusing to walk from there would refuse the commonest place
+	// anyone starts stepping.
+	start, _, startApprox := pcLine(req.Lines, s.currentPC(), req.BodyStart, req.BodyEnd)
+	if startApprox {
+		start = 0
+	}
+	// With no map there is nothing to step out of and one instruction is all
+	// that can honestly be claimed.
+	if len(req.Lines) == 0 {
 		s.st.stepping = nil
 	} else {
 		s.st.stepping = &stepLine{
@@ -948,11 +961,21 @@ func (s *Session) advanceStepLine(ctx context.Context, reason string) bool {
 		s.st.stepping = nil
 		return false
 	}
-	// Still on the same line? The fallback inside pcLine is what makes this
-	// work at all: the instructions between a line's tokens are claimed by no
-	// line, and resolve back to the one they follow.
-	now, _, _ := pcLine(st.lines, s.currentPC(), st.bodyStart, st.bodyEnd)
-	if now == 0 || now != st.line {
+	// Keep walking until the pc lands *exactly* on a line other than the one
+	// the walk began on.
+	//
+	// Exactness is what makes this right in both directions. Instructions
+	// between a line's tokens resolve approximately to the line they follow,
+	// and stopping on one would leave the marker mid-statement; a prologue
+	// resolves approximately to the first line, and stopping there would mean
+	// a step from a function breakpoint went nowhere.
+	now, _, approx := pcLine(st.lines, s.currentPC(), st.bodyStart, st.bodyEnd)
+	switch {
+	case now == 0:
+		// Off the map: out of the function, or somewhere it does not describe.
+		s.st.stepping = nil
+		return false
+	case !approx && now != st.line:
 		s.st.stepping = nil
 		return false
 	}

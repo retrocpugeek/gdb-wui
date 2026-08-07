@@ -269,10 +269,14 @@ export function createDecomp({ element, onGutterClick }) {
     // first instruction between them. The server steps until the pc resolves
     // to a different line, which needs every line to resolve against.
     //
-    // Null when the pc could only be placed approximately: stepping out of a
-    // line the program is not actually on would step out of the wrong thing.
+    // An approximate pc is *not* a reason to refuse. Breaking on a function
+    // leaves the pc in the prologue, which belongs to no line, and that is the
+    // commonest place anyone starts stepping — refusing there fell back to
+    // gdb's own next, which with no line table runs to the function's exit.
+    // The server treats "approximate" as "between lines" and walks to the next
+    // real one.
     stepMap() {
-      if (!fn?.pcLine || fn.pcLineApprox) return null;
+      if (!fn?.lines?.length) return null;
       return {
         lines: fn.lines ?? [],
         bodyStart: fn.bodyStart,

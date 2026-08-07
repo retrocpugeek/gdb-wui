@@ -541,12 +541,21 @@ function applyStopped(stopped) {
   } else {
     source.clearExecLine();
     if (frame) {
-      // No source: the machine view is the only one there is, so switch to it
-      // rather than leaving a blank pane and an explanation.
+      // No source. The rescue is only for someone looking at the source view,
+      // which has nothing to show them — every other centre tab does.
+      //
+      // This used to fire from any tab but the disassembly, which was right
+      // when the disassembly was the only fallback and became wrong the moment
+      // there was a second one: on a binary with no debug info *every* stop
+      // takes this branch, so stepping in the decompiled view flipped to the
+      // disassembly every single time.
       const where = frame.from ? ` in ${frame.from}` : "";
-      setStatus(`Stopped at ${frame.address}${where} with no source — showing disassembly.`);
-      if (centerTab !== "disasm") showCenter("disasm");
-      else refreshDisasm(frame.address);
+      if (centerTab === "source") {
+        setStatus(`Stopped at ${frame.address}${where} with no source — showing disassembly.`);
+        showCenter("disasm");
+      } else {
+        setStatus(`Stopped at ${frame.address}${where}`);
+      }
     }
   }
 }
