@@ -1,0 +1,57 @@
+# GitHub Pages builds this. There is nothing to run locally and no toolchain to
+# install, which is the point: the repository's promise is `go build` and done,
+# and a documentation site that needed a bundler would quietly break it.
+#
+# Serve from master:/docs — Settings → Pages → Deploy from a branch.
+
+title: gdb-wui
+description: A web UI for GDB — source, disassembly, memory and a real gdb console in a browser tab.
+url: https://retrocpugeek.github.io
+baseurl: /gdb-wui
+
+remote_theme: just-the-docs/just-the-docs
+plugins:
+  - jekyll-remote-theme
+
+# The developer documents live in this directory too, and are deliberately not
+# part of the site: they describe the wire protocol and the decompiler's
+# internals, which is not what someone arriving here is looking for. They stay
+# readable on GitHub, and the site links to them where they are genuinely the
+# next thing to read.
+exclude:
+  - protocol.md
+  - decompilation.md
+  - findings.md
+
+# Dark, because the application is. A documentation page whose screenshots are
+# all dark reads badly against a white background.
+color_scheme: dark
+
+search_enabled: true
+search:
+  heading_level: 2
+  previews: 3
+
+aux_links:
+  GitHub: https://github.com/retrocpugeek/gdb-wui
+aux_links_new_tab: true
+
+heading_anchors: true
+
+# Callouts have to be declared before `{: .warning }` in front of a blockquote
+# means anything; undeclared, it is a CSS class with no rule behind it and the
+# warning renders as an ordinary quote.
+callouts_level: quiet
+callouts:
+  warning:
+    title: Warning
+    color: red
+  note:
+    title: Note
+    color: blue
+
+footer_content: >-
+  gdb-wui is a translator, not a debugger. GDB is still in charge.
+
+# Ordered by what a reader needs first, not alphabetically.
+nav_sort: case_insensitive
