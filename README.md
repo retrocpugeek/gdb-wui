@@ -1,7 +1,8 @@
 # gdb-wui
 
-A web UI for GDB. Source, disassembly, variables, registers, memory, threads and
-a real gdb console in a browser tab — with GDB itself still in charge.
+gdb-wui is a web UI for GDB. It shows source, disassembly, variables, registers,
+memory, threads and a gdb console in a browser tab, while GDB itself does the
+debugging.
 
 **📖 [Documentation, with screenshots](https://retrocpugeek.github.io/gdb-wui/)**
 
@@ -10,56 +11,60 @@ go build ./cmd/gdb-wui
 ./gdb-wui -project /path/to/your/repo
 ```
 
-It prints a URL and opens a browser at it. Pick an executable from the file tree,
-click a line number to set a breakpoint, and step.
+gdb-wui prints a URL and opens a browser at it. To start debugging, pick an
+executable from the file tree, click a line number to set a breakpoint, and
+step.
 
 [![The whole window, stopped at a breakpoint](docs/images/overview.png)](https://retrocpugeek.github.io/gdb-wui/)
 
-> ## ⚠ It runs your programs as you
+> ## ⚠ gdb-wui runs your programs with your privileges
 >
-> gdb-wui starts arbitrary binaries with your full privileges. That is what a
-> debugger does, and sandboxing the debuggee is **not** a goal.
+> That is what a debugger does; sandboxing the program being debugged is not a
+> goal.
 >
-> It listens on loopback only, and refuses a non-loopback address unless you pass
-> `-listen-anywhere`. **Never expose it to a network you do not control.** Anyone
-> who can reach the port can run programs as you.
+> gdb-wui listens on loopback only, and refuses a non-loopback address unless
+> you pass `-listen-anywhere`. Do not expose it to a network you do not control:
+> anyone who can reach the port can run programs as you.
 >
-> Binding loopback is not by itself enough — any web page you visit can `fetch` a
-> loopback URL — so access needs a single-use login link, and requests are
-> checked against DNS rebinding three separate ways. See
-> [docs/protocol.md](docs/protocol.md#security).
+> Binding to loopback is not sufficient on its own, because any web page you
+> visit can `fetch` a loopback URL. Access therefore needs a single-use login
+> link, and requests are checked against DNS rebinding in three ways. These are
+> described in [docs/protocol.md](docs/protocol.md#security).
 
 ## Why
 
-GDB's own interfaces are a bare console or the cramped `tui` mode. Neither shows
-source, disassembly, registers, the call stack and thread state at once, and
+GDB's own interfaces are a console or the `tui` mode. Neither shows source,
+disassembly, registers, the call stack and thread state at the same time, and
 neither lets you click a gutter to set a breakpoint.
 
-gdb-wui is a translator, not a debugger: it speaks GDB/MI to a real gdb process
-and a small JSON protocol to the browser. It reimplements no debugger logic, so
-what you get is gdb's behaviour with a better view of it.
+gdb-wui translates rather than debugs: it speaks GDB/MI to a real gdb process,
+and a small JSON protocol to the browser. It implements no debugger logic of its
+own, so you get gdb's behaviour, including gdb's error messages.
 
 ## Requirements
 
-- **Linux, x86-64.** The pty and process-group handling do not port for free.
-- **gdb ≥ 10** with the `mi3` interpreter (17.1 is what it is developed against).
-  A stock `gdb` only knows the host architecture; for a foreign target install
-  `gdb-multiarch` and point `-gdb` at it.
-- **Go ≥ 1.24** to build. Two dependencies, no npm, no bundler.
-- **Ghidra, optional**, only for the Decompiled tab. It is an 884 MB install
-  and needs a system JDK 21+; without it nothing else changes.
+- **Linux, x86-64.** The pty and process-group handling are Linux-specific.
+- **gdb ≥ 10** with the `mi3` interpreter. gdb-wui is developed against 17.1.
+  To debug binaries for another architecture, install a suitable gdb (e.g.
+  `gdb-multiarch`) and select it with `-gdb`.
+- **Go ≥ 1.24** to build. Two dependencies, no npm and no bundler.
+- **Ghidra**, optional, and used only by the Decompiled tab. It is an 884 MB
+  install and needs a system JDK 21 or later; without it nothing else changes.
 
-## Getting a link
+## Getting a login link
 
-The login link is single-use and expires after 60 seconds — it ends up in argv,
-where `ps` can read it, and in browser history. For another:
+gdb-wui prints a login link on stdout. The link is single-use and expires after
+60 seconds, because it appears in `argv` where `ps` can read it, and in browser
+history.
+
+To get a new link without disturbing your session, run:
 
 ```sh
 ./gdb-wui -print-url
 ```
 
-That mints a fresh one against the *running* server, so your gdb session and
-breakpoints survive.
+This mints a link against the running server, so your gdb session and
+breakpoints are kept.
 
 ## Supported
 
@@ -81,42 +86,43 @@ breakpoints survive.
 | | Follow-fork, multi-inferior |
 | | Windows, macOS |
 
-Anything in the right-hand column that gdb itself can do still works typed into
-the console — watchpoints, `set var`, conditions. The console is not a lesser
-path, and a breakpoint made there appears in the UI like any other.
+Anything in the right-hand column that gdb itself supports still works when
+typed into the console — watchpoints, `set var`, breakpoint conditions. A
+breakpoint set at the console appears in the UI like any other.
 
 ## Documentation
 
-The [site](https://retrocpugeek.github.io/gdb-wui/) is the user documentation: a
-[guided first session](https://retrocpugeek.github.io/gdb-wui/tour.html), a page
-per feature with screenshots, and
-[troubleshooting](https://retrocpugeek.github.io/gdb-wui/troubleshooting.html)
-written from errors we actually hit. Its source is [docs/](docs/); every
-screenshot in it is generated by
-[scripts/screenshots](scripts/screenshots/README.md), so none of them can
-quietly stop matching the application.
+The [site](https://retrocpugeek.github.io/gdb-wui/) is the user documentation:
+a [guided first session](https://retrocpugeek.github.io/gdb-wui/tour.html), a
+page per feature with screenshots, and
+[troubleshooting](https://retrocpugeek.github.io/gdb-wui/troubleshooting.html).
+Its source is in [docs/](docs/). Every screenshot is generated by
+[scripts/screenshots](scripts/screenshots/README.md), so the images cannot fall
+out of step with the application.
 
-Three documents are for people working *on* gdb-wui rather than with it, and are
-deliberately not part of the site:
+Three documents are for people working on gdb-wui rather than using it, and are
+not part of the site:
 
 - [docs/protocol.md](docs/protocol.md) — the browser/server protocol. A test
   fails if that document and the code disagree.
 - [docs/decompilation.md](docs/decompilation.md) — how recovered C is mapped
   back to real addresses, and what that mapping cannot promise.
-- [docs/findings.md](docs/findings.md) — the GDB behaviours this had to
-  establish by measurement; test comments cite them by number.
+- [docs/findings.md](docs/findings.md) — GDB behaviours established by
+  measurement; test comments cite them by number.
 
 ## Architecture
 
-Six layers, each ignorant of the ones above it:
+Six layers, each of which knows nothing about the ones above it:
 
 - `internal/mi` — GDB/MI codec and process supervisor. No domain knowledge.
 - `internal/ghidra` — the same shape for a resident decompiler: a long-lived
-  child, id-matched requests, a death that fails outstanding calls. Optional.
+  child process, id-matched requests, and a death that fails outstanding calls.
+  Optional.
 - `internal/debugger` — all session state, behind a single actor goroutine.
 - `internal/hub` + `internal/httpapi` — the WebSocket protocol and HTTP surface.
-- `internal/srcfs` — the project, browsed through `os.Root` so nothing escapes.
-- `internal/assets/web` — zero-build ES modules; the only vendored code is
+- `internal/srcfs` — the project directory, browsed through `os.Root` so that
+  nothing escapes it.
+- `internal/assets/web` — zero-build ES modules. The only vendored code is
   xterm.js, hash-verified in
   [VENDOR.md](internal/assets/web/vendor/VENDOR.md).
 
@@ -132,22 +138,22 @@ make docs-check        # build it and follow every internal link
 make docs-images       # regenerate every screenshot in it
 ```
 
-`make docs` needs Jekyll, which is the only reason Ruby appears anywhere in
-this project — GitHub builds the published site, so this is purely for seeing a
-change before pushing it:
+`make docs` needs Jekyll, which is the only thing in this project that needs
+Ruby. GitHub builds the published site, so a local Jekyll is only for previewing
+a change before pushing it:
 
 ```sh
 gem install --user-install --no-document bundler jekyll jekyll-remote-theme jekyll-relative-links
 ```
 
-The Makefile puts the user gem directory on `PATH` itself, so there is nothing
-to add to your shell profile.
+The Makefile adds the user gem directory to `PATH` itself, so there is nothing to
+change in your shell profile.
 
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-gdb is GPLv3, but gdb-wui only *spawns* it as a separate process and speaks a
-documented protocol to it, so there is no derivative-work obligation. The project
-rule that keeps it that way: **never link libgdb, never embed gdb source, never
+gdb is GPLv3, but gdb-wui only spawns it as a separate process and speaks a
+documented protocol to it, so there is no derivative-work obligation. The rule
+that keeps it that way: **never link libgdb, never embed gdb source, and never
 ship a gdb binary.**

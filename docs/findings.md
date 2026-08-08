@@ -1,10 +1,10 @@
 # gdb findings
 
-Behaviours of GDB and its MI interface that this project had to discover by
-measurement, kept because each one cost real time to establish and several are
-counter-intuitive enough to be rediscovered the hard way. Test comments cite
-them by number — "is finding 3 end to end" — so the numbering is stable and
-new entries are appended rather than inserted.
+Behaviours of GDB and its MI interface that this project established by
+measurement. They are recorded because each took time to work out, and several
+are counter-intuitive enough to be worth rediscovering only once. Test comments
+cite them by number, as in "is finding 3 end to end", so the numbering is stable
+and new entries are appended rather than inserted.
 
 Findings 1-12 were reproduced against gdb 15.1 and re-verified against 17.1.
 Everything from 13 onward was found by a failing test or a bug report while
@@ -80,13 +80,12 @@ implementing:
     options as part of the expression. MI general options come *before* a
     command's positional arguments:
     `-var-create --thread T --frame F r17 * expr`.
-17. **`--all-values` does not stringify char arrays.** On finding that
-    `char name[16]` shows no value under `--simple-values`, the temptation is
-    to switch. It does not help: gdb renders such a child as the literal
-    `"[16]"`, which looks like a value and is not. A `char *` already shows its
-    string under `--simple-values`. The plan's choice stands, and the cost — a
-    string reads as an openable array of chars — is a real limitation rather
-    than an oversight.
+17. **`--all-values` does not stringify char arrays.** `char name[16]` shows no
+    value under `--simple-values`, and switching to `--all-values` does not
+    help: gdb renders such a child as the literal `"[16]"`, which looks like a
+    value but is not. A `char *` already shows its string under
+    `--simple-values`. `--simple-values` is therefore kept, and the cost is that
+    a string reads as an expandable array of chars.
 18. **Varobj children of a pointer are the pointee's fields.** `struct item
     *items` expands straight to `id`/`name`/`weight`; gdb dereferences for you.
     Numeric children appear only for genuine arrays, which is the only place
@@ -145,11 +144,11 @@ implementing:
 
     This matters because `target remote` immediately reads the stub's
     registers, and the register layout is architecture-dependent. Connecting
-    before gdb knows the architecture is the same mistake that killed a Qiling
-    session earlier in this project via a 312-vs-576-byte `g` packet: it fails
-    destructively, not politely. So the ordering rule is real and the UI warns
-    about it — and the trap is specifically that the symbols pane *looks* like
-    it did the job.
+    before gdb knows the architecture is the same mistake that ended a Qiling
+    session earlier in this project, through a 312-versus-576-byte `g` packet;
+    it fails destructively rather than with an error. The UI therefore warns
+    about the ordering. What makes it easy to get wrong is that the symbols pane
+    looks as though loading symbols did the job.
 
 24. **An event must not be broadcast before the snapshot describes it.**
     `serve()` publishes the snapshot only *after* `dispatch()` returns, so a
@@ -158,16 +157,15 @@ implementing:
     that window and being handed `hello` — could be told a program had loaded
     and simultaneously given a snapshot saying none had.
 
-    It reproduced about one run in fifty, which is why it surfaced as a CI
-    flake (`snapshot exePath = ""`) rather than a bug, and why a test asserting
-    from the test goroutine cannot catch it reliably. The deterministic test
-    samples the snapshot *inside* the broadcast, which is the only vantage
-    point where the ordering is observable.
+    It reproduced about one run in fifty, so it appeared as a CI flake
+    (`snapshot exePath = ""`) rather than as a bug, and a test asserting from
+    the test goroutine cannot catch it reliably. The deterministic test samples
+    the snapshot inside the broadcast, which is the only place the ordering is
+    observable.
 
-    Fixed by routing every broadcast through `emit`, which publishes first.
-    The catch is that building a snapshot reads everything the actor owns:
-    routing the terminal pump through it tripped the race detector at once,
-    because that runs on its own goroutine. Hence `emitOffActor` for the two
-    genuinely off-actor events — inferior output and gdb dying — whose payloads
-    carry no session state. A source-level test enforces that nothing calls
-    `Broadcast` directly.
+    The fix routes every broadcast through `emit`, which publishes first.
+    Building a snapshot reads everything the actor owns, so routing the terminal
+    pump through it tripped the race detector immediately, because that runs on
+    its own goroutine. `emitOffActor` exists for the two genuinely off-actor
+    events — inferior output and gdb dying — whose payloads carry no session
+    state. A source-level test checks that nothing calls `Broadcast` directly.

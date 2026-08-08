@@ -7,19 +7,21 @@ rejected as unsupported. A change to one without the other fails the build.
 
 Protocol version: **1**.
 
-## Transports, and why there are two
+## Transports
+
+There are two.
 
 **WebSocket** carries everything stateful: commands, their replies, and pushed
-events. It is one connection per client, which is what makes inferior stdin a
-low-latency ordered byte channel (a POST per keystroke would be a round-trip
-each) and what gives the idle-exit lifecycle a client identity to track.
+events. There is one connection per client. This gives inferior stdin a
+low-latency ordered byte channel, which a POST per keystroke would not, and
+gives the idle-exit lifecycle a client identity to track.
 
-**HTTP GET** carries bulk reads: source text and directory listings. They go
-over HTTP with ETags so that fetching a 2 MB file does not sit in front of
-latency-sensitive stepping traffic and inferior output on the socket.
+**HTTP GET** carries bulk reads: source text and directory listings, with ETags.
+Sending these over HTTP keeps a 2 MB file from queueing ahead of stepping
+traffic and inferior output on the socket.
 
-Both are authenticated by the same session cookie and pass through the same
-authorization gate. See [Security](#security).
+Both use the same session cookie and pass through the same authorization gate.
+See [Security](#security).
 
 ## Envelope
 
@@ -43,14 +45,15 @@ Requests carry a client-chosen `id`, echoed on the response.
 `seq` is server-monotonic across every event on every connection, so a client
 can detect that it missed something and tests can assert ordering.
 
-Two rules that shape the frontend:
+Two rules a client has to be written around:
 
 - **Exec responses are acknowledgements, not completions.** `-exec-continue`
-  returns as soon as gdb accepts it; the stop arrives later as an event. A
-  client that awaits a step and then reads state will read stale state.
-- **An unknown `type` returns an `unsupported` error, never a closed
-  connection.** A newer frontend against an older server degrades; it does not
-  disconnect. The same applies to malformed JSON and unexpected binary frames.
+  returns as soon as gdb accepts the command; the stop arrives later as an
+  event. A client that awaits a step and then reads state will read stale state.
+- **An unknown `type` returns an `unsupported` error rather than closing the
+  connection.** A newer frontend talking to an older server degrades instead of
+  disconnecting. The same applies to malformed JSON and to unexpected binary
+  frames.
 
 ## Requests
 
@@ -111,15 +114,15 @@ Everything below needs a debugger session except the `session.*` group; with
 | `decomp.function` | `{target?, thread?, frame?, stopSeq?}` | [`DecompFunction`](#decompilation) | `target` is a name or any address inside a function; empty follows the selected frame. |
 
 `exec.pause` is the one request that does not queue behind the others. The
-server's actor loop is frequently blocked in a gdb round-trip, and that is
-exactly when a user presses Pause — routing it through the queue would mean the
-button works only when it is not needed. It goes straight to gdb as
-`-exec-interrupt`, which is also why `mi-async on` is in the startup handshake.
+server's actor loop is usually blocked in a gdb round-trip when a user presses
+Pause, so a queued request would arrive only after whatever it was meant to
+interrupt had finished. It goes straight to gdb as `-exec-interrupt`, which is
+also why `mi-async on` is part of the startup handshake.
 
-`exec.kill` is a semantic name, not a passthrough. `-exec-kill` is **not** an
-MI3 command — gdb 17.1 answers `^error,msg="Undefined MI command:
-exec-kill",code="undefined-command"` — so the server implements it with
-`-interpreter-exec console "kill"`.
+`exec.kill` is not a passthrough. `-exec-kill` is not an MI3 command: gdb 17.1
+answers `^error,msg="Undefined MI command:
+exec-kill",code="undefined-command"`. The server implements it with
+`-interpreter-exec console "kill"` instead.
 
 #### ExecAck
 
@@ -127,26 +130,23 @@ exec-kill",code="undefined-command"` — so the server implements it with
 {"runState": "running", "stopSeq": 4}
 ```
 
-An acknowledgement, never a completion. The stop that follows arrives as a
-[`stopped`](#stopped) event.
+This is an acknowledgement rather than a completion. The stop that follows
+arrives as a [`stopped`](#stopped) event.
 
-Every exec request may carry `stopSeq`: the stop the client believed it was
-acting on. If it does not match the server's current stop, the request is
-refused with `busy` rather than applied to state that has moved on. Sending `0`
-(or omitting it) opts out, which is what a toolbar button does. This one
-mechanism covers a double-clicked step, a panel refreshing against a stop that
-has been superseded, and — from M4 — a variable tree built from a frame that no
-longer exists.
+Every exec request may carry `stopSeq`, which is the stop the client believed it
+was acting on. If it does not match the server's current stop, the request is
+refused with `busy` rather than applied to state that has since moved on. Send
+`0`, or omit it, to opt out; that is what a toolbar button does. The same
+mechanism covers a double-clicked step, a panel refreshing against a superseded
+stop, and a variable tree built from a frame that no longer exists.
 
-`bp.setFunction` stayed reserved rather than being implemented alongside
-`bp.setAddress`: that request takes a function name as readily as an address,
-and two requests differing only in which spelling they accept would be one too
-many.
+`bp.setFunction` is reserved rather than implemented, because `bp.setAddress`
+accepts a function name as well as an address.
 
 ### Reserved
 
-These names are fixed now so the frontend and the docs do not have to be renamed
-later. Requesting one today returns `unsupported`.
+These names are reserved so that adding them later does not require renaming
+anything. Requesting one now returns `unsupported`.
 
 `exe.unload` · `exec.until` `exec.return` ·
 `bp.setFunction` `bp.setWatch` `bp.setCondition`
@@ -177,10 +177,10 @@ later. Requesting one today returns `unsupported`.
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
 | `shuttingDown` | The server is going away. | `{}` |
 
-The `hello` event is pushed unconditionally on every connection. This is the
-single decision that makes reconnect, page reload and a second browser tab all
-work without special cases: the server is authoritative, and a client's startup
-path is identical to its recovery path.
+The `hello` event is pushed on every connection, unconditionally. The server is
+authoritative, so a client's startup path and its recovery path are the same
+code, and reconnect, page reload and a second browser tab need no special
+handling.
 
 Unknown events must be ignored by clients, so a newer server can add one.
 
@@ -191,8 +191,8 @@ valid MI rather than discarding them.
 
 ### Hello
 
-The full snapshot. A client repaints entirely from this and asks for nothing
-else, which is what makes a reload indistinguishable from a first load.
+The full snapshot. A client repaints from this alone and needs to ask for
+nothing else, so a reload behaves the same as a first load.
 
 ```jsonc
 {
@@ -218,7 +218,7 @@ and no leading slash. `projectRoot` is the sole exception and is display-only.
 
 ### Stopped
 
-One fat event carrying everything the UI needs to repaint.
+A single event carrying everything the UI needs in order to repaint.
 
 ```jsonc
 {
@@ -235,10 +235,10 @@ One fat event carrying everything the UI needs to repaint.
 }
 ```
 
-Threads, the stack and frame-0 locals are gathered eagerly and sent together
-because fetching them separately costs four or five round-trips per single-step,
-and stepping is the thing users do most. Registers, disassembly and memory are
-deliberately **not** here: those panels pull lazily and pass `stopSeq`.
+Threads, the stack and frame-0 locals are gathered eagerly and sent together,
+because fetching them separately would cost four or five round-trips per
+single-step. Registers, disassembly and memory are not included; those panels
+fetch what they need when they are visible, passing `stopSeq`.
 
 `reason` is passed through verbatim, including values not listed here.
 Recognised: `breakpoint-hit`, `watchpoint-trigger`, `watchpoint-scope`,
@@ -263,11 +263,11 @@ server merges them, so a client sees one `exited` event with both.
 ```
 
 Every part of `source` is optional, and `available` may be false. A stripped
-binary reports `func="??"` with no file at all, so **`address` is the only
-guaranteed frame identity** — a client must render such frames rather than skip
-them. When a path could not be located inside the project (a libc frame, or a
-build-time path that does not exist on this machine) `available` is false and
-`gdbPath` holds what gdb said, so the UI can offer to locate it.
+binary reports `func="??"` with no file at all, so `address` is the only field a
+frame always has, and clients must render such frames rather than skip them.
+When a path could not be located inside the project — a libc frame, or a
+build-time path that does not exist on this machine — `available` is false and
+`gdbPath` holds what gdb reported, so that the UI can offer to locate it.
 
 Arguments come from a second command: `-stack-list-frames` does not return them.
 
@@ -277,9 +277,10 @@ Arguments come from a second command: `-stack-list-frames` does not return them.
 {"name": "cfg", "type": "struct config", "expandable": true}
 ```
 
-`value` is **absent** for aggregates, because the server asks with
-`--simple-values`. That absence *is* the expandable signal, and it is also the
-defence against a 100k-element array: nothing was fetched.
+`value` is absent for aggregates, because the server asks with
+`--simple-values`. That absence is what marks a row expandable, and it is also
+why a 100,000-element array costs nothing until it is opened: none of it was
+fetched.
 
 ### Selection
 
@@ -309,22 +310,23 @@ One row of the variables tree.
 }
 ```
 
-**Clients key on `path`, never on `id`.** The varobj behind a row is deleted and
-recreated on every re-run and on LRU eviction; the path survives that, so the
-user's expansion state survives stepping — which is exactly when they care.
+Clients must key on `path`, not on `id`. The varobj behind a row is deleted and
+recreated on every re-run and on LRU eviction, whereas the path survives, so the
+user's expansion state survives stepping.
 
-**`expandable` comes from the absence of `value`,** not from a type guess. The
-server asks gdb with `--simple-values`, which omits the value for aggregates
-precisely so a 100k-element array costs nothing until somebody opens it. The
-same rule makes `vars.locals` free: it creates no varobjs at all, and one is
-created only when a row is expanded.
+`expandable` comes from the absence of `value` rather than from a type guess.
+The server asks gdb with `--simple-values`, which omits the value for
+aggregates, so a 100,000-element array costs nothing until it is opened. For the
+same reason `vars.locals` creates no varobjs at all; one is created when a row
+is expanded.
 
 `optimizedOut` is derived from `value == "<optimized out>"`. At `-O2` this is
-normal, not an error, and should be rendered as what it is rather than hidden.
+normal rather than an error, and should be shown as what it is.
 
-Expansion pages 200 children at a time; `hasMore` says there are more, and
-`numChild` is the total, so a UI can say "200 of 4096". `char buf[1<<20]` is a
-real declaration and fetching it whole would be a 40 MB message.
+Expansion pages 200 children at a time. `hasMore` says whether there are more
+and `numChild` is the total, so a client can show "200 of 4096". `char
+buf[1<<20]` is a real declaration, and fetching it whole would be a 40 MB
+message.
 
 ### Watches
 
@@ -332,11 +334,10 @@ real declaration and fetching it whole would be a 40 MB message.
 {"stopSeq": 4, "watches": [ /* VarNode, path "watch:1" */ ]}
 ```
 
-Watches are **floating** varobjs, created with `@`, so they follow the current
-frame rather than being pinned to whichever one was selected when the
-expression was typed. The expressions are kept independently of the varobjs
-behind them: a re-run deletes every varobj, and the watches are recreated at the
-next stop, so the panel survives.
+Watches are floating varobjs, created with `@`, so they follow the current frame
+rather than staying pinned to the frame that was selected when the expression
+was typed. The expressions are stored independently of the varobjs behind them:
+a re-run deletes every varobj, and the watches are recreated at the next stop.
 
 ### Registers
 
@@ -344,51 +345,51 @@ next stop, so the panel survives.
 {"number": 0, "name": "rax", "value": "0x1", "changed": true}
 ```
 
-**Registers are identified by number, never by name.** gdb's name list contains
+Registers are identified by number rather than by name. gdb's name list contains
 empty strings at stable indices, so position in the list is the only reliable
-identity and `regs.names` preserves the blanks. `changed` comes from gdb's own
-`-data-list-changed-registers` rather than a diff computed here.
+identity, and `regs.names` preserves the blanks. `changed` comes from gdb's
+`-data-list-changed-registers` rather than from a diff computed here.
 
 ### The console
 
-`console.exec` runs a line as if typed at gdb's prompt. It is the escape hatch
-that keeps the semantic command set honest: anything the UI does not model, gdb
-still can. It is allowed while the program runs, because refusing it would
-remove the only way out of a state the UI has no button for.
+`console.exec` runs a line as if it had been typed at gdb's prompt, so anything
+the UI does not model can still be done. It is allowed while the program runs,
+because refusing it would leave no way out of a state the UI has no button
+for.
 
-The cost is that a typed command can change anything — `b main.c:12`, `next`
-and `thread 2` are all ordinary things to type — so the server **resyncs**
-afterwards and reports what it re-read in `resynced`. Without that the
-breakpoint mirror and the selection would drift quietly out of true.
+A typed command can change anything: `b main.c:12`, `next` and `thread 2` are
+all ordinary things to type. The server therefore resyncs afterwards and reports
+what it re-read in `resynced`, so that the breakpoint mirror and the selection
+do not drift.
 
-A gdb error (a typo, an unknown command) arrives as a `console` event and the
-request still succeeds. Mistyping at a console is normal and should not raise a
-dialog.
+A gdb error, such as a typo or an unknown command, arrives as a `console` event
+and the request still succeeds, because mistyping at a console is normal and
+should not raise a dialog.
 
-`console.complete` forwards to gdb's `-complete`, so the frontend carries no
-command table and cannot drift from the debugger it is driving — including
-commands added by a user's Python extensions.
+`console.complete` forwards to gdb's `-complete`. The frontend therefore carries
+no command table of its own and cannot drift from the debugger it is driving,
+including commands added by a user's Python extensions.
 
 ### The inferior's terminal
 
-The debuggee gets its own pty, set with `-inferior-tty-set` before the first
-run. That buys three things a pipe cannot: the program can be typed into, its
-output is separated from gdb's rather than interleaved into the MI stream as
-unparseable lines, and libc line-buffers instead of block-buffering — so a
-prompt written without a trailing newline actually appears.
+The program being debugged gets its own pty, set with `-inferior-tty-set` before
+the first run. This gives three things a pipe does not: the program can be typed
+into, its output is separated from gdb's rather than interleaved into the MI
+stream as unparseable lines, and libc line-buffers rather than block-buffers, so
+a prompt written without a trailing newline appears.
 
-`inferiorOutput` and `inferior.stdin` carry **base64**, because the bytes are
-arbitrary: a debuggee may emit invalid UTF-8 or raw control sequences, and JSON
-strings cannot hold those losslessly.
+`inferiorOutput` and `inferior.stdin` carry base64, because the bytes are
+arbitrary. A program may emit invalid UTF-8 or raw control sequences, and JSON
+strings cannot carry those losslessly.
 
-Send `\r` for Enter — that is what a terminal sends, and the line discipline
-turns it into a newline. Echo is on, so typed characters come back as output
-and the UI does not have to render local echo itself.
+Send `\r` for Enter, which is what a terminal sends; the line discipline turns it
+into a newline. Echo is on, so typed characters come back as output and the
+client does not have to render local echo itself.
 
-`inferior.stdin` and `inferior.resize` bypass the command queue. The server's
-actor loop is frequently blocked in a gdb round-trip, and a keystroke that
-waits for it is a keystroke the user experiences as a hang; neither touches
-session state, so there is nothing to serialise.
+`inferior.stdin` and `inferior.resize` bypass the command queue. The actor loop
+is often blocked in a gdb round-trip, and a keystroke that waits for it appears
+to the user as a hang. Neither request touches session state, so there is
+nothing to serialise.
 
 ### Threads
 
@@ -423,27 +424,26 @@ one query gdb still answers, and it reports `state: "running"` with no frame.
 }
 ```
 
-`-data-disassemble` returns two different shapes and both are handled: a flat
+`-data-disassemble` returns two different shapes, and both are handled: a flat
 list, and instructions grouped under `src_and_asm_line` when gdb can attribute
-them to source. Which arrives is not a choice the caller makes — the server
-always asks for mode 5, and gdb groups only if there is debug info. **A stripped
-binary yields the flat form, and `hasSource` is false.** That is not a
-degraded path to be tolerated; it is the case instruction-level debugging exists
-for, and a client must render those instructions with no line and no file.
+them to source. The caller does not choose between them. The server always asks
+for mode 5, and gdb groups the output only when there is debug info, so a
+stripped binary yields the flat form with `hasSource` false. Clients must render
+those instructions with no line and no file.
 
-`disasm.function` uses gdb's `-a` option, which asks for "the function
-containing this address". It is capability-gated on the
-`data-disassemble-a-option` feature and falls back to a window around the PC —
-64 bytes back, 256 forward. Backwards is a guess, because x86 instructions are
-variable-length and there is no way to know where the previous one began; gdb
-resynchronises quickly in practice.
+`disasm.function` uses gdb's `-a` option, which asks for the function containing
+an address. It is capability-gated on the `data-disassemble-a-option` feature,
+and falls back to a window around the program counter of 64 bytes back and 256
+forward. The backward part is a guess, because x86 instructions are
+variable-length and there is no way to know where the previous one began; in
+practice gdb resynchronises quickly.
 
 Replies are capped at 4000 instructions with `truncated` set.
 
-**Stopping a stripped binary** needs `exec.run {stopAtEntry: true}`, which runs
-gdb's `starti`. `stopAtMain` cannot work: `--start` sets a temporary breakpoint
-on `main`, and a stripped binary has no such symbol, so the program runs to
-completion instead. Without `starti` there is no way to stop it at all.
+To stop a stripped binary, use `exec.run {stopAtEntry: true}`, which runs gdb's
+`starti`. `stopAtMain` does not work on one: `--start` sets a temporary
+breakpoint on `main`, a stripped binary has no such symbol, and the program runs
+to completion instead.
 
 ### Memory
 
@@ -461,26 +461,23 @@ completion instead. Without `starti` there is no way to stop it at all.
 }
 ```
 
-`address` is **any gdb expression** — `&cfg`, `$sp`, `buf+16` — resolved
-server-side, because that is what a user has in their head rather than a hex
-number they would have to look up first. A plain address is parsed locally, so
-paging through a region already on screen costs no extra round-trip. `offset`
-shifts a read without re-evaluating the expression.
+`address` accepts any gdb expression, such as `&cfg`, `$sp` or `buf+16`, and is
+resolved on the server. A plain address is parsed locally, so paging through a
+region already on screen costs no extra round-trip. `offset` shifts a read
+without re-evaluating the expression.
 
-**Ranges, not one buffer.** A region can be partly unmapped, and the gap has to
-be visible: the viewer renders bytes it does not have as `??` rather than as
-zeros, which would look exactly like data.
+The reply is a list of ranges rather than one buffer, because a region can be
+partly unmapped and the gap has to be visible. The viewer renders bytes it does
+not have as `??` rather than as zeros, which would look like data.
 
-`unreadable` is an ordinary answer, not an error. gdb fails the *whole* read
-when any of the range is unmapped — verified against 17.1 — so a viewer must
-read in chunks and mark the failing ones, which is what pointing a hex viewer at
-an unmapped page is for in the first place.
+`unreadable` is an ordinary answer rather than an error. gdb fails the whole read
+when any part of the range is unmapped, verified against 17.1, so a viewer has
+to read in chunks and mark the ones that fail.
 
-The viewer computes rows rather than storing them: row N is `base + N*16`. That
-is what makes a gigabyte-wide region free — only the bytes for visible rows are
-ever fetched, into a sparse cache of 4 KiB chunks with an LRU bound. The cache
-is dropped on every stop, because memory is precisely the thing that changes
-while a program runs.
+The viewer computes rows rather than storing them: row N is `base + N*16`. Only
+the bytes for visible rows are fetched, into a sparse cache of 4 KiB chunks with
+an LRU bound, so a region gigabytes wide costs nothing. The cache is dropped at
+every stop, because memory is what changes while a program runs.
 
 ### Symbolising addresses
 
@@ -491,24 +488,24 @@ while a program runs.
 {"symbols": [{"addr": "0x5555555551f9", "name": "inspect+16"}]}
 ```
 
-An address in no symbol is **omitted** rather than returned empty, which is the
-ordinary case for the stack and the heap; an empty reply is therefore a
-meaningful answer, not a failure.
+An address in no symbol is omitted rather than returned empty, which is the
+ordinary case for the stack and the heap. An empty reply is therefore a
+meaningful answer rather than a failure.
 
-It is implemented by evaluating `(void*)ADDR`, because gdb annotates a pointer
-with its symbol when it prints one — `0x5555555551f9 <inspect+16>`. That needs
-no console command, and it is the only answer that stays correct across
-relocation and across shared libraries, each of which has its own load bias.
-A table built from `-symbol-info-*` would not: those addresses are link-time.
+This is implemented by evaluating `(void*)ADDR`, because gdb annotates a pointer
+with its symbol when it prints one: `0x5555555551f9 <inspect+16>`. That needs no
+console command, and it stays correct across relocation and across shared
+libraries, each of which has its own load bias. A table built from
+`-symbol-info-*` would not, because those addresses are link-time.
 
 The client sends the addresses it is showing rather than a range. The memory
-view is virtual over a 4 KiB chunk, and symbolising a whole chunk would be 256
-lookups for a screenful of forty.
+view is virtual over a 4 KiB chunk, so symbolising a whole chunk would mean 256
+lookups for a screenful of forty rows.
 
-`eval.expr`'s `addr` is what lets a client offer to follow a value: it is set
-whenever the value is address-shaped, including for a register. It is *not* a
-claim that the value is a pointer — an `int` holding 3 yields `addr: 3` — so a
-client wanting to follow it should ignore anything below one page, which is
+`eval.expr`'s `addr` is what lets a client offer to follow a value. It is set
+whenever the value is address-shaped, including for a register, and is not a
+claim that the value is a pointer: an `int` holding 3 yields `addr: 3`. A client
+that offers to follow a value should ignore anything below one page, which is
 never mapped.
 
 ### Source paths
@@ -526,33 +523,32 @@ A program built anywhere but this machine records paths that do not exist
 locally. Resolution tries, in order: the path as reported; then the project's
 basename index, matched by **longest trailing path-component count**.
 
-Basename alone is not enough. Any real project has several files called
-`util.c`, and picking the wrong one shows the wrong code with line numbers that
-look right — worse than showing nothing, because nothing is obviously nothing.
-**A tie is therefore a refusal**, and the unresolved [`SourceRef`](#frame)
-carries `candidates` so the UI can ask.
+Matching on the basename alone is not enough, because most projects have several
+files called `util.c` and picking the wrong one shows the wrong code with line
+numbers that look plausible. A tie is therefore treated as a refusal, and the
+unresolved [`SourceRef`](#frame) carries `candidates` so that the UI can ask.
 
-On a clear match the server tells gdb the *prefix* with `substitute-path`, once
-per mapping. That fixes every later frame in that tree at the source, plus
-`list`, `info line` and anything typed at the console. Rewriting paths per file
-in the UI is a losing game: gdb keeps reporting the originals.
+On a clear match the server gives gdb the prefix with `substitute-path`, once per
+mapping. That fixes every later frame in the same tree, and also `list`,
+`info line` and anything typed at the console. Rewriting paths per file in the
+UI would not, because gdb goes on reporting the originals.
 
 `path.substitute` accepts either two prefixes or the pair of files that should
-match — the "locate this file" affordance knows the files, not the prefixes, so
-the server derives them.
+match. The "locate this file" affordance knows the files rather than the
+prefixes, so the server derives them.
 
 `SourceRef.stale` is set when the source is newer than the binary. The code
-shown is real; the line numbers are what have drifted, and saying so beats
-letting someone chase the discrepancy.
+shown is real and the line numbers are what have drifted, so saying so is more
+useful than leaving the reader to work it out.
 
 ### Restarting gdb
 
-`session.restart` is refused while gdb is healthy and is the only request that
-works when it is dead. Restarting is **never automatic**: gdb dying means
-something went wrong — a crash, an OOM kill, an external `kill -9` — and
-silently starting another would hide that while discarding the user's state. The
-program is re-loaded and breakpoints re-created from the mirror, because those
-are the user's work; run state is not, because it cannot be.
+`session.restart` is refused while gdb is healthy, and is the only request that
+works when it is dead. Restarting is never automatic: gdb dying means something
+went wrong — a crash, an OOM kill, an external `kill -9` — and starting another
+silently would hide that. The program is re-loaded and breakpoints are recreated
+from the mirror, because those are the user's work. Run state is not restored,
+because it cannot be.
 
 ### Breakpoints
 
@@ -572,19 +568,19 @@ are the user's work; run state is not, because it cannot be.
 
 `bp.list`, `bp.delete` and `bp.setEnabled` return `{"breakpoints": [...]}`.
 
-Breakpoint state is **event-driven**: `-break-insert -f` can return
-`addr="<PENDING>"` and the real address arrives later in a
-`=breakpoint-modified`. A client must not assume the creation reply is final.
+Breakpoint state is event-driven. `-break-insert -f` can return
+`addr="<PENDING>"`, with the real address arriving later in a
+`=breakpoint-modified`, so a client must not treat the creation reply as final.
 
 The mirror hides temporary breakpoints the server did not create. `-exec-run
---start` injects one at `main`, and a marker the user cannot delete because they
-never made it is worse than no marker.
+--start` injects one at `main`, and showing it would give the user a marker they
+cannot delete.
 
 ### Decompilation
 
-Recovered C beside a live session, for a binary with no source. The producer is
-Ghidra, supervised as a separate process exactly as gdb is — no linking,
-nothing vendored. The feature is optional: with no `-ghidra` and no
+Recovered C shown beside a live session, for a binary with no source. Ghidra
+produces it, supervised as a separate process in the same way gdb is: nothing is
+linked and nothing is vendored. The feature is optional. With no `-ghidra` and no
 `GHIDRA_INSTALL_DIR`, `decomp.status` reports `off` and nothing else changes.
 
 `decomp.status`:
@@ -598,15 +594,15 @@ nothing vendored. The feature is optional: with no `-ghidra` and no
                "pointerSize": 8 } }
 ```
 
-`state` is `off`, `starting`, `ready` or `failed`. `starting` is a state a
-client genuinely observes: opening an existing project is seconds, importing
-and analysing a binary is minutes.
+`state` is `off`, `starting`, `ready` or `failed`. Clients do observe `starting`:
+opening an existing project takes seconds, and importing and analysing a binary
+takes minutes.
 
 `mismatch` is set when the decompiler's program is not the binary gdb loaded,
-compared by sha256. A warning rather than a refusal — a stripped and an
-unstripped link of one program share every address, so the decompilation is
-often still correct — but reading one build while debugging another is a
-confidently wrong answer and has to be visible.
+compared by sha256. This is a warning rather than a refusal, because a stripped
+and an unstripped link of the same program share every address and the
+decompilation is often still correct. It has to be visible, because reading one
+build while debugging another produces answers that look right.
 
 `decomp.function` returns the recovered text with a line map:
 
@@ -620,90 +616,89 @@ confidently wrong answer and has to be visible.
   "bias": 0, "biasFrom": "main", "pcLine": 28 }
 ```
 
-**`addrs` is a set, not a range.** A decompiled line's addresses are routinely
-disjoint and consecutive lines interleave — a loop's init, increment and test
+`addrs` is a set rather than a range. A decompiled line's addresses are often
+disjoint, and consecutive lines interleave — a loop's init, increment and test
 sit either side of its body — so a min/max range would claim instructions
-belonging to a different line.
+belonging to another line.
 
-**Every address has `bias` already applied**, so it is directly comparable with
-`stopped`, the disassembly and everything else on the wire. `biasFrom` names
-the symbol the bias was established from, by resolving it through gdb and
-subtracting Ghidra's address for it. Image bases are *not* used for this: that
-arithmetic is right for a non-PIE and silently wrong for everything else. An
-empty `biasFrom` means no shared symbol was found — the ordinary case for a
-stripped image, where Ghidra's names are `FUN_<address>` and gdb has never
-heard of them — and then `bias` is zero and the addresses are link-time, which
-a client must say rather than imply otherwise.
+Every address has `bias` already applied, so it can be compared directly with
+`stopped`, the disassembly and everything else on the wire. `biasFrom` names the
+symbol the bias was established from, by resolving that symbol through gdb and
+subtracting Ghidra's address for it. Image bases are not used, because that
+arithmetic is correct for a non-PIE and wrong for everything else. An empty
+`biasFrom` means no shared symbol was found, which is the ordinary case for a
+stripped image where Ghidra's names are `FUN_<address>`. In that case `bias` is
+zero and the addresses are link-time, which a client should state rather than
+leave implied.
 
-`pcLine` is the line the program counter is on, resolved server-side so every
-client does not reimplement two rules that are not obvious.
+`pcLine` is the line the program counter is on, resolved on the server so that
+clients do not each have to implement the two rules below.
 
-The tie-break: on optimised code about one address in five is claimed by two
+The tie-break: in optimised code about one address in five is claimed by two
 lines, and the answer is the lowest line number that claims it.
-`pcLineAmbiguous` reports when that happened, because it is the same
-imprecision as stepping `-O2` code with DWARF and hiding it would be a lie.
+`pcLineAmbiguous` reports when that happened. It is the same imprecision as
+stepping `-O2` code with DWARF.
 
-The fallback: plenty of addresses are claimed by *no* line. Prologues, register
-spills and epilogues belong to no expression, and stepping lands on them
-constantly — on a hello-world, stepping off a function's last statement lands
-on `0x1248` when the nearest mapped addresses are `0x1243` and `0x124d`.
-Reporting "no line" there is accurate and useless: it makes the marker blink
-out mid-step. The nearest *preceding* line is used instead and flagged
-`pcLineApprox`, which a client draws differently — "the program is here" and
-"the program is somewhere after here" are different claims.
+The fallback: many addresses are claimed by no line at all. Prologues, register
+spills and epilogues belong to no expression, and stepping lands on them often —
+on a hello-world, stepping off a function's last statement lands on `0x1248`
+when the nearest mapped addresses are `0x1243` and `0x124d`. Reporting "no line"
+there is accurate but makes the marker disappear mid-step, so the nearest
+preceding line is used instead and flagged `pcLineApprox`. A client should draw
+that differently, because "the program is here" and "the program is somewhere
+after here" are different claims.
 
-`decompLog` is **not** behind a flag, unlike the raw MI stream. Its volume is
-one line per human-paced operation — start, import, ready, one per decompile —
-and the alternative is a pane that says "starting" for a minute with no way to
-tell whether anything is happening or why it failed. Ghidra's own output is
-filtered on the way through: its `REPORT:` milestones and its complaints go to
-the browser, while the JVM banner, every analyzer's timing and the log4j noise
-stay in the server's log where `-v` can find them.
+`decompLog` is not behind a flag, unlike the raw MI stream, because its volume
+is one line per operation — start, import, ready, and one per decompile.
+Without it, a pane that says "starting" for a minute gives no way to tell
+whether anything is happening. Ghidra's own output is filtered on the way
+through: its `REPORT:` milestones and its complaints go to the browser, while
+the JVM banner, each analyzer's timing and the log4j noise stay in the server's
+log, where `-v` finds them.
 
-`level` is `info`, `warn` or `error`. `millis` times an operation that
-finished, and is a separate field rather than part of `text` so a client can
-render durations consistently instead of parsing them back out.
+`level` is `info`, `warn` or `error`. `millis` is the duration of an operation
+that finished. It is a separate field rather than part of `text` so that a
+client can format durations itself.
 
-`expr` uses gdb's type vocabulary, not Ghidra's. `undefined4`, `uint` and the
-name of a struct Ghidra invented all fail to parse — measured, `p *(config *
-*)($rbp - 0x58)` answers `No symbol "config" in current context` — so a pointer
-to something unnameable becomes `void *` and anything else unnameable becomes
-an unsigned integer of the right width. Both lose the type; neither loses the
+`expr` uses gdb's type vocabulary rather than Ghidra's. `undefined4`, `uint` and
+the name of a struct Ghidra invented all fail to parse: measured, `p *(config *
+*)($rbp - 0x58)` answers `No symbol "config" in current context`. A pointer to
+something unnameable therefore becomes `void *`, and anything else unnameable
+becomes an unsigned integer of the right width. Both lose the type and keep the
 value.
 
-`storage` is `stack`, `register` or `none`, and the three are not
-interchangeable. `stack` is readable anywhere in the frame. `register` is
-readable only near `pc` — in optimised code the decompiler packs many variables
-into one register, so a value read elsewhere is confidently wrong. `none` is a
-decompiler temporary that exists nowhere in the machine and can never show a
-value; it is reported rather than omitted, because a blank row is honest and a
-missing one is not.
+`storage` is `stack`, `register` or `none`, and the three behave differently.
+`stack` is readable anywhere in the frame. `register` is readable only near
+`pc`, because in optimised code the decompiler packs several variables into one
+register, so a value read elsewhere will be wrong. `none` is a decompiler
+temporary that exists nowhere in the machine and can never show a value; it is
+reported rather than omitted, so that the row is visibly blank rather than
+missing.
 
-`expr` is a gdb expression, formed from Ghidra's frame base — the stack pointer
-at function entry — using a per-ABI rule established by measurement:
-`$rbp + pointerSize` on x86-64 with a frame pointer, `$sp + frame.size` on
+`expr` is a gdb expression formed from Ghidra's frame base, which is the stack
+pointer at function entry, using a per-ABI rule established by measurement:
+`$rbp + pointerSize` on x86-64 with a frame pointer, and `$sp + frame.size` on
 MIPS64. An architecture with no established rule gets no expression rather than
 a guess. See [docs/decompilation.md](decompilation.md).
 
-`bp.setAddress` passes a name to gdb verbatim and only wraps a bare address in
-`*`. The difference is not cosmetic: gdb skips the prologue for a named
-function — `break process_packet` on a MIPS firmware stops at entry+24, past
-the register spills — and `*name` would defeat that and stop on the first
-instruction instead, which is not where anyone means.
+`bp.setAddress` passes a name to gdb verbatim, and wraps only a bare address in
+`*`. This matters because gdb skips the prologue for a named function — `break
+process_packet` on a MIPS firmware stops at entry+24, past the register spills —
+and `*name` would defeat that and stop on the first instruction instead.
 
-`exec.stepLine` exists because gdb's `next` and `step` need a line table. With
-none, gdb's step range is the whole function, so "step over" in a binary
-without debug info runs to the function's exit — measured on a
-symbols-but-no-DWARF build, `break main` then `next` lands at `0x7ffff7c2a601`,
-inside libc, having returned out of `main` altogether.
+`exec.stepLine` exists because gdb's `next` and `step` need a line table.
+Without one, gdb's step range is the whole function, so stepping over in a
+binary with no debug info runs to the function's exit. Measured on a
+symbols-but-no-DWARF build: `break main` then `next` lands at `0x7ffff7c2a601`,
+inside libc, having returned out of `main`.
 
-It does what gdb does internally when it *does* have a line table: single-step
-until the pc reaches a different line. Only the source of the map differs —
-Ghidra's instead of DWARF's.
+It does what gdb does internally when it has a line table — single-step until
+the pc reaches a different line — using Ghidra's map instead of DWARF's.
 
-The rule is "a different line", and it has to be, rather than anything simpler.
-A line's address set is **sparse** — the addresses its tokens carry, not every
-instruction between them — so stepping until the pc leaves the set ends at the
+The rule is "until the pc resolves to a different line", and simpler rules do not
+work. A line's address set is sparse — it holds the addresses its tokens carry,
+not every instruction between them — so stepping until the pc leaves the set
+ends at the
 first unlisted instruction, usually the second one. A line's *span* is no good
 either: a loop header's addresses wrap around the body, so its span covers the
 whole loop and stepping out of it would step out of the loop. Resolving "which
@@ -711,16 +706,15 @@ line" reuses the pc marker's rule, fallback included, so an instruction between
 a line's tokens maps back to that line and the walk continues.
 
 The client sends the whole map because it already holds it, which saves the
-server decompiling the function again on every step — a few kilobytes at human
-stepping speeds.
+server decompiling the function again on every step. At stepping speeds this is
+a few kilobytes.
 
-The intermediate stops are not broadcast. Ten instructions inside one
-decompiled line are one step, and emitting ten `stopped` events would repaint
-the stack, the locals and the registers ten times. The walk also ends on
-anything that is not `end-stepping-range` — a breakpoint, a signal — and on
-leaving the frame it started in, so a step over the last statement of a
-function stops on return rather than following the caller's addresses by
-coincidence.
+The intermediate stops are not broadcast. Ten instructions inside one decompiled
+line are one step, and emitting ten `stopped` events would repaint the stack,
+the locals and the registers ten times. The walk also ends on any stop that is
+not `end-stepping-range`, such as a breakpoint or a signal, and on leaving the
+frame it started in, so stepping over the last statement of a function stops on
+return rather than continuing into the caller's addresses.
 
 ## Errors
 
@@ -741,11 +735,12 @@ parsed.
 | `too_large` | A hard cap was exceeded. |
 | `internal` | A server bug. |
 
-`busy` deserves a note: gdb rejects most commands while the inferior runs, with
-messages like `Selected thread is running.` The server gates those requests and
-returns `busy` immediately rather than forwarding them, which turns an
-undocumented gdb behaviour into a contract. Allowed while running: `exec.pause`,
-`exec.kill`, `inferior.*`, `console.exec`, `session.*`.
+`busy` needs a note. gdb rejects most commands while the program runs, with
+messages such as `Selected thread is running.` The server gates those requests
+and returns `busy` immediately rather than forwarding them, which turns an
+undocumented gdb behaviour into a documented one. The requests allowed while
+running are `exec.pause`, `exec.kill`, `inferior.*`, `console.exec` and
+`session.*`.
 
 ## HTTP endpoints
 
@@ -754,8 +749,8 @@ Both require the session cookie and both are subject to the checks in
 
 ### `GET /api/tree?path=<root-relative>`
 
-Lists one directory level. One level, not a recursive walk: on a large
-repository a full walk is slow to produce, large to send, and mostly unread.
+Lists one directory level rather than walking recursively. On a large repository
+a full walk is slow to produce, large to send, and mostly unread.
 
 ```jsonc
 {
@@ -769,13 +764,12 @@ repository a full walk is slow to produce, large to send, and mostly unread.
 }
 ```
 
-Directories sort first, then by name. `.git` and `node_modules` are skipped.
-Listings are capped at 5000 entries and set `truncated` when they hit it —
-surfaced rather than silently dropped, because a directory that quietly lists
-5000 of its 9000 files is worse than one that admits it.
+Directories sort first, then entries sort by name. `.git` and `node_modules` are
+skipped. Listings are capped at 5000 entries and set `truncated` when the cap is
+reached, so that a directory listing 5000 of its 9000 files says so.
 
-A symlink is reported as a link rather than followed or hidden. Opening one that
-resolves inside the root works; one that escapes is refused.
+A symlink is reported as a link rather than being followed or hidden. Opening
+one that resolves inside the root works; one that escapes it is refused.
 
 ### `GET /api/file?path=<root-relative>`
 
@@ -791,17 +785,17 @@ Conditional requests with `If-None-Match` return `304`.
 | Over 2 MiB | 413 | `too_large` |
 | Contains NUL bytes | 415 | `bad_request` |
 
-The NUL sniff exists so the UI can offer a hex viewer rather than render an ELF
-file as text.
+The NUL check exists so that the UI can offer a hex viewer rather than render an
+ELF file as text.
 
 ## Security
 
-gdb-wui runs arbitrary binaries with the user's full privileges — that is what a
-debugger is. Sandboxing the debuggee is not a goal. In scope: other local users
-and processes reaching the port, hostile web pages the user visits, and path
-traversal.
+gdb-wui runs arbitrary binaries with the user's full privileges, which is what a
+debugger does. Sandboxing the program being debugged is not a goal. What is in
+scope: other local users and processes reaching the port, hostile web pages the
+user visits, and path traversal.
 
-Binding `127.0.0.1` is **not** sufficient on its own. Any page in the user's
+Binding to `127.0.0.1` is not sufficient on its own. Any page in the user's
 browser can `fetch` a loopback URL, and for this service a successful
 cross-origin request means arbitrary code execution.
 
@@ -820,16 +814,16 @@ server records its address and a *mint secret* in a run file under
 secret in an `X-Gdb-Wui-Mint` header issues a fresh token, invalidating the
 previous one. `gdb-wui -print-url` is the client for it.
 
-The file permission *is* the authentication, and that is sufficient here: only
-the same uid can read it, and the same uid is already fully trusted — it can run
-anything as the user, which is what gdb-wui does for a living. What the scheme
-protects against is the case the threat model actually names: another local user
-or an unprivileged process reaching the loopback port. The session cookie is
-deliberately **not** accepted here, so a compromised browser tab cannot mint
-fresh credentials for itself.
+The file permission is the authentication. That is sufficient here because only
+the same uid can read the file, and the same uid is already fully trusted: it
+can run anything as the user, which is what gdb-wui does anyway. What the scheme
+protects against is the case in the threat model — another local user or an
+unprivileged process reaching the loopback port. The session cookie is not
+accepted on this route, so a compromised browser tab cannot mint fresh
+credentials for itself.
 
 **One gate, applied to every route including the WebSocket upgrade.**
-Authorization runs *before* `websocket.Accept`, because Accept writes the 101
+Authorization runs before `websocket.Accept`, because Accept writes the 101
 response and it cannot be retracted afterwards.
 
 **Anti-rebinding, three independent layers:**
@@ -872,53 +866,54 @@ case-insensitive substring match on the name, `kind` is `function` or
 }
 ```
 
-Two populations share the list and they are not interchangeable:
+The list holds two kinds of symbol, which behave differently:
 
-- **`debug: true`** — from DWARF. Carries `gdbPath` and `line`, and `file` as
-  well when the source resolves inside the project. This is the only kind that
-  can be jumped to in the source view.
+- **`debug: true`** — from DWARF. Carries `gdbPath` and `line`, and also `file`
+  when the source resolves inside the project. Only these can be jumped to in
+  the source view.
 - **`debug` absent** — from the ELF symbol table. Carries only `address`. gdb
-  knows where such a symbol is but not what it is, so it cannot be evaluated,
-  only located. A function goes to the disassembly; a variable goes to the
-  memory viewer, because disassembling data produces plausible nonsense.
+  knows where such a symbol is but not what it is, so it can be located but not
+  evaluated. A function goes to the disassembly, and a variable goes to the
+  memory viewer, because disassembling data produces output that looks like
+  code.
 
 `mem.read` and `disasm.function` both accept a symbol name where they accept
 an address. Resolution tries the expression, then `&(expression)` — a typeless
 symbol fails the first (`'LogType' has unknown type; cast it to its declared
 type`) and succeeds at the second.
 
-The split between the two comes from gdb itself: the server issues
-`-symbol-info-functions` and `-symbol-info-variables`, each with
-`--include-nondebug`, and gdb sorts ELF symbols into the code and data lists
-for us. That is where `kind` comes from for a stripped binary, which has no
-debug info to ask.
+gdb makes the split. The server issues `-symbol-info-functions` and
+`-symbol-info-variables`, each with `--include-nondebug`, and gdb sorts ELF
+symbols into the code and data lists. That is where `kind` comes from for a
+stripped binary, which has no debug info to consult.
 
 `matched` counts what the filter selected before `limit` was applied, and
-`available` is the whole table, so a client can render "200 of 4096" rather
-than presenting a truncated list as the complete answer.
+`available` is the size of the whole table, so a client can show "200 of 4096"
+rather than presenting a truncated list as a complete one.
 
 Addresses are trimmed of the zero padding gdb applies
 (`0x0000000000001060` → `0x1060`) to match every other panel.
 
 The cache is dropped, and `symbolsInvalidated` emitted, when a program is
 loaded, when gdb is restarted, when a shared library is loaded or unloaded, and
-when a console command that changes symbols is typed — `file`, `symbol-file`, `add-symbol-file`, `core-file`, `load`,
-`remove-symbol-file`. That last case is not an afterthought: the remote-target
-workflow loads symbols by typing `file …`, never through `exe.load`.
+when a console command that changes symbols is typed: `file`, `symbol-file`,
+`add-symbol-file`, `core-file`, `load` or `remove-symbol-file`. The last case
+matters, because the remote-target workflow loads symbols by typing `file …`
+rather than through `exe.load`.
 
 `=library-loaded` arrives dozens of times per run, so it only marks the cache
-stale; the single `symbolsInvalidated` goes out just before the `stopped` event
-that ends the run. By the time a client knows the program has stopped, the
-symbol table it is about to query is already the new one.
+stale. The single `symbolsInvalidated` is sent just before the `stopped` event
+that ends the run, so by the time a client knows the program has stopped, the
+symbol table it is about to query is the new one.
 
 ### Loading symbols without a program
 
-`exe.load` issues `-file-exec-and-symbols`, which says two things at once:
-these are the symbols, *and* this is the program to run. They only coincide
-when gdb starts the program itself. Against a stub that cannot load an ELF, or
-a process someone else started, the code is already in the target's memory and
-only the first is true — and declaring an exec file leaves the UI offering to
-Run a second, local copy.
+`exe.load` issues `-file-exec-and-symbols`, which says two things at once: these
+are the symbols, and this is the program to run. Those coincide only when gdb
+starts the program itself. Against a stub that cannot load an ELF, or a process
+someone else started, the code is already in the target's memory and only the
+first is true; declaring an exec file would also leave the UI offering to run a
+second, local copy.
 
 `symbols.load` says only the first:
 
@@ -927,48 +922,47 @@ Run a second, local copy.
 | `replace` (default) | `-file-symbol-file <path>` | an image that runs where it was linked |
 | `add` | `add-symbol-file <path> [-o <offset>]` | an image that does not — the usual bare-metal case |
 
-`offset` is a string, not a number: a 64-bit address does not survive JSON's
-float64, and `"0x8000"` is how people write one. It is only meaningful with
-`add`, because `symbol-file` has nowhere to put one. `add-symbol-file` has no
-MI form, so it goes through `-interpreter-exec console`, the same route
-`starti` takes.
+`offset` is a string rather than a number, because a 64-bit address does not
+survive JSON's float64 and `"0x8000"` is how such an offset is normally
+written. It is meaningful only with `add`, since `symbol-file` has nowhere to
+put one. `add-symbol-file` has no MI form, so it goes through
+`-interpreter-exec console`, the same route as `starti`.
 
-`path` is root-relative and checked exactly like `exe.load`'s: through the
-project root, and it must start with the ELF magic. Both are allowed while the
-inferior runs — telling gdb what addresses mean is configuration, and it is
-precisely what someone does after attaching to a running target.
+`path` is root-relative and checked in the same way as `exe.load`'s: resolved
+through the project root, and required to start with the ELF magic. Both are
+allowed while the program runs, because telling gdb what addresses mean is
+configuration, and it is what someone does after attaching to a running target.
 
-**`symbols.load` does not set the architecture, and cannot.** Only `file`
-(`exe.load`) does, by reading the ELF header; `symbol-file` and
-`add-symbol-file` both leave gdb on the host's. Since `target remote` needs the
-architecture to parse the stub's register reply, a foreign target must have its
-ELF loaded — or `set architecture`/`set endian` typed — *before* connecting.
+`symbols.load` does not set the architecture. Only `file`, through `exe.load`,
+does that, by reading the ELF header; `symbol-file` and `add-symbol-file` both
+leave gdb on the host's architecture. `target remote` needs the architecture in
+order to parse the stub's register reply, so a foreign target must have its ELF
+loaded — or `set architecture` and `set endian` typed — before connecting.
 
-Not covered here: shared libraries for an attached process need
-`set sysroot` (`target:` when the stub does file transfer, otherwise a local
-copy), which is a console command like any other.
+Shared libraries for an attached process are not covered here. They need
+`set sysroot`, using `target:` when the stub does file transfer and a local copy
+otherwise, which is a console command like any other.
 
 ## Remote targets
 
 `hello` carries `remote: {connected, address}` when gdb is attached to a target
 this server did not start, and `remoteChanged` fires when that changes.
 
-There is no `target.connect` request. Connecting is `console.exec` with
-`target remote <address>`, and disconnecting is `console.exec` with
-`disconnect` — the same commands the user would type, so the console shows
-exactly what was run and gdb's own error text when a connection is refused.
-The UI's connect button is a shortcut for typing, not a separate mechanism,
-which is what keeps one source of truth for a connection that a console
-command can also make or break.
+There is no `target.connect` request. To connect, send `console.exec` with
+`target remote <address>`; to disconnect, send `console.exec` with `disconnect`.
+These are the commands a user would type, so the console shows what ran and
+shows gdb's own error text if a connection is refused. The UI's connect button
+is a shortcut for typing rather than a separate mechanism, which keeps one
+source of truth for a connection that a console command can also make or break.
 
-The server recognises those commands by reading the command text. There is no
-MI query for "am I attached to something I did not start" that does not involve
-parsing console output, which would be worse. A `target remote` is believed
-only if gdb accepted it: a refused connection that still reported `connected`
-would be worse than no indicator, and would make shutdown try to detach from
-something never attached. A `detach` or `disconnect` is believed either way —
-whatever went wrong, the connection is no longer in a state to act on.
+The server recognises those commands by reading the command text. There is no MI
+query for "am I attached to something I did not start" that avoids parsing
+console output. A `target remote` is believed only if gdb accepted it, because
+reporting `connected` after a refused connection would make shutdown try to
+detach from something it never attached to. A `detach` or `disconnect` is
+believed either way, since whatever went wrong, the connection is no longer in a
+state to act on.
 
-Why it matters beyond display: shutting down **detaches** from a remote target
-rather than killing it, because killing something you merely connected to
-destroys somebody else's session.
+This matters beyond the indicator: shutting down detaches from a remote target
+rather than killing it, because killing a target you connected to would destroy
+someone else's session.
