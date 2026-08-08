@@ -6,15 +6,14 @@ nav_order: 3
 
 # A first session
 
-About five minutes, against a program in this repository, ending with you
-looking at a linked list's bytes in memory and knowing which byte is which.
+This walks through loading a program, setting a breakpoint, inspecting a value
+and finding it in memory. It takes about five minutes and uses a program in this
+repository, which is also the program every screenshot on this site was taken
+from.
 
-Every screenshot on this site is taken from this program, so what you see here
-is what you will see.
+## Build a program to debug
 
-## Build something to debug
-
-`testdata/fixtures/globals.c` is a small program with named globals — a counter,
+`testdata/fixtures/globals.c` is a small program with named globals: a counter,
 a string, an array of doubles, a static, and a two-node linked list.
 
 ```sh
@@ -22,30 +21,31 @@ mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
 gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 ```
 
-`-no-pie` so the addresses below are the ones you will see. Under a
-position-independent executable everything is relocated at load and the numbers
-differ every run — which is normal, and which gdb-wui handles, but it makes a
-tutorial hard to follow.
+Build it with `-no-pie` so that the addresses shown below are the ones you will
+see. A position-independent executable is relocated at load time, so its
+addresses differ on every run. gdb-wui handles that, but it makes a tutorial
+harder to follow.
 
-## Start
+## Start gdb-wui
 
 ```sh
 go build ./cmd/gdb-wui
 ./gdb-wui -project /tmp/tour -exe globals
 ```
 
-A URL appears on stdout and a browser opens at it. If it does not — over SSH, in
-a container, with no desktop session — paste the URL yourself. That path is the
-supported one, not a fallback.
+gdb-wui prints a URL on stdout and opens a browser at it. If no browser opens —
+over SSH, in a container, or with no desktop session — copy the URL into a
+browser yourself. This is a supported way to use gdb-wui, not a fallback.
 
-The status bar at the bottom should read **connected** and name your gdb.
+The status bar at the bottom of the window should read **connected** and name
+your gdb.
 
-## Break, and run
+## Set a breakpoint and run
 
-Click **globals.c** in the file tree. Click the line number **49**, the
-`out->visited++;` inside `walk`. A red dot appears in the gutter and the same
-breakpoint shows up in the **Breakpoints** pane on the right — one breakpoint,
-two views of it.
+Click **globals.c** in the file tree, then click line number **49**, which is
+`out->visited++;` inside `walk`. A red dot appears in the gutter, and the
+breakpoint also appears in the **Breakpoints** pane on the right. These are two
+views of the same breakpoint.
 
 ![A gutter marker and the Breakpoints pane](images/breakpoints.png)
 
@@ -53,70 +53,78 @@ Press **Run** in the toolbar, or `Ctrl+F5`.
 
 [![The whole window, stopped at a breakpoint](images/overview.png)](images/overview.png)
 
-Everything filled in at once:
+Every pane now has something in it:
 
-- The green bar is the program counter, on line 49.
-- **Locals** has `out` and `n`, the parameter and the cursor into the list.
-- The **Call stack** has two frames — `walk` called from `main` — and clicking
-  `#1 main()` moves a *blue* bar to the calling line without moving the green
-  one. Inspecting a caller never hides where the program actually stopped.
-- The **gdb console** shows the stop exactly as gdb reported it. That console is
-  a real one: anything you can type at gdb, you can type there.
+- The green bar in the source view is the program counter, on line 49.
+- **Locals** shows `out` and `n`: the parameter, and the cursor into the list.
+- The **Call stack** has two frames, `walk` called from `main`. Clicking
+  `#1 main()` moves a blue bar to the calling line and leaves the green bar
+  where it is, so you can inspect a caller without losing sight of where the
+  program stopped.
+- The **gdb console** shows the stop as gdb reported it. It is a real gdb
+  console, so you can type any gdb command into it.
 
-## Read a value without typing anything
+## Read a value by hovering
 
 Rest the pointer on `n->name` on line 51.
 
 ![The value tooltip over a struct field](images/hover.png)
 
-The whole path is read, not the word under the pointer: you get the `name` field
-of the node `n` points at, not something called `name` out of context.
+gdb-wui reads the whole expression, not the word under the pointer, so you get
+the `name` field of the node `n` points at rather than something else called
+`name`.
 
 {: .note }
-> Only names, fields and subscripts are evaluated. `f(x)` is not, deliberately —
-> gdb would answer by *calling f*, which is not a thing a mouse should do by
-> accident.
+> Only names, fields and subscripts are evaluated. `f(x)` is not, because gdb
+> would answer it by calling `f` in the program being debugged, which should not
+> happen because a pointer moved across the screen.
 
-## Follow it into memory
+## Follow the value into memory
 
-Right-click the same token.
+Right-click the same expression.
 
 ![The memory context menu, showing both addresses](images/hover-menu.png)
 
-Two different questions, kept apart, each naming the address it would show:
+The menu offers two different things, and names the address each one would show:
 
-- **Show where it is stored** — where the pointer variable itself lives.
-- **Show what it points to** — where it points, `0x40200d` here.
+- **Show where it is stored** — the address of the pointer variable itself.
+- **Show what it points to** — the address it holds, `0x40200d` here.
 
-Take the second. The **Memory** tab opens at that address. Now type `&counter`
-into the address box at the top and press Enter — it takes an expression, not
-just a number.
+Choose the second. The **Memory** tab opens at that address. Now type
+`&counter` into the address box at the top and press Enter; the box takes an
+expression, not only a number.
 
 ![The hex view with its symbol column](images/memory.png)
 
-The right-hand column is the part worth having. Each row says which symbol it
-falls in, so `banner+16` rather than a bare number, and the rows that belong to
-nothing — padding, and later the stack and the heap — are honestly blank rather
+The right-hand column names the symbol each row falls in, so you see
+`banner+16` rather than an address you have to work out. Rows that belong to no
+symbol — padding here, and the stack and heap elsewhere — are left blank rather
 than guessed at.
 
-You can read the program's data structures straight off it: `counter` is `07`,
-`banner` spells `gdb-wui` in the ASCII column, `hidden_total` is the
-`0x4142434445464748` from the source with `9a` in the low byte because `main`
-has already added to it, and `head` at `0x4040d0` holds `01` then a pointer to
-`0x40200d` — the string `"head"` you hovered a moment ago.
+You can read the program's data straight off this view:
+
+- `counter` is `07`.
+- `banner` spells `gdb-wui` in the ASCII column.
+- `hidden_total` is the `0x4142434445464748` from the source, stored
+  little-endian, with `9a` in the low byte because `main` has already added to
+  it.
+- `head` at `0x4040d0` holds `01`, then a pointer to `0x40200d` — the string
+  `"head"` you hovered a moment ago.
 
 ## Step
 
-`F10` steps over, `F11` steps into, `Shift+F11` runs to the end of the frame.
-Hold `F10` and the line marker walks down the loop; the Locals pane and the
-tooltip both follow, and the tooltip disappears the instant the program moves so
-it can never show you a value from the previous stop.
+`F10` steps over, `F11` steps into, and `Shift+F11` runs to the end of the
+current frame.
 
-## Where next
+Hold `F10` down to walk the marker through the loop. The Locals pane and the
+tooltip follow, and the tooltip closes as soon as the program moves, so it
+cannot show you a value from the previous stop.
 
-- The same program with `gcc -g` removed, to see what the
+## Next
+
+- Try the same program with the debug info removed, to see what the
   [Symbols pane](features/symbols.md) and the
   [Decompiled tab](features/decompilation.md) are for.
-- [Remote targets](features/remote.md), if what you are debugging is not on this
-  machine or not this architecture.
-- [The keyboard map](reference/keys.md).
+- Read [remote targets](features/remote.md) if the program you want to debug is
+  not on this machine, or is for another architecture.
+- Look up [the keyboard shortcuts](reference/keys.md).

@@ -24,18 +24,17 @@ nav_order: 2
 ## Inside a terminal panel
 
 The [gdb console and the Program terminal](../features/console.md) are real
-terminals, so almost nothing is intercepted there: **only the function keys and
-`Ctrl+Shift+…`**.
+terminals, so gdb-wui intercepts only the function keys and `Ctrl+Shift+…`
+there.
 
 `Ctrl+C`, `Ctrl+D`, `Ctrl+Z`, Tab and the arrow keys all reach the program or
-gdb. That is deliberate — a debugger whose UI ate `Ctrl+C` in the terminal
-would be unusable for the programs most worth debugging.
+gdb, which is necessary for debugging programs that use them.
 
-In the gdb console specifically, Tab completes and `↑` recalls history, because
-those are gdb's, not ours.
+In the gdb console, Tab completes and `↑` recalls history; both are gdb's own
+features.
 
 ## Holding a key down
 
-`F10` yields at most one step per completed stop. Holding it walks the marker
-down the code at the speed the program can actually be stepped, rather than
-queueing a hundred steps that carry on after you let go.
+`F10` produces at most one step per completed stop. Holding it walks the marker
+through the code at the speed the program can be stepped, rather than queueing
+steps that continue after you release the key.

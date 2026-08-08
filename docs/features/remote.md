@@ -7,43 +7,42 @@ nav_order: 12
 
 # Remote targets
 
-A gdbserver, an emulator's stub, a board on the end of a probe. Anything that
-speaks the GDB remote protocol.
+gdb-wui can debug anything that speaks the GDB remote protocol: a gdbserver, an
+emulator's stub, or a board on the end of a probe.
 
 ![Attached to a gdbserver](../images/remote.png)
 
-The address box and **connect** / **disconnect** sit in the console's tab bar,
-with a pill showing whether gdb is attached. Those buttons run `target remote
-<address>` and `disconnect` — the same commands you would type, so the console
-below shows exactly what ran, and gdb's own error text when a stub refuses.
+The address box and the **connect** and **disconnect** buttons are in the
+console's tab bar, with a pill showing whether gdb is attached. The buttons run
+`target remote <address>` and `disconnect`, so the console below shows what ran,
+and shows gdb's own error text if the stub refuses.
 
-*disconnect*, not *detach*: detach resumes the target, and someone who connected
-to look at a stopped machine rarely wants it to run on.
+Disconnecting uses `disconnect` rather than `detach`, because `detach` resumes
+the target and someone inspecting a stopped machine usually does not want that.
 
-## Load the program first
+## Load the program before connecting
 
 ![The architecture warning](../images/remote-warning.png)
 
-This is the one ordering mistake that matters, and gdb-wui asks before letting
-you make it.
+Load the program first, then connect. gdb-wui asks for confirmation if you try
+it the other way round.
 
-`target remote` immediately asks the stub for its registers, and how to read
-that reply depends on the architecture. Get it wrong and gdb misparses
-everything — a MIPS64 target read as x86-64 reports a nonsense pc, and can upset
-the far end badly enough to end the session.
+`target remote` asks the stub for its registers immediately, and reading that
+reply requires knowing the architecture. If gdb has the wrong architecture it
+misparses the reply — a MIPS64 target read as x86-64 reports a meaningless
+program counter, and can disturb the target enough to end the session.
 
-**Only loading the program sets the architecture**, because only `file` reads it
-out of the ELF header. Measured against gdb 17.1 with a MIPS64 image: `file`
-gives `mips:octeon/big`, while `symbol-file` and `add-symbol-file` both leave
-gdb at the host's `i386`. Loading *symbols* is exactly the trap — the
-[Symbols pane](symbols.md) fills with correct-looking names and the
-architecture is still wrong.
+Only loading the program sets the architecture, because only `file` reads it
+from the ELF header. Measured against gdb 17.1 with a MIPS64 image: `file` gives
+`mips:octeon/big`, while `symbol-file` and `add-symbol-file` both leave gdb at
+the host's `i386`. Loading symbols is therefore not enough, even though the
+[Symbols pane](symbols.md) fills with correct names.
 
-So: click the ELF in the file tree, then connect.
+## Debugging another architecture
 
-## A foreign architecture needs a foreign gdb
-
-A stock `gdb` knows one architecture. For anything else:
+To debug binaries for another architecture, install a suitable gdb (e.g.
+`gdb-multiarch`) on your host machine, and use the `-gdb` argument when starting
+gdb-wui to use it:
 
 ```sh
 sudo apt install gdb-multiarch
@@ -52,8 +51,8 @@ sudo apt install gdb-multiarch
 
 ## Worked example
 
-A local gdbserver stands in for anything remote — from gdb's side they are the
-same protocol:
+A local gdbserver behaves the same way as anything remote, so it is a
+convenient thing to try first:
 
 ```sh
 gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
@@ -61,33 +60,34 @@ gdbserver 127.0.0.1:41234 /tmp/tour/globals &
 ./gdb-wui -project /tmp/tour
 ```
 
-Click `globals` in the file tree to load it, put `127.0.0.1:41234` in the
-address box, press **connect**. The pill turns to `remote 127.0.0.1:41234` and
-the console shows gdb's own account of the attach.
+Click `globals` in the file tree to load it, enter `127.0.0.1:41234` in the
+address box, and press **connect**. The pill changes to
+`remote 127.0.0.1:41234`, and the console shows gdb's account of the attach.
 
-Try it in the wrong order to see the guard: connect before loading anything and
-you get the warning above rather than a silently mis-parsed session.
+To see the guard, try it in the wrong order: connect before loading anything and
+gdb-wui shows the warning above instead of connecting with the wrong
+architecture.
 
-For qemu user-mode, the shape is the same:
+For qemu in user mode the shape is the same:
 
 ```sh
 qemu-aarch64 -g 1234 -L /path/to/sysroot ./yourbinary &
 ./gdb-wui -project . -gdb gdb-multiarch -exe yourbinary
 ```
 
-## What it will not do
+## What remote targets do not do
 
-- **It will not launch anything for you.** No spawning gdbserver, no starting
-  qemu, no flashing a board. You start the far end; gdb-wui connects to it.
-- **No auto-detecting the target's architecture.** It comes from the ELF you
-  load, which is why the ordering matters.
-- **No `attach` to a running local pid**, and no core dumps.
-- **`extended-remote`, `target sim` and the rest** are not wired to the buttons.
-  Type them at the [console](console.md); the pill follows, because it reflects
-  gdb's state rather than which button was pressed.
+- **gdb-wui does not launch anything.** It does not start gdbserver, run qemu or
+  flash a board. Start the far end yourself, then connect to it.
+- **It does not detect the target's architecture.** The architecture comes from
+  the ELF you load, which is why the order matters.
+- **It does not attach to a local pid**, and does not open core dumps.
+- **`extended-remote`, `target sim` and similar are not on the buttons.** Type
+  them at the [console](console.md); the pill follows, because it reflects gdb's
+  state rather than which button was pressed.
 
 {: .note }
-> If you are using **qiling** as the far end, a successful single-step is
-> reported as `SIGTERM` on AArch64 and x86 — a bug in its stub, not in your
-> program. See
+> If the far end is **qiling**, a successful single-step is reported as
+> `SIGTERM` on AArch64 and x86. This is a bug in qiling's stub rather than a
+> problem with your program; see
 > [Troubleshooting](../troubleshooting.md#program-received-signal-sigterm-on-every-single-step).

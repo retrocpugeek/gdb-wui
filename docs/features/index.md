@@ -7,9 +7,8 @@ has_children: true
 
 # Features
 
-One page each. Every one ends with what it will **not** do, because the limits
-are the part that costs you an afternoon if you find them by accident.
+One page per feature. Each ends with a list of what that feature does not do,
+because those limits are easier to read about than to discover.
 
-The recurring theme: gdb-wui reimplements no debugger logic. Where a page says
-something is impossible, it is almost always gdb that says so, and the page says
-which.
+gdb-wui implements no debugger logic of its own. Where a page says something is
+not possible, it is usually gdb that says so, and the page says which.

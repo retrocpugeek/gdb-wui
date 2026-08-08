@@ -6,69 +6,74 @@ nav_order: 1
 
 # gdb-wui
 
-A web UI for GDB. Source, disassembly, variables, registers, memory, threads and
-a real gdb console in a browser tab — with GDB itself still in charge.
+gdb-wui is a web UI for GDB. It shows source, disassembly, variables, registers,
+memory, threads and a gdb console in a browser tab, while GDB itself does the
+debugging.
 
 ```sh
 go build ./cmd/gdb-wui
 ./gdb-wui -project /path/to/your/repo
 ```
 
-It prints a URL and opens a browser at it. Pick an executable from the file tree,
-click a line number to set a breakpoint, and step.
+gdb-wui prints a URL and opens a browser at it. To start debugging, pick an
+executable from the file tree, click a line number to set a breakpoint, and
+step.
 
 [![The whole window, stopped at a breakpoint](images/overview.png)](images/overview.png)
 
 {: .warning }
-> **It runs your programs as you.** gdb-wui starts arbitrary binaries with your
-> full privileges. That is what a debugger does, and sandboxing the debuggee is
-> **not** a goal.
+> **gdb-wui runs your programs with your privileges.** That is what a debugger
+> does; sandboxing the program being debugged is not a goal.
 >
-> It listens on loopback only, and refuses a non-loopback address unless you
-> pass `-listen-anywhere`. **Never expose it to a network you do not control.**
-> Anyone who can reach the port can run programs as you.
+> gdb-wui listens on loopback only, and refuses a non-loopback address unless
+> you pass `-listen-anywhere`. Do not expose it to a network you do not control:
+> anyone who can reach the port can run programs as you.
 >
-> Binding loopback is not by itself enough — any web page you visit can `fetch`
-> a loopback URL — so access needs a single-use login link, and requests are
-> checked against DNS rebinding three separate ways. The details are in
+> Binding to loopback is not sufficient on its own, because any web page you
+> visit can `fetch` a loopback URL. Access therefore needs a single-use login
+> link, and requests are checked against DNS rebinding in three ways. These are
+> described in
 > [the protocol document](https://github.com/retrocpugeek/gdb-wui/blob/master/docs/protocol.md#security).
 
 ## Why
 
-GDB's own interfaces are a bare console or the cramped `tui` mode. Neither shows
-source, disassembly, registers, the call stack and thread state at once, and
+GDB's own interfaces are a console or the `tui` mode. Neither shows source,
+disassembly, registers, the call stack and thread state at the same time, and
 neither lets you click a gutter to set a breakpoint.
 
-gdb-wui is a translator, not a debugger: it speaks GDB/MI to a real gdb process
-and a small JSON protocol to the browser. It reimplements no debugger logic, so
-what you get is gdb's behaviour with a better view of it — including gdb's error
-messages, unedited, when something will not work.
+gdb-wui translates rather than debugs: it speaks GDB/MI to a real gdb process,
+and a small JSON protocol to the browser. It implements no debugger logic of its
+own, so you get gdb's behaviour — including gdb's error messages, unedited, when
+something does not work.
 
-That is also the honest limit. If gdb cannot do it, neither can this.
+This also sets the limit of what gdb-wui can do. If gdb cannot do something,
+neither can gdb-wui.
 
 ## Where to start
 
 - **[Install](install.md)** — what you need, and what is optional.
-- **[A first session](tour.md)** — load, break, step, inspect, in about five
-  minutes, against a program in this repository.
-- **[Features](features/index.md)** — one page each, with what it will not do.
-- **[Troubleshooting](troubleshooting.md)** — the errors we actually hit, and
-  what they mean.
+- **[A first session](tour.md)** — load a program, break, step and inspect it, in
+  about five minutes, using a program in this repository.
+- **[Features](features/index.md)** — one page per feature, each listing what it
+  does not do.
+- **[Troubleshooting](troubleshooting.md)** — errors you may see, and what they
+  mean.
 
-## What it is good at
+## What gdb-wui is good at
 
-The ordinary case — C or C++ built with `-g`, stepping through source — works
-and is not the interesting part. These are:
+Stepping through C or C++ built with `-g` works, and is not the interesting
+part. These are:
 
-- **A binary with no source at all.** The Symbols pane reads the ELF symbol
-  table, the disassembly is a first-class view rather than a fallback, and with
-  Ghidra installed the [Decompiled tab](features/decompilation.md) shows
-  recovered C with the program counter marked in it.
-- **A foreign architecture.** Point `-gdb` at `gdb-multiarch` and
-  [connect to a stub](features/remote.md) — a gdbserver, qemu, an emulator, a
-  board on a probe. Developed against MIPS64 and AArch64 as well as x86-64.
-- **An image that does not run where it was linked.** Load symbols at an offset
+- **Binaries with no source.** The Symbols pane reads the ELF symbol table, the
+  disassembly is a first-class view rather than a fallback, and if Ghidra is
+  installed the [Decompiled tab](features/decompilation.md) shows recovered C
+  with the program counter marked in it.
+- **Other architectures.** Use `-gdb` to select a suitable gdb, then
+  [connect to a stub](features/remote.md) — a gdbserver, qemu, an emulator, or a
+  board on a probe. gdb-wui is developed against MIPS64 and AArch64 as well as
+  x86-64.
+- **Images that do not run where they were linked.** Load symbols at an offset
   and the addresses line up again.
-- **Knowing what you are looking at.** The memory viewer names the symbol each
-  row falls in; hovering a variable reads the whole path, not the word under the
-  pointer.
+- **Identifying what you are looking at.** The memory viewer names the symbol
+  each row falls in, and hovering a variable reads the whole expression rather
+  than the word under the pointer.

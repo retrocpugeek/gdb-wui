@@ -7,51 +7,54 @@ nav_order: 1
 
 # Breakpoints
 
-Click a line number. That is the whole of the common case.
+To set a breakpoint on a source line, click the line number.
 
 ![A gutter marker and the Breakpoints pane](../images/breakpoints.png)
 
-The dot in the gutter and the row in the **Breakpoints** pane are one
-breakpoint seen twice — the pane is a mirror of what gdb holds, not a separate
-list. Clicking the gutter again removes it. The checkbox in the pane disables a
-breakpoint without deleting it, and the `×` deletes it.
+The dot in the gutter and the row in the **Breakpoints** pane are the same
+breakpoint shown twice; the pane mirrors what gdb holds rather than tracking
+what the UI did. To remove a breakpoint, click the gutter again, or click the
+`×` in the pane. To disable one without deleting it, clear its checkbox.
 
 The gutters in the [disassembly](disassembly.md) and
-[decompiled](decompilation.md) views work the same way, except that those set a
-breakpoint on an **address** rather than a line.
+[decompiled](decompilation.md) views work the same way, except that they set a
+breakpoint on an **address** rather than on a line.
 
-## By name, when there is no source
+## Breaking on a function with no source
 
-Right-click a function in the [Symbols pane](symbols.md).
+To break on a function when you have no source for it, right-click the function
+in the [Symbols pane](symbols.md) and choose **Set breakpoint**.
 
 ![The Symbols pane's right-click menu](../images/symbol-menu.png)
 
-## Breaking by name is not breaking at the address
+## Breaking by name and breaking at an address
 
-They land in different places, and the difference matters more than it sounds.
+Breaking on a function by name and breaking at its address stop at different
+instructions.
 
-Given a name, gdb **skips the prologue** — it uses the line table, or failing
-that a heuristic, to find the first instruction after the frame is set up. On a
-MIPS firmware, `break process_packet` stops at entry+24, past the register
-spills.
+When you give a name, gdb skips the function prologue, using the line table or a
+heuristic to find the first instruction after the frame is set up. On a MIPS
+firmware, for example, `break process_packet` stops at entry+24, after the
+register spills. Use this when you want to inspect arguments and locals, because
+by then they have been stored somewhere you can read.
 
-Given an address, gdb stops exactly there. At a function's entry that is
-*before* the frame exists and *before* any argument has been stored anywhere
-you can read, so the Variables pane will show you nonsense and be right to.
+When you give an address, gdb stops exactly there. At a function's entry that is
+before the frame exists and before any argument has been stored, so the
+Variables pane will show values that are not yet meaningful. Use this when you
+want to see the prologue itself, or to catch a jump into the middle of a
+function.
 
-Which you want depends on the question:
-
-| You want | Use |
+| To do this | Use |
 |---|---|
-| To inspect arguments and locals | The name. Let gdb skip the prologue. |
-| To see the prologue itself, or to catch a jump into the middle of a function | The address. |
+| Inspect arguments and locals | The name; let gdb skip the prologue. |
+| See the prologue, or catch a jump into a function | The address. |
 
 ## Pending breakpoints
 
-A breakpoint on a file or symbol gdb does not yet know about is accepted and
-marked pending; it resolves when a shared library loads or a program is loaded.
-The Breakpoints pane shows it differently so you are not left believing an
-unresolved breakpoint will be hit.
+A breakpoint on a file or symbol that gdb does not yet know about is accepted
+and marked pending. It resolves when a shared library loads, or when a program
+is loaded. The Breakpoints pane shows pending breakpoints differently so that
+you can tell an unresolved breakpoint from one that will be hit.
 
 ## Worked example
 
@@ -61,7 +64,7 @@ gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
 ```
 
 Click line 49. Then set the same breakpoint both other ways at the gdb console
-and compare:
+and compare the addresses:
 
 ```
 (gdb) break walk
@@ -70,16 +73,16 @@ Breakpoint 1 at 0x401162: file globals.c, line 44.
 Breakpoint 2 at 0x401156: file globals.c, line 43.
 ```
 
-Twelve bytes and one line apart. Breakpoint 2 is on the opening brace, before
-`out` has been stored anywhere; breakpoint 1 is on the first statement, where
-the parameter can be read. Both appear in the pane, and the addresses beside
-them are the evidence.
+They are twelve bytes and one line apart. Breakpoint 2 is on the opening brace,
+before `out` has been stored anywhere; breakpoint 1 is on the first statement,
+where the parameter can be read. Both appear in the Breakpoints pane with their
+addresses beside them.
 
-## What it will not do
+## What breakpoints do not do
 
-- **Watchpoints, catchpoints and tracepoints.** gdb has all three; gdb-wui has
-  no UI for them. They work perfectly well typed into the
-  [console](console.md), and any breakpoint made that way appears in the pane
-  like the rest.
-- **Conditions and hit counts** are not exposed in the UI either. `condition`
-  and `ignore` at the console apply to a breakpoint set by clicking.
+- **Watchpoints, catchpoints and tracepoints** have no UI. gdb supports all
+  three, and they work when typed into the [console](console.md); a watchpoint
+  set that way even appears in the Breakpoints pane, because gdb announces it
+  the same way it announces a breakpoint.
+- **Conditions and hit counts** have no UI either. Use `condition` and `ignore`
+  at the console; they apply to a breakpoint set by clicking.

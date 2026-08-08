@@ -7,66 +7,63 @@ nav_order: 9
 
 # Decompilation
 
-A fourth centre tab, for a binary with no source. It shows Ghidra's recovered C
-for the function you are stopped in, **with the program counter marked in it**.
+The Decompiled tab shows Ghidra's recovered C for the function you are stopped
+in, with the program counter marked in it. It is for binaries with no source.
 
 ![Recovered C for a stripped binary, with the pc marked](../images/decompiled.png)
 
-That is `walk` from the tour's program with its debug info removed. The
-parameter is `param_1` and the local is `local_10`, because DWARF is gone and
-those names went with it — but `&head` is still `&head`, because the ELF symbol
-table survived and Ghidra reads it too. On a *fully* stripped binary every
-function comes back as `FUN_00401156`.
+The screenshot shows `walk` from the tour's program with its debug info removed.
+The parameter is called `param_1` and the local `local_10`, because those names
+were in the DWARF that was stripped. `&head` is still `&head`, because the ELF
+symbol table survived and Ghidra reads that too. On a fully stripped binary
+every function is named after its address, such as `FUN_00401156`.
 
-It needs `-ghidra`. See [Install](../install.md#ghidra-optional).
+This tab needs the `-ghidra` argument. See
+[Install](../install.md#installing-ghidra-optional).
 
-## Stepping works here, and does not otherwise
+## Stepping in the decompiled view
 
 gdb's own stepping needs a line table. Without one its step range is the whole
-function, so `F10` runs to the function's **exit** — which looks like the button
-is broken.
+function, so `F10` runs to the end of the function.
 
-With this tab showing, a step walks to the next *decompiled* line, using
-Ghidra's address map in place of the missing one. That is the difference between
-a decompiler you read and a decompiler you debug with.
+While this tab is showing, a step moves to the next decompiled line instead,
+using Ghidra's address map in place of the missing line table. The gutter also
+sets breakpoints, by address.
 
-The gutter sets breakpoints too, by address.
+## How the program counter is marked
 
-## It says where it is guessing
+Recovered C is a model of the program rather than its source, so the pane
+distinguishes how confident the mapping is:
 
-This is a model of the program, not its source, and the pane distinguishes the
-two kinds of claim:
+- **Filled** — a decompiled line claims the program counter's address exactly.
+- **Outlined**, with `pc between lines` in the header — no line claims the
+  address, and this is the nearest line below it. Prologues, epilogues and
+  register spills belong to no expression, so this is normal.
+- **Marked ambiguous** — more than one line claims the address. Optimised code
+  merges statements, and the map cannot separate them again.
 
-- An exact match — some decompiled line claims the pc's address — is drawn
-  **filled**.
-- No line claims it, and this is the nearest one below: drawn as an **outline**,
-  and the header says `pc between lines`. Prologues, epilogues and spills belong
-  to no expression, so this is normal rather than a failure.
-- More than one line claims the address: marked ambiguous. Optimised code merges
-  statements and the map cannot separate them again.
+A local that the decompiler invented, which lives nowhere in the machine, shows
+no value rather than a wrong one. Around two thirds of recovered locals live in
+a register that is only correct near one program counter, whereas a global at a
+fixed address is valid at every one, so globals are the ones you can rely on.
 
-A local the decompiler invented that lives nowhere in the machine shows **no
-value at all** rather than a plausible wrong one. Two thirds of recovered locals
-live in a register that is only correct near one pc; a global at a fixed address
-is valid at every pc, which is why globals are the readable ones.
-
-## Watching it work
+## Following what Ghidra is doing
 
 ![The decompiler's activity in the log](../images/decompiled-log.png)
 
-The **Log** tab carries what Ghidra is doing: what it imported, how long
-analysis took, one line per decompiled function with its timing, and Ghidra's
-own complaints. Unlike the raw MI stream this is not behind a flag — it is one
-line per operation, and without it a slow start is indistinguishable from a
-stuck one.
+The **Log** tab shows Ghidra's activity: what it imported, how long analysis
+took, one line per decompiled function with its timing, and Ghidra's own
+messages. Unlike the raw MI stream this is not behind a flag, because it is one
+line per operation and it is the only way to tell a slow start from a stuck one.
 
-Import and analysis are genuinely slow: seconds for a small program, minutes for
-firmware. The result is cached under `<project>/gdb-wui-decomp`, keyed on the
-binary's SHA-256, so the second run is immediate.
+Import and analysis take seconds for a small program and minutes for firmware.
+The result is cached under `<project>/gdb-wui-decomp`, keyed on the binary's
+SHA-256, so later runs are immediate.
 
-## Using your own Ghidra project
+## Using an existing Ghidra project
 
-If you have already named functions and laid out structures, use that work:
+To use names and types you have already created in Ghidra, pass the project and
+the program within it:
 
 ```sh
 ./gdb-wui -project . -exe firmware \
@@ -74,9 +71,9 @@ If you have already named functions and laid out structures, use that work:
   -ghidra-program firmware
 ```
 
-**Opened read-only.** Your names and types come through; nothing is written
-back. `-ghidra-program` is required because a real project holds several
-programs.
+The project is opened read-only, so your names and types are used but nothing is
+written back. `-ghidra-program` is required, because a Ghidra project usually
+holds several programs.
 
 ## Worked example
 
@@ -86,22 +83,21 @@ objcopy --strip-debug /tmp/tour/globals-nodebug
 ./gdb-wui -project /tmp/tour -exe globals-nodebug -ghidra ~/ghidra
 ```
 
-Filter the [Symbols pane](symbols.md) to `walk`, right-click, **Set breakpoint**,
-Run. Open **Decompiled** — the first time, the Log tab shows the import and
-analysis; after that it is instant.
+Filter the [Symbols pane](symbols.md) to `walk`, right-click it, choose **Set
+breakpoint**, and press Run. Open **Decompiled**: the first time, the Log tab
+shows the import and analysis; afterwards it is immediate.
 
-You land in the prologue, so the header says `pc between lines`. Press `F10`
-twice and the marker becomes a solid highlight on `local_10 = &head;`. Now
-compare with the [source](../tour.md): that is `struct node *n = &head;`.
+You stop in the prologue, so the header says `pc between lines`. Press `F10`
+twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
+[source](../tour.md) that line is `struct node *n = &head;`.
 
-## What it will not do
+## What decompilation does not do
 
-- **No editing Ghidra's names or types from here.** It is a reader. Rename in
-  Ghidra and reload.
-- **No decompiling a function you are not stopped in**, except by breaking in it
+- **It does not edit Ghidra's names or types.** Rename in Ghidra and reload.
+- **It does not decompile a function you are not stopped in.** Break in it
   first.
-- **It is not the source.** Recovered C compiles to the same behaviour, not to
-  the same text: loop shapes change, variables merge, and types are inferred.
-  Read it as a model.
-- **No Ghidra, no tab.** Nothing else changes, and no warning appears until you
-  open it.
+- **It does not reproduce the source.** Recovered C compiles to the same
+  behaviour, not to the same text: loop shapes change, variables merge, and
+  types are inferred. Read it as a model.
+- **It does nothing without Ghidra**, and prints no warning until you open the
+  tab.

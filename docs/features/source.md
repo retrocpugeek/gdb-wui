@@ -7,62 +7,61 @@ nav_order: 3
 
 # Source and files
 
-The file tree shows `-project` and nothing outside it. That is a hard boundary,
-not a default: paths are resolved against the project root and anything that
-escapes it is refused.
-
-`ELF` badges mark the executables.
+The file tree shows the directory given as `-project` and nothing outside it.
+Paths are resolved against the project root and any path that escapes it is
+refused. Executables are marked with an `ELF` badge.
 
 ![The file tree's ELF menu](../images/files.png)
 
-Right-click one for the three things you can do with it, which are genuinely
-three different operations:
+To use an executable, right-click it. The three menu entries do three different
+things:
 
-| Menu entry | gdb | What it means |
+| Menu entry | gdb command | What it does |
 |---|---|---|
-| **Load program** | `file` | The program to run. **The only one that sets the architecture.** |
-| **Replace symbols** | `symbol-file` | New symbols for the program already loaded. |
-| **Add symbols…** | `add-symbol-file` | More symbols, at an offset you give. |
+| **Load program** | `file` | Sets the program to run. This is the only one that sets the architecture. |
+| **Replace symbols** | `symbol-file` | Replaces the symbols for the program already loaded. |
+| **Add symbols…** | `add-symbol-file` | Adds more symbols, at an offset you supply. |
 
-A plain left-click on an ELF loads it as the program. If one is already being
-debugged you are asked first — loading a program replaces the inferior, and a
-stray click on the wrong row would otherwise throw away a live session.
+Left-clicking an ELF loads it as the program. If a program is already being
+debugged, gdb-wui asks first, because loading a program replaces the inferior
+and would otherwise discard a live session on a stray click.
 
 {: .warning }
-> Loading *symbols* does not set the architecture. Only `file` reads it from the
-> ELF header. Measured against gdb 17.1 with a MIPS64 image: `file` gives
-> `mips:octeon/big`, while `symbol-file` and `add-symbol-file` both leave gdb at
-> the host's `i386`. The Symbols pane looking correct is exactly the trap — see
+> Loading symbols does not set the architecture; only `file` does, by reading
+> the ELF header. Measured against gdb 17.1 with a MIPS64 image: `file` sets the
+> architecture to `mips:octeon/big`, while `symbol-file` and `add-symbol-file`
+> both leave gdb at the host's `i386`. This is easy to miss, because the Symbols
+> pane fills with correct names either way. See
 > [remote targets](remote.md).
 
-## Two markers, because there are two questions
+## The two line markers
 
 ![An outer frame selected, with the pc marker left alone](../images/stack.png)
 
-The **green** bar is the program counter: where the program actually is. The
-**blue** bar is the line of an outer frame you have selected in the call stack.
+The **green** bar is the program counter: where the program is now. The **blue**
+bar is the line of an outer frame you have selected in the call stack.
 
-Conflating them is a real bug in other debuggers: clicking a caller moves the
-"executing here" marker onto code that is not executing, and you lose sight of
-where the program really stopped. Here, selecting frame `#1 main()` moves the
-blue bar to line 64 and leaves the green one on 49.
+They are kept separate so that selecting a caller does not move the
+"executing here" marker onto code that is not executing. In the screenshot,
+selecting frame `#1 main()` puts the blue bar on line 64 and leaves the green
+bar on line 49.
 
-Every value you read — the Variables pane, a [hover](variables.md) tooltip — is
-read from the **selected** frame, so the two markers also tell you which frame
-the numbers belong to.
+Every value you read — the Variables pane, and [hover](variables.md) tooltips —
+comes from the **selected** frame, so the markers also tell you which frame the
+values belong to.
 
-## When the source is not where gdb says
+## When the source is not where gdb expects
 
-A binary built elsewhere carries the build machine's paths. When gdb names a
-file that is not there, a bar appears offering the files in your project whose
-names match, and choosing one tells gdb about the substitution for every file
-under that directory rather than just the one.
+A binary built on another machine records that machine's source paths. When gdb
+names a file that is not present, gdb-wui shows a bar offering the files in your
+project whose names match. Choosing one tells gdb about the substitution for
+every file under that directory, not only the one you chose.
 
-## What it will not do
+## What the source view does not do
 
-- **No editing.** It is a viewer. There is no save.
-- **No syntax highlighting.** Each rendered line is a single text node, which is
-  what lets the hover evaluator map a pixel to a character without a reverse
-  mapping. Highlighting would need that to be rebuilt.
-- **No serving files outside `-project`.** Including through symlinks.
-- **Very large files are refused** rather than rendered slowly.
+- **It does not edit.** There is no save.
+- **It does not highlight syntax.** Each rendered line is a single text node,
+  which is what lets the hover evaluator map a pixel position to a character
+  without a reverse mapping. Adding highlighting would mean rebuilding that.
+- **It does not serve files outside `-project`**, including through symlinks.
+- **It refuses very large files** rather than rendering them slowly.

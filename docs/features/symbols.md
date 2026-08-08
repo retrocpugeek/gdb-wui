@@ -9,51 +9,52 @@ nav_order: 8
 
 ![The symbol list, filtered, on a binary with no debug info](../images/symbols.png)
 
-Every function and global the loaded program has, from whatever gdb knows —
-debug info if there is any, the ELF symbol table if not. On a release build
-that table is the only map you have, and this pane is how you read it.
+The Symbols pane lists every function and global in the loaded program, taken
+from debug info if there is any and from the ELF symbol table if not. On a
+release build that table is the only map available, and this pane is how you
+read it.
 
-The filter is a substring match. The `fn` and `var` sigils say which is which,
-the `all` dropdown narrows to one kind, and **dimmed rows are the ones with no
-debug info** — so you can see at a glance how much of the program you can
-actually reason about.
+The filter box matches substrings. The `fn` and `var` sigils show which kind
+each symbol is, the `all` dropdown narrows the list to one kind, and dimmed rows
+are symbols with no debug info, so you can see how much of the program has
+usable type information.
 
-Double-click a symbol to jump:
+Double-clicking a symbol jumps to it:
 
 | Symbol | Goes to |
 |---|---|
-| A function with debug info | its source line |
-| A function with only an address | the [disassembly](disassembly.md) |
-| A variable with only an address | the [memory viewer](memory.md) |
+| A function with debug info | Its source line |
+| A function with only an address | The [disassembly](disassembly.md) |
+| A variable with only an address | The [memory viewer](memory.md) |
 
-Right-click for **Set breakpoint** and **Go to**.
+Right-clicking a symbol offers **Set breakpoint** and **Go to**.
 
 ## Loading more symbols
 
-**+ load** takes a symbol file for the program already running.
+To load a symbol file for the program already running, click **+ load**.
 
 ![The load-symbols bar, with an offset](../images/symbols-load.png)
 
-*replace* is `symbol-file` — the symbols you have are wrong or missing and these
-are better. *add* is `add-symbol-file`, and reveals an **offset** field.
+Choose *replace* to run `symbol-file`, which replaces the symbols you have.
+Choose *add* to run `add-symbol-file`, which reveals an **offset** field.
 
-The offset is for an image that does not run where it was linked: a firmware
-blob a bootloader relocated, a module mapped at a base decided at load time.
-Give the difference and every symbol lines up again. Get it wrong and every
-symbol is wrong by a constant, which is easy to spot — names appear, but they
-name the wrong things.
+Use the offset when the image does not run where it was linked — a firmware blob
+relocated by a bootloader, or a module mapped at a base chosen at load time.
+Enter the difference between the two addresses and the symbols line up again. If
+the offset is wrong, every symbol is wrong by the same amount, which shows up as
+names appearing against the wrong code.
 
 {: .warning }
-> **Loading symbols does not set the architecture.** Only loading the *program*
-> does, because only `file` reads the ELF header. A symbols-only load against
-> the wrong architecture leaves you with plausible names over nonsense
-> disassembly, which is worse than no names at all. Click the ELF in the file
-> tree first. See [remote targets](remote.md).
+> Loading symbols does not set the architecture; only loading the program does,
+> because only `file` reads the ELF header. Loading symbols for the wrong
+> architecture gives you correct-looking names over disassembly that is not
+> meaningful. Load the program by clicking its ELF in the file tree first. See
+> [remote targets](remote.md).
 
 ## Worked example
 
-The same program, with the debug info removed but the symbol table left alone —
-which is what a release build looks like:
+Build the same program with the debug info removed but the symbol table left
+alone, which is what a release build looks like:
 
 ```sh
 gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug testdata/fixtures/globals.c
@@ -61,12 +62,12 @@ objcopy --strip-debug /tmp/tour/globals-nodebug
 ./gdb-wui -project /tmp/tour -exe globals-nodebug
 ```
 
-`walk`, `main`, `counter`, `banner`, `head`, `hidden_total` — all still there,
-all dimmed, because gdb knows where each one is and nothing about what it is.
-Right-click `walk` and set a breakpoint; it works exactly as it would with debug
+`walk`, `main`, `counter`, `banner`, `head` and `hidden_total` are all still
+listed, and all dimmed, because gdb knows where each one is but not what type it
+is. Right-click `walk` and set a breakpoint; it works as it would with debug
 info.
 
-Then try to read one at the console and see the other half of the trade:
+The missing type information shows up when you read a value at the console:
 
 ```
 (gdb) p counter
@@ -75,14 +76,15 @@ Then try to read one at the console and see the other half of the trade:
 $1 = 7
 ```
 
-The [memory viewer](memory.md) needs no type at all, which is why it is the
-better tool here — and its symbol column is populated from this same table.
+The [memory viewer](memory.md) needs no type at all, which makes it the easier
+tool here, and its symbol column is populated from this same table.
 
-## What it will not do
+## What the Symbols pane does not do
 
-- **Functions and variables only.** Types, macros, files and gdb's other symbol
-  domains are not listed. `info types` at the [console](console.md).
-- **No demangling control.** Names are as gdb reports them, which means gdb's
+- **It lists functions and variables only.** Types, macros, files and gdb's
+  other symbol domains are not shown; use `info types` at the
+  [console](console.md).
+- **It does not control demangling.** Names are as gdb reports them, so gdb's
   demangler settings apply.
-- **No search by address.** Type the address into the
+- **It does not search by address.** Enter the address in the
   [memory viewer](memory.md) or the disassembly instead.
