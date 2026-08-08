@@ -192,8 +192,8 @@ type Variable struct {
 	// Arg marks a function argument. gdb reports it as arg="1" and the
 	// variables panel groups on it.
 	Arg bool `json:"arg,omitempty"`
-	// OptimizedOut is derived from Value, so the UI can render an erased
-	// variable honestly instead of as a puzzling literal string.
+	// OptimizedOut is derived from Value, so the UI can mark an erased variable
+	// rather than showing the literal string.
 	OptimizedOut bool `json:"optimizedOut,omitempty"`
 }
 
@@ -214,8 +214,8 @@ type Thread struct {
 // selected thread's stack, and frame-0 locals — in one message. Fetching those
 // separately costs four or five round-trips per single-step, which is the
 // difference between stepping feeling instant and feeling laggy. Registers,
-// disassembly and memory are deliberately not here: those panels pull lazily
-// and pass stopSeq.
+// disassembly and memory are not included; those panels fetch what they need
+// when visible, passing stopSeq.
 type Stopped struct {
 	StopSeq uint64 `json:"stopSeq"`
 	// Reason is gdb's stop reason, passed through unknown values and all.

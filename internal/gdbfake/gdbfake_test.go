@@ -67,8 +67,8 @@ func TestTokenIsEchoedOnResults(t *testing.T) {
 	}
 }
 
-// TestOverlapDetectorFires guards the guard: a detector that cannot fire is
-// worse than no detector, because it reads as proof.
+// TestOverlapDetectorFires guards the guard. A detector that cannot fire reads
+// as proof that nothing is wrong.
 func TestOverlapDetectorFires(t *testing.T) {
 	f := Start([]Step{
 		Expect("-one"),

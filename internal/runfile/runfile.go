@@ -4,9 +4,9 @@
 // The file is the authentication. It lives in the user's runtime directory with
 // mode 0600, so only the same uid can read the mint secret it holds — and the
 // same uid is already fully trusted, since it can run anything as the user,
-// which is precisely what gdb-wui does for a living. What the file protects
-// against is the case the threat model actually cares about: another local user
-// or an unprivileged process reaching the loopback port.
+// which is what gdb-wui does anyway. What the file protects against is the case
+// in the threat model: another local user or an unprivileged process reaching
+// the loopback port.
 package runfile
 
 import (

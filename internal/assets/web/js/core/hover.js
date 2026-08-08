@@ -1,21 +1,21 @@
-// The hover evaluator: point at a variable or a register, see what it holds.
+// The hover evaluator: point at a variable or a register to see what it holds.
 //
-// This is a controller, not a panel. Each pane knows how to turn a point in
+// This is a controller rather than a panel. Each pane turns a point within
 // itself into an expression — the source view walks text, the disassembly view
-// reads the token span under the pointer — and hands that back. Everything
-// after that is the same for both: wait, ask, place, hide.
+// reads the token span under the pointer — and returns it. What happens after
+// that is the same for both: wait, ask, place, hide.
 //
-// Two properties matter more than the feature does.
+// Two constraints shape it.
 //
 // It must not flood gdb. A pointer crossing a screenful of source passes over
-// dozens of identifiers, and a request per identifier would put the debugger's
-// command queue behind the mouse. So nothing is sent until the pointer has
-// rested on the *same* expression for DWELL_MS, and an expression already on
-// screen is never re-asked.
+// dozens of identifiers, and one request per identifier would put the
+// debugger's command queue behind the mouse. Nothing is sent until the pointer
+// has rested on the same expression for DWELL_MS, and an expression already on
+// screen is not asked for again.
 //
-// It must not lie. A value is only true for the stop it was read at, so the
-// tooltip goes away the moment the program moves, and a reply that arrives
-// after the pointer has moved on is dropped rather than shown.
+// It must not show a stale value. A value is only true for the stop it was read
+// at, so the tooltip is removed as soon as the program moves, and a reply that
+// arrives after the pointer has moved on is dropped.
 
 import { alternateBase } from "./expr.js";
 
@@ -29,9 +29,9 @@ export function createHover({ element, evaluate, isEnabled }) {
   let timer = 0;
   // seq drops a reply whose request the pointer has already outlived.
   let seq = 0;
-  // The native tooltip of whatever we are covering, borrowed while ours is up.
+  // The native tooltip of whatever this covers, borrowed while ours is shown.
   // The disassembly puts source:line in a title attribute, and two tooltips
-  // fighting over the same word is worse than either alone.
+  // over the same word are harder to read than either alone.
   let borrowed = null;
 
   function clearTimer() {
@@ -88,9 +88,9 @@ export function createHover({ element, evaluate, isEnabled }) {
     shown = hit.expr;
   }
 
-  // place puts the tooltip above the word it describes, or below when there is
-  // no room above. Above is preferred because the pointer is on the word and a
-  // tooltip under it would sit where the user is about to look next.
+  // place puts the tooltip above the word it describes, or below it when there
+  // is no room above. Above is preferred because the pointer is on the word, and
+  // a tooltip below it would cover what the user reads next.
   function place(rect) {
     const box = element.getBoundingClientRect();
     const margin = 4;
@@ -113,17 +113,17 @@ export function createHover({ element, evaluate, isEnabled }) {
       Promise.resolve(evaluate(hit.expr)).then((value) => {
         if (mine !== seq) return;
         // gdb answers `void` for a convenience variable that was never set,
-        // which is how a guess at a bare register name comes back wrong. It is
-        // also what an expression of type void evaluates to. Either way there
-        // is nothing to tell the user.
+        // which is what a wrong guess at a bare register name produces. It is
+        // also what an expression of type void evaluates to. In both cases
+        // there is nothing to show.
         if (value == null || value === "" || value === "void") {
           hide();
           return;
         }
         show(hit, value);
       }, () => {
-        // An error here is ordinary — a name out of scope, a word that only
-        // looked like one — and belongs nowhere near the status bar.
+        // Errors here are ordinary: a name out of scope, or a word that only
+        // looked like one. They should not reach the status bar.
         if (mine === seq) hide();
       });
     }, DWELL_MS);
@@ -132,8 +132,8 @@ export function createHover({ element, evaluate, isEnabled }) {
   // attach wires one pane. resolve(event) returns {expr, rect, anchor} or null.
   function attach(pane, resolve) {
     pane.addEventListener("mousemove", (ev) => {
-      // A held button means a drag or a text selection, neither of which wants
-      // a tooltip appearing under the pointer.
+      // A held button means a drag or a text selection, and neither should
+      // produce a tooltip under the pointer.
       if (ev.buttons) {
         hide();
         return;
@@ -147,23 +147,23 @@ export function createHover({ element, evaluate, isEnabled }) {
         hide();
         return;
       }
-      // Still over the same thing: leave both the timer and the tooltip alone.
-      // Without this, moving within one word restarts the dwell forever and
-      // the tooltip never appears.
+      // Still over the same expression, so leave the timer and the tooltip
+      // alone. Without this, moving within one word restarts the dwell timer
+      // repeatedly and the tooltip never appears.
       if (hit.expr === shown || hit.expr === pending?.expr) return;
       hide();
       schedule(hit);
     });
     pane.addEventListener("mouseleave", hide);
     pane.addEventListener("mousedown", hide);
-    // The virtual list scrolls the pane itself, so a scroll moves the word out
-    // from under a tooltip that would otherwise stay put.
+    // The virtual list scrolls the pane itself, so scrolling moves the word out
+    // from under a tooltip that would otherwise stay in place.
     pane.addEventListener("scroll", hide, { passive: true });
     pane.addEventListener("wheel", hide, { passive: true });
   }
 
-  // Anything that moves the page, changes the program, or takes the user
-  // somewhere else invalidates a value read at a particular stop.
+  // Anything that moves the page, changes the program, or moves focus
+  // elsewhere invalidates a value that was read at a particular stop.
   window.addEventListener("blur", hide);
   window.addEventListener("resize", hide);
   document.addEventListener("keydown", hide);

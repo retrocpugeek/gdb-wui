@@ -14,9 +14,9 @@ import (
 )
 
 // These drive the whole protocol through the exec seam, with a fake server in
-// Go instead of a JVM. That is the point: the interesting behaviour here is id
-// matching, death propagation and cancellation, none of which needs Ghidra to
-// exercise and all of which would be untestable if the only way in were a
+// Go instead of a JVM. The behaviour worth testing is id matching, death
+// propagation and cancellation, none of which needs Ghidra to exercise, and all
+// of which would be untestable if the only way in were a
 // 3.5-second process launch.
 
 // fake speaks the server side of the protocol. handler returns the JSON line

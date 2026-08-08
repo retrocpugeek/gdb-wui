@@ -136,8 +136,8 @@ func (a *Assets) Handler() http.Handler {
 
 		if a.dev {
 			// no-store, not no-cache: Chrome will still reuse a no-cache
-			// module from memory within a navigation, which is exactly the
-			// stale-JS confusion the dev loop exists to avoid.
+			// module from memory within a navigation, which would serve stale JS
+			// during the dev loop.
 			w.Header().Set("Cache-Control", "no-store")
 		} else {
 			etag := `"` + a.version + `"`

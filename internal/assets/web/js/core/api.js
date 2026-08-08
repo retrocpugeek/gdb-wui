@@ -4,7 +4,7 @@
 // that fetching a 2 MB file does not sit in front of latency-sensitive stepping
 // traffic and inferior output on the one connection. Credentials are the
 // session cookie, which the browser attaches automatically; no header is set,
-// because a rebound page would not have the cookie and that is the point.
+// because a rebound page would not have the cookie.
 
 export class ApiError extends Error {
   constructor(code, message, status) {

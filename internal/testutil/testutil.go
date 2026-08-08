@@ -52,7 +52,7 @@ func firstLine(s string) string {
 }
 
 // gdbMajor pulls the major version out of a "GNU gdb (Ubuntu 17.1-2ubuntu1) 17.1"
-// banner. The distribution suffix in parentheses is skipped deliberately: it
+// banner. The distribution suffix in parentheses is skipped, because it
 // contains digits that are not the version.
 func gdbMajor(banner string) int {
 	line := firstLine(banner)

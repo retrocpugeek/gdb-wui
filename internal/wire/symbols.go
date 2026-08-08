@@ -33,7 +33,7 @@ const (
 	// executable is loaded and when a typed console command changes what gdb
 	// has symbols for — `file`, `add-symbol-file`, `symbol-file` — because a
 	// remote-target user reaches for exactly those, and a stale pane that
-	// still lists the previous program's functions is worse than an empty one.
+	// still lists the previous program's functions would be misleading.
 	EventSymbolsInvalidated = "symbolsInvalidated"
 )
 
@@ -48,8 +48,9 @@ const (
 // Two populations end up here and they are not interchangeable. A symbol with
 // debug info knows its source file and line, so it can be jumped to in the
 // source view. One from the ELF symbol table alone knows only an address, and
-// the only honest destination for it is the disassembly. Debug reports which,
-// so the UI can say so rather than offering a jump that silently does nothing.
+// the only destination available for it is the disassembly. Debug reports
+// which kind it is, so the UI can say so rather than offering a jump that does
+// nothing.
 type Symbol struct {
 	Name string `json:"name"`
 	// Kind is SymbolFunction or SymbolVariable.

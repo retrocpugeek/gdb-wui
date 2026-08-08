@@ -1,14 +1,14 @@
 // The variables tree: locals, and watches, in one panel.
 //
-// Two decisions carry this panel:
+// Two decisions shape this panel:
 //
 //   - Rows live in a flat array and render on the virtual list. Arrays of
 //     structs produce thousands of rows, and a nested-DOM tree would fall over
-//     exactly when someone opens the interesting one.
+//     on the ones worth opening.
 //   - Expansion is keyed by the server's stable *path*, never by varobj id.
 //     The varobj behind a row is deleted and recreated on every re-run and on
-//     LRU eviction; the path survives, so the tree stays open while stepping —
-//     which is precisely when the user is watching a value change.
+//     LRU eviction; the path survives, so the tree stays open while stepping,
+//     which is when a value is being watched.
 
 import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 

@@ -103,7 +103,7 @@ func TestWebSocketThroughTheFullStack(t *testing.T) {
 }
 
 // TestWebSocketRefusedWithoutCookie must fail with a 401 at the HTTP layer, not
-// with a successful upgrade followed by a close — which is exactly what happens
+// with a successful upgrade followed by a close, which is what happens
 // when authorization lives inside the WebSocket handler instead of in front of
 // it.
 func TestWebSocketRefusedWithoutCookie(t *testing.T) {

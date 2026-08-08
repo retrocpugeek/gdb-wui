@@ -91,7 +91,7 @@ func newFixtureFactory(t *testing.T, makeWS func(net.Addr) http.Handler) *fixtur
 }
 
 // do issues a request with full control over the headers the security layer
-// reads. It deliberately does not follow redirects: the bootstrap flow's 303 is
+// reads. It does not follow redirects, because the bootstrap flow's 303 is
 // something tests assert on.
 func (f *fixture) do(method, path string, mutate ...func(*http.Request)) *http.Response {
 	f.t.Helper()

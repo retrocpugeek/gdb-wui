@@ -87,7 +87,7 @@ func (f *FS) buildIndex() {
 	f.index.mu.Unlock()
 }
 
-// sourceExtensions is what gets indexed. Deliberately narrow: these are the
+// sourceExtensions is what gets indexed. It is narrow because these are the
 // files a debugger reports line numbers in.
 var sourceExtensions = map[string]bool{
 	".c": true, ".h": true, ".cc": true, ".cpp": true, ".cxx": true,
@@ -184,8 +184,8 @@ func commonSuffixLength(a, b []string) int {
 // <root>/src/util.c, the shared suffix is "src/util.c", so the substitution is
 // /build -> <root>. Teaching gdb the prefix once fixes every later frame in
 // that tree, plus `list`, `info line` and anything the user types at the
-// console. Rewriting paths one file at a time in the UI is a losing game by
-// comparison: gdb keeps reporting the old ones.
+// console. Rewriting paths one file at a time in the UI does not work, because
+// gdb keeps reporting the old ones.
 func (f *FS) SubstitutionFor(gdbPath, rel string) (from, to string, ok bool) {
 	cleaned := path.Clean(strings.ReplaceAll(gdbPath, "\\", "/"))
 	shared := commonSuffixLength(strings.Split(cleaned, "/"), strings.Split(rel, "/"))

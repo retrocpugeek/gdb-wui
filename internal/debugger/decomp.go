@@ -21,10 +21,10 @@ import (
 
 // Decompilation.
 //
-// The decompiler is a separate resource with its own lifetime, deliberately
-// not part of the session's state machine. It lives behind its own mutex
-// rather than in s.st, and that is what keeps a cold start — seconds for an
-// existing project, minutes when a binary has to be analysed — off the actor
+// The decompiler is a separate resource with its own lifetime, and is not part
+// of the session's state machine. It lives behind its own mutex rather than in
+// s.st, which keeps a cold start — seconds for an existing project, minutes
+// when a binary has to be analysed — off the actor
 // goroutine. Blocking the actor for a minute would freeze stepping,
 // breakpoints and the console, which is a poor trade for a view.
 //
@@ -90,8 +90,8 @@ type decomp struct {
 	// would assign it to a client nobody is left to close, orphaning a JVM.
 	closed bool
 	// biasFrom names the symbol the bias is established from, and biasAddr is
-	// that symbol's Ghidra address. The *numeric* bias is deliberately not
-	// cached: a position-independent executable relocates when it starts
+	// that symbol's Ghidra address. The numeric bias is not cached, because a
+	// position-independent executable relocates when it starts
 	// running, so a bias computed before `run` is wrong after it — measured,
 	// by watching a decompiled entry stay at its link-time 0x11e9 while gdb
 	// had moved the program to 0x5555555551e9. Only the choice of symbol is
@@ -580,8 +580,7 @@ func storageKind(k string) string {
 // variable is always at entry_sp + offset. Only recovering entry_sp is
 // per-ABI, and each rule below was established by measurement — see
 // docs/decompilation.md. An architecture with no established rule gets no
-// expression rather than a guess: a plausible wrong address is worse than a
-// blank, because it reads as a value.
+// expression rather than a guess, because a wrong address reads as a value.
 func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) string {
 	switch v.Storage.Kind {
 	case ghidra.StorageRegister:
@@ -861,8 +860,8 @@ func (s *Session) exeImageRange(client *ghidra.Client) (lo, hi uint64, ok bool) 
 	return base, base + (maxV - minV), true
 }
 
-// entryAnchor names the entry-point anchor in BiasFrom. Not a symbol name, and
-// deliberately not one a program could have.
+// entryAnchor names the entry-point anchor in BiasFrom. It is not a symbol
+// name, and is not one a program could have.
 const entryAnchor = "<entry point>"
 
 // runtimeEntryPoint reads the relocated entry point out of `info files`.
@@ -1058,8 +1057,8 @@ func (s *Session) execStepLine(r *request) (any, *wire.Error) {
 	if startApprox {
 		start = 0
 	}
-	// With no map there is nothing to step out of and one instruction is all
-	// that can honestly be claimed.
+	// With no map there is nothing to step out of, so one instruction is all
+	// that can be claimed.
 	if len(req.Lines) == 0 {
 		s.st.stepping = nil
 	} else {

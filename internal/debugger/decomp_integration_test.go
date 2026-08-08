@@ -55,14 +55,14 @@ int main(void) { printf("%d\n", accumulate(7)); return 0; }
 	if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// -no-pie is NOT passed: the relocation is the point of these tests.
+	// -no-pie is not passed, because these tests are about the relocation.
 	out, err := exec.Command("gcc", "-g", "-O0", "-o", filepath.Join(dir, "demo"), src).
 		CombinedOutput()
 	if err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
-	// A second build with no debug info, deliberately not stripped so its
-	// function symbols survive. That is what firmware looks like, and it is the
+	// A second build with no debug info, not stripped, so that its function
+	// symbols survive. That is what firmware looks like, and it is the
 	// only build where gdb's prologue skip lands in the gap between the
 	// function's entry and the first address any decompiled line claims.
 	out, err = exec.Command("gcc", "-O0", "-o", filepath.Join(dir, "nodebug"), src).
@@ -224,7 +224,7 @@ func TestDecompLineMapMatchesTheProgramCounter(t *testing.T) {
 	}
 
 	// And every mapped address must be inside the function body. A map that
-	// points outside is worse than none: it looks authoritative.
+	// points outside the body would look authoritative and be wrong.
 	lo, hi := mustAddr(t, fn.BodyStart), mustAddr(t, fn.BodyEnd)
 	for _, l := range fn.Lines {
 		for _, a := range l.Addrs {
@@ -240,7 +240,7 @@ func TestDecompLineMapMatchesTheProgramCounter(t *testing.T) {
 // TestDecompStackExpressionsReadTheRightMemory closes the loop that matters
 // most: an expression derived from Ghidra's frame base, evaluated by gdb,
 // against a value the test knows. A wrong frame rule produces a plausible
-// number from the wrong slot, which is exactly what a user cannot detect.
+// number from the wrong slot, which a user cannot detect.
 func TestDecompStackExpressionsReadTheRightMemory(t *testing.T) {
 	k := decompHarness(t)
 	do := k.do
@@ -534,7 +534,7 @@ func TestStepLineFromAFunctionBreakpoint(t *testing.T) {
 	// The walk must land on the first address a line claims — not before it and
 	// not past it.
 	//
-	// One honest limitation: on x86-64 the prologue gap is one or two
+	// One limitation: on x86-64 the prologue gap is one or two
 	// instructions, because Ghidra maps the stack-protector load that sits
 	// immediately after gdb's skip point. So this cannot distinguish a walk
 	// from a single instruction step; reverting the walk entirely leaves it

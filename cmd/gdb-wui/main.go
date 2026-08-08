@@ -331,7 +331,7 @@ func watchIdle(ctx context.Context, h *hub.Hub, after time.Duration,
 
 // printURL asks a running server for a fresh login link.
 //
-// It exists because the bootstrap token is deliberately single-use with a
+// It exists because the bootstrap token is single-use with a
 // 60-second TTL — it ends up in argv and browser history, so a long-lived one
 // would be a standing credential in `ps` output. Making a new one cheap is the
 // right answer to "the link expired"; making the old one last longer is not.

@@ -17,12 +17,11 @@ import (
 
 // consoleExec runs a command as if the user had typed it at gdb's prompt.
 //
-// This is the escape hatch that keeps the semantic command set honest: anything
-// the UI does not model, gdb can still do. The cost is that the command may
-// change state behind the server's back — `b main.c:12`, `next`, `thread 2`
-// are all ordinary things to type — so every console command is followed by a
-// resync. Skipping it would leave the breakpoint mirror and the selection
-// quietly wrong, which is worse than not offering a console at all.
+// This is the escape hatch for anything the UI does not model. The cost is that
+// the command may change state behind the server's back — `b main.c:12`,
+// `next` and `thread 2` are all ordinary things to type — so every console
+// command is followed by a resync. Without it the breakpoint mirror and the
+// selection would drift out of true.
 func (s *Session) consoleExec(r *request) (any, *wire.Error) {
 	req, werr := decode[wire.ConsoleExecRequest](r.req.Payload)
 	if werr != nil {
@@ -51,9 +50,8 @@ func (s *Session) consoleExec(r *request) (any, *wire.Error) {
 	}
 
 	// Only believe a `target remote` that gdb accepted. A refused connection
-	// that still flipped the indicator to "connected" would be worse than no
-	// indicator at all, and it would also make shutdown try to detach from
-	// something that was never attached.
+	// that still flipped the indicator to "connected" would also make shutdown
+	// try to detach from something that was never attached.
 	s.noteTargetCommand(line, cmdErr == nil)
 	s.noteSymbolCommand(line)
 	resynced := s.resyncAfterConsole(r.ctx)
@@ -137,10 +135,10 @@ func (s *Session) noteSymbolCommand(line string) {
 
 // resyncAfterConsole re-reads the state a typed command may have changed.
 //
-// Deliberately narrow: breakpoints, the thread list and the selection. Anything
-// derived from a *stop* does not need re-reading, because a console command
-// that resumes the program produces a real stop event and the ordinary path
-// handles it.
+// Narrow on purpose: breakpoints, the thread list and the selection. Anything
+// derived from a stop does not need re-reading, because a console command that
+// resumes the program produces a real stop event and the ordinary path handles
+// it.
 func (s *Session) resyncAfterConsole(ctx context.Context) []string {
 	if s.st.runState == wire.RunStateRunning {
 		// Nothing can be read while running, and the stop that follows will

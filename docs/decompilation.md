@@ -1,11 +1,11 @@
 # Decompilation
 
 For a binary with no source, gdb-wui can show Ghidra's recovered C beside the
-live session, with the program counter marked on it. gdb stays in charge — this
-adds a view, not a second debugger.
+live session, with the program counter marked on it. gdb still does the
+debugging; this adds a view rather than a second debugger.
 
-It is optional. Without `-ghidra` nothing changes and the Decompiled tab
-explains itself.
+The feature is optional. Without `-ghidra` nothing else changes, and the
+Decompiled tab says what it needs.
 
 ## Using it
 
@@ -13,23 +13,23 @@ explains itself.
 gdb-wui -project DIR -ghidra /opt/ghidra_12.1.2_PUBLIC
 ```
 
-gdb-wui runs Ghidra as a separate process, exactly as it runs gdb — no linking,
-nothing vendored. It analyses the loaded executable once, caches the result
-under `<project>/gdb-wui-decomp` keyed on the binary's sha256, and keeps a
-resident decompiler for the session so a function costs 100-200ms rather than
-the 3.5s a fresh `analyzeHeadless` would.
+gdb-wui runs Ghidra as a separate process, in the same way it runs gdb: nothing
+is linked and nothing is vendored. It analyses the loaded executable once,
+caches the result under `<project>/gdb-wui-decomp` keyed on the binary's sha256,
+and keeps a resident decompiler for the session, so decompiling a function takes
+100-200 ms rather than the 3.5 s a fresh `analyzeHeadless` would take.
 
-That directory is visible rather than hidden, and not by preference: **Ghidra
-refuses any path element beginning with a dot**, anywhere in a project's
-location. Measured on 12.1.2 — `.../x/.gdbwui/ghidra` and
-`.../x/.hidden/sub/ghidra` are both rejected with "Path element starting with
-'.' is not permitted", while the same tree without dots imports fine. That also
-rules out every conventional cache location, `$XDG_CACHE_HOME` being `~/.cache`
-and `$XDG_STATE_HOME` `~/.local/state`. If the project itself lives under a
-dotted directory, gdb-wui falls back to a temporary directory and says so.
+The cache directory is visible rather than hidden because Ghidra refuses any
+path element beginning with a dot, anywhere in a project's location. Measured on
+12.1.2: `.../x/.gdbwui/ghidra` and `.../x/.hidden/sub/ghidra` are both rejected
+with "Path element starting with '.' is not permitted", while the same tree
+without dots imports normally. This also rules out the conventional cache
+locations, since `$XDG_CACHE_HOME` is `~/.cache` and `$XDG_STATE_HOME` is
+`~/.local/state`. If the project itself is under a dotted directory, gdb-wui
+falls back to a temporary directory and reports that it has done so.
 
-To read *your own* Ghidra project instead — with your names, types and comments
-— point at it. It is opened read-only and never written to:
+To use your own Ghidra project instead, with your names, types and comments,
+point gdb-wui at it. The project is opened read-only and never written to:
 
 ```sh
 gdb-wui -ghidra /opt/ghidra_12.1.2_PUBLIC \
@@ -37,25 +37,27 @@ gdb-wui -ghidra /opt/ghidra_12.1.2_PUBLIC \
         -ghidra-program firmware.elf
 ```
 
-`-ghidra-program` is required there, and not out of fussiness: a real project
-holds several programs and, in Ghidra's Debugger workflow, a pile of traces,
-and `analyzeHeadless` with no `-process` pattern sweeps all of them.
+`-ghidra-program` is required in this case because a project usually holds
+several programs, and in Ghidra's Debugger workflow a number of traces as well.
+`analyzeHeadless` with no `-process` pattern would process all of them.
 
-`-decomp-dir` moves the cache, which a read-only or network-mounted project
-needs.
+Use `-decomp-dir` to move the cache, which a read-only or network-mounted
+project needs.
 
 ### What the pane does
 
-Stop anywhere and it decompiles the function you are in, marking the line. The
-gutter sets breakpoints on the lines that have addresses; hovering a local or a
-global reads its value. **Step over and step into work**, which they do not
-otherwise: gdb's own stepping needs a line table, and without one its step
-range is the whole function, so a step over runs to the function's exit. With
-this tab showing, a step walks to the next decompiled line instead.
+When the program stops, the pane decompiles the function it is in and marks the
+line. The gutter sets breakpoints on lines that have addresses, and hovering a
+local or a global reads its value.
 
-The **Log** tab carries what the decompiler is doing — what it imported, how
-long analysis took, one line per function with its timing, and Ghidra's own
-complaints.
+Stepping works here, which it does not otherwise: gdb's own stepping needs a
+line table, and without one its step range is the whole function, so stepping
+over runs to the function's exit. While this tab is showing, a step moves to the
+next decompiled line instead.
+
+The **Log** tab shows what the decompiler is doing: what it imported, how long
+analysis took, one line per function with its timing, and Ghidra's own
+messages.
 
 ## Producing a sidecar by hand
 
@@ -65,18 +67,18 @@ analyzeHeadless /tmp/proj decomp -import ./firmware.elf \
     -deleteProject
 ```
 
-The Ghidra-side sources live in `internal/ghidra/scripts` because they are
-`go:embed`ed into the binary — a built gdb-wui carries its own decompiler glue
-and does not need the repository checked out. They are ordinary Ghidra scripts
-and can be run by hand, as above.
+The Ghidra-side sources are in `internal/ghidra/scripts` because they are
+embedded into the binary with `go:embed`, so a built gdb-wui carries its own
+decompiler glue and does not need the repository checked out. They are ordinary
+Ghidra scripts and can be run by hand, as above.
 
-An optional second script argument is a regular expression; only functions whose
-names match are decompiled. On an image with thousands of functions that is the
-difference between a look and a batch job.
+The script takes an optional second argument, a regular expression; only
+functions whose names match are decompiled. On an image with thousands of
+functions this is the difference between a quick look and a batch job.
 
 This is the batch counterpart of what the server does on demand. Both emit the
-same schema from the same `DecompJson` helper, so the format below describes
-either.
+same schema from the same `DecompJson` helper, so the format described below
+applies to either.
 
 ## Reading one
 
@@ -88,13 +90,13 @@ show-decomp.py out.json FUN_001028c0        # one function, annotated
 show-decomp.py out.json main --bias 0x555555554000
 ```
 
-`--bias` shifts every address into the running program's coordinates, so what
-it prints lines up with what gdb shows. Lines marked `!` share an address with
-another line. Variables are rendered as expressions you can paste into gdb.
+`--bias` shifts every address into the running program's coordinates, so that
+the output lines up with what gdb shows. Lines marked `!` share an address with
+another line. Variables are printed as expressions you can paste into gdb.
 
-Ghidra is Apache-2.0, so unlike gdb there is no licence pressure to keep it at
-arm's length. The rule is kept anyway: it is an 884 MB install that also needs a
-system JDK 21+, and both must stay optional.
+Ghidra is Apache-2.0, so unlike gdb there is no licensing reason to keep it at
+arm's length. It is kept at arm's length anyway, because it is an 884 MB install
+that also needs a system JDK 21 or later, and both have to remain optional.
 
 ## The format
 
@@ -225,28 +227,27 @@ bias = gdb_address(sym) - sidecar_entry(sym)
 For that binary the answer is `0x555555454000`, and it is the same arithmetic
 the symbols pane already avoids by jumping to names instead of addresses.
 
-**A stripped image has no such symbol**, and that is the case the whole
-decompiled view exists for. Measured on a buildroot busybox: all 372 of its
-function symbols are undefined imports and not one is defined, so there is no
-name gdb and Ghidra share. The anchor there is the entry point, which always
-exists — its link-time value is in the ELF header, which gdb-wui reads itself,
-and its runtime value is what gdb prints for `info files`. Neither needs a
-symbol table.
+A stripped image has no such symbol, which is the case the decompiled view exists
+for. Measured on a buildroot busybox: all 372 of its function symbols are
+undefined imports and none is defined, so gdb and Ghidra share no name. The
+anchor in that case is the entry point, which always exists. Its link-time value
+is in the ELF header, which gdb-wui reads itself, and its runtime value is what
+gdb prints for `info files`. Neither needs a symbol table.
 
-Reading it is the one place gdb-wui asks gdb something in prose:
-`-file-list-shared-libraries` omits the main executable and no MI command
-reports a section address, so `info files` is parsed. Its console output is
-captured at the MI handler rather than from the actor's queue, because `send`
-blocks the actor until the reply and a command whose *answer* is its console
-output could not otherwise be read at all.
+Reading it is the one place gdb-wui parses gdb's prose output.
+`-file-list-shared-libraries` omits the main executable, and no MI command
+reports a section address, so `info files` is parsed instead. Its console output
+is captured at the MI handler rather than from the actor's queue, because `send`
+blocks the actor until the reply arrives, and a command whose answer is its
+console output could not otherwise be read.
 
 ### An address in another module
 
-The commonest reason a lookup fails is not a bad bias — it is that the program
-counter is somewhere the decompiler does not have. Stopping in the dynamic
-loader is enough. The consumer knows the image's extent from the ELF and should
-say so, because Ghidra's own answer names a translated address the user never
-saw:
+The most common reason a lookup fails is not a wrong bias but that the program
+counter is somewhere the decompiler does not have; stopping in the dynamic
+loader is enough to cause it. The consumer knows the image's extent from the ELF
+and should say so, because Ghidra's own answer names a translated address the
+user never saw:
 
 ```
 no function 0x111b900
@@ -254,33 +255,35 @@ no function 0x111b900
 decompiler has. It is in a shared library or the dynamic loader.
 ```
 
-Not every target needs it. `vwfw-linux_64` is a statically linked `EXEC`, not a
-PIE, and Ghidra loaded it at its true `0x120000000`; the bias there is zero.
-Firmware is often the easy case and a desktop hello-world the hard one.
+Not every target needs a bias. `vwfw-linux_64` is a statically linked `EXEC`
+rather than a PIE, and Ghidra loaded it at its true `0x120000000`, so the bias
+is zero. Firmware is often the simpler case and a desktop hello-world the harder
+one.
 
 ### Stack offsets
 
-A `stack` offset is relative to **Ghidra's frame base**, not to any register
-gdb knows. On x86-64 SysV with a frame pointer, measured on two functions in
-two different binaries:
+A `stack` offset is relative to Ghidra's frame base rather than to any register
+gdb knows. On x86-64 SysV with a frame pointer, measured on two functions in two
+different binaries:
 
 ```
 rbp_offset = ghidra_offset + 8
 ```
 
-**AArch64 has no rule yet, so its stack variables get no expression.** Not an
-oversight but a measurement: `bb_full_fd_action` in busybox opens
-`stp x19, x20, [sp, #-96]!` and then `sub sp, sp, #4112`, a 4208-byte frame,
-while Ghidra reports `frame.size` as 104. The MIPS rule does not transfer, and
-neither does anything else derivable from the sidecar alone. What does work is
-gdb's own CFA — `info frame` reports "Previous frame's sp", which equals
-Ghidra's frame base exactly, and is correct even mid-prologue. It is reachable
-over MI as `$sp` evaluated in the caller's frame, and it generalises: `bl` and
-`jal` push nothing, `call` pushes 8, so `entry_sp = caller_sp - callPush`
-covers x86-64, MIPS64 and AArch64 with one constant per ISA. Verified on all
-three. Adopting it means expressions become frame-dependent rather than static,
-which is a change to what `expr` promises, so it is written down here rather
-than half-done.
+AArch64 has no rule established, so its stack variables get no expression. This
+is a measured result rather than an omission: `bb_full_fd_action` in busybox
+opens with `stp x19, x20, [sp, #-96]!` and then `sub sp, sp, #4112`, a 4208-byte
+frame, while Ghidra reports `frame.size` as 104. The MIPS rule does not
+transfer, and nothing else derivable from the sidecar alone does either.
+
+gdb's own CFA does work. `info frame` reports "Previous frame's sp", which
+equals Ghidra's frame base exactly and is correct even mid-prologue. It is
+reachable over MI as `$sp` evaluated in the caller's frame, and it generalises:
+`bl` and `jal` push nothing and `call` pushes 8, so
+`entry_sp = caller_sp - callPush` covers x86-64, MIPS64 and AArch64 with one
+constant per ISA. This was verified on all three. Adopting it would make
+expressions frame-dependent rather than static, which changes what `expr`
+promises, so it is recorded here rather than implemented halfway.
 
 `inspect`: `buf` at Ghidra `-0x58` is `-0x50(%rbp)` in the instruction stream.
 `FUN_00101167`: `local_10` at Ghidra `-16` is `-0x8(%rbp)`. The 8 is the saved
@@ -352,13 +355,14 @@ Every decompiled line that has DWARF coverage falls inside exactly one source
 line. Ghidra's `puts(buf)` statement spans `0x123c–0x1243`; DWARF assigns
 `structs.c:23` to `0x123c–0x1247`. They agree on the boundary.
 
-### Collisions, and why `-O0` fixtures flatter them
+### Collisions
 
-An address can belong to two decompiled lines, so "which line is the PC on" is
-not always a single answer. A consumer must pick deterministically.
+An address can belong to two decompiled lines, so "which line is the program
+counter on" does not always have a single answer, and a consumer has to choose
+deterministically.
 
-Two token kinds are excluded from `addrs` because their address is a
-*reference*, not code generated for that line:
+Two kinds of token are excluded from `addrs`, because their address is a
+reference rather than code generated for that line:
 
 - **Comments.** Ghidra's `/* WARNING: Subroutine does not return */` carries
   the address of the call it annotates. Five of the six original collisions in
@@ -370,37 +374,37 @@ Two token kinds are excluded from `addrs` because their address is a
 On `build/structs` that leaves one collision, and it is genuine: in
 `FUN_00101020`, `(*(code *)0x0)();` and `return;` really do share `0x1026`.
 
-**But `-O0` fixtures are not the interesting case.** Measured on `/usr/bin/gzip`
-— 97 KiB, 72 functions, ordinary optimised C:
+`-O0` fixtures understate the problem. Measured on `/usr/bin/gzip`, which is
+97 KiB, 72 functions of ordinary optimised C:
 
 | | collisions | of addresses | adjacent | distant |
 |---|---|---|---|---|
 | comments excluded only | 2129 | 29.2% | 1336 | 793 |
 | labels excluded too | 1614 | 22.4% | 1205 | 409 |
 
-So on real code roughly **one address in five is claimed by two decompiled
-lines**, and no amount of token filtering will remove that — optimised code
-genuinely has instructions belonging to more than one expression.
+On real code, then, roughly one address in five is claimed by two decompiled
+lines, and token filtering cannot remove that: optimised code genuinely has
+instructions belonging to more than one expression.
 
-It is much less alarming than the number suggests. 75% of what remains is
-between *adjacent* lines: one statement that the pretty-printer wrapped, where
-either choice is right. The distant cases are dominated by shared control flow.
+The number matters less than it appears. 75% of what remains is between adjacent
+lines — one statement that the pretty-printer wrapped, where either choice is
+correct. The distant cases are mostly shared control flow.
 
-A consumer should pick deterministically — preferring the line for which the
-address is the minimum of its set, then the lowest line number — and should
-show the ambiguity rather than hide it. This is the same class of imprecision
-as stepping through `-O2` code with DWARF, and it is honest to present it that
-way rather than implying the decompiled line is where the program "is".
+A consumer should choose deterministically, preferring the line for which the
+address is the minimum of its set and then the lowest line number, and should
+show the ambiguity rather than hide it. This is the same class of imprecision as
+stepping through `-O2` code with DWARF.
 
-## Limits worth stating before building on this
+## Limits to know before building on this
 
-- **Decompiled C is a model, not the truth.** It can be wrong. It belongs
-  beside the disassembly, never instead of it.
-- **`-g` flatters the output.** `build/structs` decompiles to `config *cfg`
-  only because Ghidra's DWARF analyser imported the names and types. The
-  stripped case — the actual use case — gives `param_1` and `local_58`. The
-  address mapping is unaffected; the readability is much worse, which is
-  precisely the argument for showing live values in the pane.
+- **Decompiled C is a model rather than the truth.** It can be wrong, and
+  belongs beside the disassembly rather than in place of it.
+- **`-g` makes the output look better than it will be.** `build/structs`
+  decompiles to `config *cfg` only because Ghidra's DWARF analyser imported the
+  names and types. The stripped case, which is the one this feature is for,
+  gives `param_1` and `local_58`. The address mapping is unaffected; only
+  readability suffers, which is the argument for showing live values in the
+  pane.
 - **Analysis is not interactive.** It can never sit on the stop path. The
   sidecar is a cache, keyed on `sha256` and the Ghidra version — a cache keyed
   on a path would happily serve a stale decompilation of a rebuilt binary.
@@ -412,28 +416,29 @@ way rather than implying the decompiled line is where the program "is".
   | `/usr/bin/gzip` | 97 KiB | 72 | 3.8 s | 12.1 s |
   | `vwfw-linux_64` (MIPS64, static) | 2.0 MiB | 21 of 1703 | 0.5 s | 68 s |
 
-  Analysis, not decompilation, dominates on a large image: the firmware's 68
-  seconds is almost all auto-analysis, and decompiling 21 named functions from
-  it cost half a second. Decompiling is ~50 ms per function, so even all 1703
-  would be under two minutes. The fixed cost is why one function per invocation
-  is not viable: export in bulk, as this does, or keep a Ghidra process alive.
-- **The sidecar is not small.** `/usr/bin/gzip` produces 819 KiB of JSON from a
-  97 KiB binary — roughly 8× the input, most of it the address sets. It
-  compresses well and it is a cache, but it is not something to hold in memory
-  per connected browser.
-- **Decompiling is the cost, not analysis.** Ghidra's own `ParallelDecompiler`
-  exists; this script is deliberately serial and single purpose.
+  Analysis rather than decompilation dominates on a large image. The firmware's
+  68 seconds is almost all auto-analysis, and decompiling 21 named functions
+  from it took half a second. Decompiling costs about 50 ms per function, so
+  even all 1703 would take under two minutes. Because of that fixed cost, one
+  function per invocation is not viable: either export in bulk, as this script
+  does, or keep a Ghidra process alive.
+- **The sidecar is large.** `/usr/bin/gzip` produces 819 KiB of JSON from a
+  97 KiB binary, roughly eight times the input, most of it the address sets. It
+  compresses well and it is a cache, but it should not be held in memory per
+  connected browser.
+- **Decompiling costs more than analysis for repeated work.** Ghidra provides a
+  `ParallelDecompiler`; this script is serial and single-purpose.
 - **Import and serve cannot be one invocation.** `analyzeHeadless` writes an
-  imported program to the project only once the postScript returns, and the
-  resident server never returns — it *is* the server. Doing both at once
-  analyses the binary, serves it, and discards it, leaving an empty project for
-  the next run to fail on. They are two invocations.
-- **Stepping is reconstructed, not recovered.** `exec.stepLine` single-steps
-  until the pc reaches a different line, which is what gdb does with a real
-  line table. It cannot know about inlining or about statements the decompiler
-  merged, so where DWARF exists gdb's own stepping is better and is what the
-  source view keeps using.
-- **Far fewer variables are usefully readable than the storage kinds suggest.**
+  imported program to the project only after the postScript returns, and the
+  resident server never returns, because it is the server. Doing both at once
+  analyses the binary, serves it and discards it, leaving an empty project for
+  the next run. They have to be two invocations.
+- **Stepping is reconstructed rather than recovered.** `exec.stepLine`
+  single-steps until the pc reaches a different line, which is what gdb does
+  with a real line table. It cannot know about inlining, or about statements the
+  decompiler merged, so where DWARF exists gdb's own stepping is better and is
+  what the source view uses.
+- **Fewer variables are readable than the storage kinds suggest.**
   On `/usr/bin/gzip`, of 960 variables:
 
   | | | |
@@ -445,15 +450,14 @@ way rather than implying the decompiled line is where the program "is".
   The firmware splits almost identically — 71% register, 18% stack, 11%
   `unique` across its 21 functions — so this is not an artefact of one binary.
 
-  The middle row is the trap. Counting it as "has a location" gives a cheerful
+  The middle row is where the trap is. Counting it as "has a location" gives
   83%, but in optimised code the decompiler packs many variables into one
   register: `FUN_001028c0` maps eight of its locals onto `$rax`, and one
   function maps ten. Reading `$rax` for `pcVar5` while stopped anywhere except
-  `0x1028f4` gives a confident, wrong answer.
+  `0x1028f4` gives a wrong answer that looks correct.
 
-  So a decompiled pane should show a value for a register variable only when
-  the pc is within its live range, and blank it otherwise. `pc` is exported for
-  exactly this; the live range itself is not, and getting it would mean asking
-  the decompiler for the HighVariable's p-code cover rather than a single
-  address. That is the real work in a live decompiled view, and it is worth
-  knowing before starting rather than after.
+  A decompiled pane should therefore show a value for a register variable only
+  when the pc is within its live range, and blank it otherwise. `pc` is exported
+  for this purpose. The live range itself is not, and obtaining it would mean
+  asking the decompiler for the HighVariable's p-code cover rather than a single
+  address. That is the main remaining work in a live decompiled view.

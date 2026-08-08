@@ -185,8 +185,8 @@ func (f *FS) Tree(p string) (Listing, error) {
 		}
 		e.Symlink = fi.Mode()&fs.ModeSymlink != 0
 		if e.Symlink {
-			// Resolve through the root to classify the target. Failure means
-			// it points outside, which is exactly what we want to show.
+			// Resolve through the root to classify the target. Failure means it
+			// points outside the root, which is what should be shown.
 			if target, terr := f.root.Stat(child); terr == nil {
 				e.Dir = target.IsDir()
 				if !e.Dir {

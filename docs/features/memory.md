@@ -1,0 +1,69 @@
+---
+title: Memory
+layout: default
+parent: Features
+nav_order: 6
+---
+
+# Memory
+
+![The hex view with its symbol column](../images/memory.png)
+
+The Memory tab shows sixteen bytes per row: the address, the bytes in hex, their
+ASCII, and the symbol the row falls in.
+
+The symbol column tells you what you are looking at, so a row reads as
+`banner+16` rather than as an address you have to work out. Symbols are resolved
+through gdb, so this works with whatever gdb knows — including the ELF symbol
+table of a stripped binary, which needs no debug info.
+
+Rows that belong to no symbol are left blank. Most of the stack and heap is
+blank, which is accurate rather than missing.
+
+## Entering an address
+
+The address box takes an expression, not only a number: `&head`, `$sp`,
+`cfg->items` and `0x404040` all work, as does anything else gdb can evaluate to
+an address. The bar beside the box shows what your expression resolved to, so a
+mistake is visible.
+
+You can also reach the memory viewer without typing an address:
+[hover a variable](variables.md), right-click it, and choose **Show where it is
+stored** or **Show what it points to**. Double-clicking a data symbol in the
+[Symbols pane](symbols.md) also opens it here.
+
+## Unreadable bytes
+
+Bytes in a page that is not mapped are shown as `??` rather than as zeros. Zeros
+are a value and unmapped memory is not, so showing one as the other would be
+misleading exactly when you are trying to find out whether a pointer is valid.
+
+## Worked example
+
+```sh
+gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+./gdb-wui -project /tmp/tour -exe globals
+```
+
+Break on line 49, run, open **Memory** and enter `&counter`. Everything the
+program declares is in the next few rows, and you can read its data directly:
+
+- `counter` is `07`.
+- `banner` spells `gdb-wui` in the ASCII column.
+- `hidden_total` is `9a 47 46 45 44 43 42 41`: the `0x4142434445464748` from the
+  source, little-endian, with the low byte already changed because `main` has
+  run its loop.
+- `head` at `0x4040d0` holds `01`, then a pointer to `0x40200d`, which is the
+  string `"head"`.
+
+Now enter `$sp`. The same view appears with the symbol column empty all the way
+down, because the stack belongs to no symbol.
+
+## What the memory viewer does not do
+
+- **It does not write memory.** Use `set {int}0x404040 = 9` at the
+  [console](console.md).
+- **It does not search** for a byte pattern.
+- **It does not set watchpoints.** Use `watch` at the console.
+- **It does not overlay structures.** It shows bytes; use the
+  [Variables pane](variables.md) for a typed view of the same memory.
