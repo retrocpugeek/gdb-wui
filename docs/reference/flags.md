@@ -7,8 +7,7 @@ nav_order: 1
 
 # Command-line flags
 
-`./gdb-wui -h` prints the same list. A test fails if a flag exists in the code
-and is not on this page.
+`./gdb-wui -h` prints the same list.
 
 ## What to serve, and what to debug
 

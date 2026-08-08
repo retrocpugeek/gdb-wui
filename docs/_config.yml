@@ -63,7 +63,7 @@ callouts:
     color: blue
 
 footer_content: >-
-  gdb-wui is a translator, not a debugger. GDB is still in charge.
+  gdb-wui — a fast and friendly interface to GDB.
 
 # Ordered by what a reader needs first, not alphabetically.
 nav_sort: case_insensitive
