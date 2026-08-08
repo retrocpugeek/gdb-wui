@@ -102,7 +102,7 @@
  *
  * direction:rtl moves the clipping to the leading edge, but on its own it also
  * reorders the neutral characters at each end — a leading "/" jumps to the
- * visual end and "/home/steve" renders as "home/steve/". unicode-bidi:plaintext
+ * visual end and "/usr/local" renders as "usr/local/". unicode-bidi:plaintext
  * takes the content's own direction (LTR, from the first strong character) for
  * ordering while leaving the box's RTL alignment alone, which is what makes
  * both halves behave. */

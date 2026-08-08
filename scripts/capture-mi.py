@@ -32,8 +32,21 @@ OUT = os.path.join(ROOT, "internal", "mi", "testdata", "records.mi")
 
 
 def compile_fixture(tmp, name, *cflags):
+    """Compile a fixture from a copy inside tmp, never from the checkout.
+
+    gcc records the source path it was given in DWARF, and gdb echoes it back
+    in `bkpt`, `frame` and `-symbol-list-lines` records. Compiling straight out
+    of the working tree therefore stamped whoever ran this into the committed
+    corpus — /home/<them>/repo/gdb-wui/testdata/fixtures/hello.c — and made the
+    corpus differ by checkout location, so anyone else regenerating it produced
+    a diff in every path record before they had changed anything.
+
+    Copying first fixes both: tmp is a fixed directory, so the paths are stable
+    across machines and say nothing about the machine.
+    """
     out = os.path.join(tmp, name)
-    src = os.path.join(FIXTURES, name + ".c")
+    src = os.path.join(tmp, name + ".c")
+    shutil.copyfile(os.path.join(FIXTURES, name + ".c"), src)
     subprocess.run(["gcc", *cflags, "-o", out, src], check=True)
     return out
 

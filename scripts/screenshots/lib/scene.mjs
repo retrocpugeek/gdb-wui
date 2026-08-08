@@ -141,17 +141,32 @@ export function clipFrom(from, to, pad = 20) {
  * bottom edge, which in a screenshot reads as a rendering fault rather than as
  * a scroll.
  */
-export async function logClip(page) {
+export async function logClip(page, { tail = 0 } = {}) {
   const panel = await page.rect(".panel-bottom");
-  const bottom = await page.evaluate((limit) => {
-    let last = null;
-    for (const row of document.querySelectorAll(".log-line")) {
-      const box = row.getBoundingClientRect();
-      if (box.bottom <= limit) last = box.bottom;
-    }
-    return last;
-  }, panel.y + panel.height);
-  return bottom ? { ...panel, height: bottom - panel.y } : panel;
+  if (tail) {
+    // Scroll to the end first. The pane keeps itself pinned to the bottom only
+    // while the user has not scrolled, and a scene that clicked around may
+    // have unpinned it.
+    await page.evaluate(() => {
+      const body = document.querySelector("#log");
+      body.scrollTop = body.scrollHeight;
+    });
+    await page.sleep(150);
+  }
+
+  const bounds = await page.evaluate((limit, want) => {
+    const rows = [...document.querySelectorAll(".log-line")]
+      .map((row) => row.getBoundingClientRect())
+      .filter((box) => box.bottom <= limit);
+    if (!rows.length) return null;
+    const shown = want ? rows.slice(-want) : rows;
+    return { top: shown[0].top, bottom: shown[shown.length - 1].bottom };
+  }, panel.y + panel.height, tail);
+
+  if (!bounds) return panel;
+  return tail
+    ? { x: panel.x, y: bounds.top, width: panel.width, height: bounds.bottom - bounds.top }
+    : { ...panel, height: bounds.bottom - panel.y };
 }
 
 /** rowsBelow is the box of an element plus n further rows of its own height. */

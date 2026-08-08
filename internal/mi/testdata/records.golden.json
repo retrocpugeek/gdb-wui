@@ -88,7 +88,7 @@
   },
   {
     "name": "result-bkpt",
-    "raw": "^done,bkpt={number=\"1\",type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"0x000000000000117a\",func=\"main\",file=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",line=\"12\",thread-groups=[\"i1\"],times=\"0\",original-location=\"main\"}",
+    "raw": "^done,bkpt={number=\"1\",type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"0x000000000000117a\",func=\"main\",file=\"/tmp/gdb-wui-mi-capture/hello.c\",fullname=\"/tmp/gdb-wui-mi-capture/hello.c\",line=\"12\",thread-groups=[\"i1\"],times=\"0\",original-location=\"main\"}",
     "type": "result",
     "class": "done",
     "results": {
@@ -99,8 +99,8 @@
         "enabled": "y",
         "addr": "0x000000000000117a",
         "func": "main",
-        "file": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
-        "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
+        "file": "/tmp/gdb-wui-mi-capture/hello.c",
+        "fullname": "/tmp/gdb-wui-mi-capture/hello.c",
         "line": "12",
         "thread-groups": [
           "i1"
@@ -112,7 +112,7 @@
   },
   {
     "name": "result-breakpoint-table",
-    "raw": "^done,BreakpointTable={nr_rows=\"2\",nr_cols=\"6\",hdr=[{width=\"7\",alignment=\"-1\",col_name=\"number\",colhdr=\"Num\"},{width=\"14\",alignment=\"-1\",col_name=\"type\",colhdr=\"Type\"},{width=\"4\",alignment=\"-1\",col_name=\"disp\",colhdr=\"Disp\"},{width=\"3\",alignment=\"-1\",col_name=\"enabled\",colhdr=\"Enb\"},{width=\"18\",alignment=\"-1\",col_name=\"addr\",colhdr=\"Address\"},{width=\"40\",alignment=\"2\",col_name=\"what\",colhdr=\"What\"}],body=[bkpt={number=\"1\",type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"0x000000000000117a\",func=\"main\",file=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",line=\"12\",thread-groups=[\"i1\"],times=\"0\",original-location=\"main\"},bkpt={number=\"2\",type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"<PENDING>\",pending=\"nosuchfunction_xyz\",times=\"0\",original-location=\"nosuchfunction_xyz\"}]}",
+    "raw": "^done,BreakpointTable={nr_rows=\"2\",nr_cols=\"6\",hdr=[{width=\"7\",alignment=\"-1\",col_name=\"number\",colhdr=\"Num\"},{width=\"14\",alignment=\"-1\",col_name=\"type\",colhdr=\"Type\"},{width=\"4\",alignment=\"-1\",col_name=\"disp\",colhdr=\"Disp\"},{width=\"3\",alignment=\"-1\",col_name=\"enabled\",colhdr=\"Enb\"},{width=\"18\",alignment=\"-1\",col_name=\"addr\",colhdr=\"Address\"},{width=\"40\",alignment=\"2\",col_name=\"what\",colhdr=\"What\"}],body=[bkpt={number=\"1\",type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"0x000000000000117a\",func=\"main\",file=\"/tmp/gdb-wui-mi-capture/hello.c\",fullname=\"/tmp/gdb-wui-mi-capture/hello.c\",line=\"12\",thread-groups=[\"i1\"],times=\"0\",original-location=\"main\"},bkpt={number=\"2\",type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"<PENDING>\",pending=\"nosuchfunction_xyz\",times=\"0\",original-location=\"nosuchfunction_xyz\"}]}",
     "type": "result",
     "class": "done",
     "results": {
@@ -166,8 +166,8 @@
               "enabled": "y",
               "addr": "0x000000000000117a",
               "func": "main",
-              "file": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
-              "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
+              "file": "/tmp/gdb-wui-mi-capture/hello.c",
+              "fullname": "/tmp/gdb-wui-mi-capture/hello.c",
               "line": "12",
               "thread-groups": [
                 "i1"
@@ -194,7 +194,7 @@
   },
   {
     "name": "result-stack-frames",
-    "raw": "^done,stack=[frame={level=\"0\",addr=\"0x0000555555555157\",func=\"add\",file=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",line=\"5\",arch=\"i386:x86-64\"},frame={level=\"1\",addr=\"0x0000555555555199\",func=\"main\",file=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",line=\"15\",arch=\"i386:x86-64\"}]",
+    "raw": "^done,stack=[frame={level=\"0\",addr=\"0x0000555555555157\",func=\"add\",file=\"/tmp/gdb-wui-mi-capture/hello.c\",fullname=\"/tmp/gdb-wui-mi-capture/hello.c\",line=\"5\",arch=\"i386:x86-64\"},frame={level=\"1\",addr=\"0x0000555555555199\",func=\"main\",file=\"/tmp/gdb-wui-mi-capture/hello.c\",fullname=\"/tmp/gdb-wui-mi-capture/hello.c\",line=\"15\",arch=\"i386:x86-64\"}]",
     "type": "result",
     "class": "done",
     "results": {
@@ -204,8 +204,8 @@
             "level": "0",
             "addr": "0x0000555555555157",
             "func": "add",
-            "file": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
-            "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
+            "file": "/tmp/gdb-wui-mi-capture/hello.c",
+            "fullname": "/tmp/gdb-wui-mi-capture/hello.c",
             "line": "5",
             "arch": "i386:x86-64"
           }
@@ -215,8 +215,8 @@
             "level": "1",
             "addr": "0x0000555555555199",
             "func": "main",
-            "file": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
-            "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
+            "file": "/tmp/gdb-wui-mi-capture/hello.c",
+            "fullname": "/tmp/gdb-wui-mi-capture/hello.c",
             "line": "15",
             "arch": "i386:x86-64"
           }
@@ -245,17 +245,17 @@
   },
   {
     "name": "result-thread-info-running",
-    "raw": "^done,threads=[{id=\"1\",target-id=\"Thread 0x7ffff7d68b00 (LWP 145450)\",name=\"sleep\",state=\"running\",core=\"11\"}],current-thread-id=\"1\"",
+    "raw": "^done,threads=[{id=\"1\",target-id=\"Thread 0x7ffff7d67b00 (LWP 1881995)\",name=\"sleep\",state=\"running\",core=\"8\"}],current-thread-id=\"1\"",
     "type": "result",
     "class": "done",
     "results": {
       "threads": [
         {
           "id": "1",
-          "target-id": "Thread 0x7ffff7d68b00 (LWP 145450)",
+          "target-id": "Thread 0x7ffff7d67b00 (LWP 1881995)",
           "name": "sleep",
           "state": "running",
-          "core": "11"
+          "core": "8"
         }
       ],
       "current-thread-id": "1"
@@ -603,7 +603,7 @@
   },
   {
     "name": "result-asm-src-and-asm",
-    "raw": "^done,asm_insns=[src_and_asm_line={line=\"31\",file=\"/home/steve/repo/gdb-wui/testdata/fixtures/structs.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/structs.c\",line_asm_insn=[{address=\"0x000055555555527a\",func-name=\"main\",offset=\"27\",opcodes=\"c7 45 c0 03 00 00 00\",inst=\"movl   $0x3,-0x40(%rbp)\"}]},src_and_asm_line={line=\"32\",file=\"/home/steve/repo/gdb-wui/testdata/fixtures/structs.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/structs.c\",line_asm_insn=[{address=\"0x0000555555555281\",func-name=\"main\",offset=\"34\",opcodes=\"48 8d 05 92 0d 00 00\",inst=\"lea    0xd92(%rip),%rax        # 0x55555555601a\"},{address=\"0x0000555555555288\",func-name=\"main\",offset=\"41\",opcodes=\"48 89 45 d0\",inst=\"mov    %rax,-0x30(%rbp)\"}]},src_and_asm_line={line=\"33\",file=\"/home/steve/repo/gdb-wui/testdata/fixtures/structs.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/structs.c\",line_asm_insn=[{address=\"0x000055555555528c\",func-name=\"main\",offset=\"45\",opcodes=\"8b 45 c0\",inst=\"mov    -0x40(%rbp),%eax\"},{address=\"0x000055555555528f\",func-name=\"main\",offset=\"48\",opcodes=\"48 98\",inst=\"cltq\"},{address=\"0x0000555555555291\",func-name=\"main\",offset=\"50\",opcodes=\"be 20 00 00 00\",inst=\"mov    $0x20,%esi\"},{address=\"0x0000555555555296\",func-name=\"main\",offset=\"55\",opcodes=\"48 89 c7\",inst=\"mov    %rax,%rdi\"},{address=\"0x0000555555555299\",func-name=\"main\",offset=\"58\",opcodes=\"e8 52 fe ff ff\",inst=\"call   0x5555555550f0 <calloc@plt>\"}]}]",
+    "raw": "^done,asm_insns=[src_and_asm_line={line=\"31\",file=\"/tmp/gdb-wui-mi-capture/structs.c\",fullname=\"/tmp/gdb-wui-mi-capture/structs.c\",line_asm_insn=[{address=\"0x000055555555527a\",func-name=\"main\",offset=\"27\",opcodes=\"c7 45 c0 03 00 00 00\",inst=\"movl   $0x3,-0x40(%rbp)\"}]},src_and_asm_line={line=\"32\",file=\"/tmp/gdb-wui-mi-capture/structs.c\",fullname=\"/tmp/gdb-wui-mi-capture/structs.c\",line_asm_insn=[{address=\"0x0000555555555281\",func-name=\"main\",offset=\"34\",opcodes=\"48 8d 05 92 0d 00 00\",inst=\"lea    0xd92(%rip),%rax        # 0x55555555601a\"},{address=\"0x0000555555555288\",func-name=\"main\",offset=\"41\",opcodes=\"48 89 45 d0\",inst=\"mov    %rax,-0x30(%rbp)\"}]},src_and_asm_line={line=\"33\",file=\"/tmp/gdb-wui-mi-capture/structs.c\",fullname=\"/tmp/gdb-wui-mi-capture/structs.c\",line_asm_insn=[{address=\"0x000055555555528c\",func-name=\"main\",offset=\"45\",opcodes=\"8b 45 c0\",inst=\"mov    -0x40(%rbp),%eax\"},{address=\"0x000055555555528f\",func-name=\"main\",offset=\"48\",opcodes=\"48 98\",inst=\"cltq\"},{address=\"0x0000555555555291\",func-name=\"main\",offset=\"50\",opcodes=\"be 20 00 00 00\",inst=\"mov    $0x20,%esi\"},{address=\"0x0000555555555296\",func-name=\"main\",offset=\"55\",opcodes=\"48 89 c7\",inst=\"mov    %rax,%rdi\"},{address=\"0x0000555555555299\",func-name=\"main\",offset=\"58\",opcodes=\"e8 52 fe ff ff\",inst=\"call   0x5555555550f0 <calloc@plt>\"}]}]",
     "type": "result",
     "class": "done",
     "results": {
@@ -611,8 +611,8 @@
         {
           "src_and_asm_line": {
             "line": "31",
-            "file": "/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",
-            "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",
+            "file": "/tmp/gdb-wui-mi-capture/structs.c",
+            "fullname": "/tmp/gdb-wui-mi-capture/structs.c",
             "line_asm_insn": [
               {
                 "address": "0x000055555555527a",
@@ -627,8 +627,8 @@
         {
           "src_and_asm_line": {
             "line": "32",
-            "file": "/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",
-            "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",
+            "file": "/tmp/gdb-wui-mi-capture/structs.c",
+            "fullname": "/tmp/gdb-wui-mi-capture/structs.c",
             "line_asm_insn": [
               {
                 "address": "0x0000555555555281",
@@ -650,8 +650,8 @@
         {
           "src_and_asm_line": {
             "line": "33",
-            "file": "/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",
-            "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/structs.c",
+            "file": "/tmp/gdb-wui-mi-capture/structs.c",
+            "fullname": "/tmp/gdb-wui-mi-capture/structs.c",
             "line_asm_insn": [
               {
                 "address": "0x000055555555528c",
@@ -696,16 +696,16 @@
   },
   {
     "name": "result-memory",
-    "raw": "^done,memory=[{begin=\"0x00007fffffffd6b0\",offset=\"0x0000000000000000\",end=\"0x00007fffffffd6c0\",contents=\"00c0000000000000e8d6ffffff7f0000\"}]",
+    "raw": "^done,memory=[{begin=\"0x00007fffffffd370\",offset=\"0x0000000000000000\",end=\"0x00007fffffffd380\",contents=\"00c0000000000000a8d3ffffff7f0000\"}]",
     "type": "result",
     "class": "done",
     "results": {
       "memory": [
         {
-          "begin": "0x00007fffffffd6b0",
+          "begin": "0x00007fffffffd370",
           "offset": "0x0000000000000000",
-          "end": "0x00007fffffffd6c0",
-          "contents": "00c0000000000000e8d6ffffff7f0000"
+          "end": "0x00007fffffffd380",
+          "contents": "00c0000000000000a8d3ffffff7f0000"
         }
       ]
     }
@@ -942,7 +942,7 @@
   },
   {
     "name": "exec-stopped-signal",
-    "raw": "*stopped,reason=\"signal-received\",signal-name=\"SIGINT\",signal-meaning=\"Interrupt\",frame={addr=\"0x00007ffff7aa05ae\",func=\"__internal_syscall_cancel\",args=[{name=\"a1\",value=\"0\"},{name=\"a1@entry\",value=\"0\"},{name=\"a2\",value=\"0\"},{name=\"a2@entry\",value=\"0\"},{name=\"a3\",value=\"140737488343088\"},{name=\"a4\",value=\"140737488343088\"},{name=\"a5\",value=\"0\"},{name=\"a5@entry\",value=\"0\"},{name=\"a6\",value=\"0\"},{name=\"a6@entry\",value=\"0\"},{name=\"nr\",value=\"230\"}],file=\"./nptl/cancellation.c\",fullname=\"./nptl/./nptl/cancellation.c\",line=\"44\",arch=\"i386:x86-64\"},thread-id=\"1\",stopped-threads=\"all\",core=\"1\"",
+    "raw": "*stopped,reason=\"signal-received\",signal-name=\"SIGINT\",signal-meaning=\"Interrupt\",frame={addr=\"0x00007ffff7aa05ae\",func=\"__internal_syscall_cancel\",args=[{name=\"a1\",value=\"0\"},{name=\"a1@entry\",value=\"0\"},{name=\"a2\",value=\"0\"},{name=\"a2@entry\",value=\"0\"},{name=\"a3\",value=\"140737488342240\"},{name=\"a4\",value=\"140737488342240\"},{name=\"a5\",value=\"0\"},{name=\"a5@entry\",value=\"0\"},{name=\"a6\",value=\"0\"},{name=\"a6@entry\",value=\"0\"},{name=\"nr\",value=\"230\"}],file=\"./nptl/cancellation.c\",fullname=\"./nptl/./nptl/cancellation.c\",line=\"44\",arch=\"i386:x86-64\"},thread-id=\"1\",stopped-threads=\"all\",core=\"14\"",
     "type": "exec",
     "class": "stopped",
     "results": {
@@ -971,11 +971,11 @@
           },
           {
             "name": "a3",
-            "value": "140737488343088"
+            "value": "140737488342240"
           },
           {
             "name": "a4",
-            "value": "140737488343088"
+            "value": "140737488342240"
           },
           {
             "name": "a5",
@@ -1005,12 +1005,12 @@
       },
       "thread-id": "1",
       "stopped-threads": "all",
-      "core": "1"
+      "core": "14"
     }
   },
   {
     "name": "exec-stopped-breakpoint",
-    "raw": "*stopped,reason=\"breakpoint-hit\",disp=\"keep\",bkptno=\"1\",frame={addr=\"0x000055555555517a\",func=\"main\",args=[{name=\"argc\",value=\"1\"},{name=\"argv\",value=\"0x7fffffffd838\"}],file=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",line=\"12\",arch=\"i386:x86-64\"},thread-id=\"1\",stopped-threads=\"all\",core=\"10\"",
+    "raw": "*stopped,reason=\"breakpoint-hit\",disp=\"keep\",bkptno=\"1\",frame={addr=\"0x000055555555517a\",func=\"main\",args=[{name=\"argc\",value=\"1\"},{name=\"argv\",value=\"0x7fffffffd4f8\"}],file=\"/tmp/gdb-wui-mi-capture/hello.c\",fullname=\"/tmp/gdb-wui-mi-capture/hello.c\",line=\"12\",arch=\"i386:x86-64\"},thread-id=\"1\",stopped-threads=\"all\",core=\"7\"",
     "type": "exec",
     "class": "stopped",
     "results": {
@@ -1027,17 +1027,17 @@
           },
           {
             "name": "argv",
-            "value": "0x7fffffffd838"
+            "value": "0x7fffffffd4f8"
           }
         ],
-        "file": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
-        "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
+        "file": "/tmp/gdb-wui-mi-capture/hello.c",
+        "fullname": "/tmp/gdb-wui-mi-capture/hello.c",
         "line": "12",
         "arch": "i386:x86-64"
       },
       "thread-id": "1",
       "stopped-threads": "all",
-      "core": "10"
+      "core": "7"
     }
   },
   {
@@ -1051,7 +1051,7 @@
   },
   {
     "name": "notify-breakpoint-modified",
-    "raw": "=breakpoint-modified,bkpt={number=\"1\",type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"0x000055555555517a\",func=\"main\",file=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",fullname=\"/home/steve/repo/gdb-wui/testdata/fixtures/hello.c\",line=\"12\",thread-groups=[\"i1\"],times=\"0\",original-location=\"main\"}",
+    "raw": "=breakpoint-modified,bkpt={number=\"1\",type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"0x000055555555517a\",func=\"main\",file=\"/tmp/gdb-wui-mi-capture/hello.c\",fullname=\"/tmp/gdb-wui-mi-capture/hello.c\",line=\"12\",thread-groups=[\"i1\"],times=\"0\",original-location=\"main\"}",
     "type": "notify",
     "class": "breakpoint-modified",
     "results": {
@@ -1062,8 +1062,8 @@
         "enabled": "y",
         "addr": "0x000055555555517a",
         "func": "main",
-        "file": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
-        "fullname": "/home/steve/repo/gdb-wui/testdata/fixtures/hello.c",
+        "file": "/tmp/gdb-wui-mi-capture/hello.c",
+        "fullname": "/tmp/gdb-wui-mi-capture/hello.c",
         "line": "12",
         "thread-groups": [
           "i1"
@@ -1094,12 +1094,12 @@
   },
   {
     "name": "notify-thread-group-started",
-    "raw": "=thread-group-started,id=\"i1\",pid=\"145259\"",
+    "raw": "=thread-group-started,id=\"i1\",pid=\"1881914\"",
     "type": "notify",
     "class": "thread-group-started",
     "results": {
       "id": "i1",
-      "pid": "145259"
+      "pid": "1881914"
     }
   },
   {

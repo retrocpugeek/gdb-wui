@@ -73,7 +73,13 @@ export default {
     // The decompiler's own activity, one line per operation. Not behind a flag,
     // because without it a slow start looks exactly like a stuck one.
     await bottom(page, "log");
-    await page.waitForText("#log", "ghidra", { what: "Ghidra's activity in the log" });
-    await page.shot(ctx.image("log"), { clip: await logClip(page) });
+    await page.waitForText("#log", "ghidra: decompiled", {
+      what: "a decompile with its timing in the log",
+    });
+    // The tail, not the head. The per-function timings are the interesting
+    // part, and the import banner above them includes Ghidra's cache
+    // directory, which it names after the OS user — shot() refuses to publish
+    // that, and rightly.
+    await page.shot(ctx.image("log"), { clip: await logClip(page, { tail: 8 }) });
   },
 };

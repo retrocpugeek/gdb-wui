@@ -300,6 +300,49 @@ function makePage(conn, sessionId, viewport) {
   }
 
   /**
+   * assertNothingLocal refuses to capture the developer's home directory.
+   *
+   * These images are published. gdb, and Ghidra especially, print absolute
+   * paths — Ghidra derives its cache directory from the OS user name, so a log
+   * pane happily shows /var/tmp/<whoever>-ghidra — and a screenshot is the one
+   * artefact nobody greps before committing. It cost one round of review here
+   * already.
+   *
+   * Checked against the text actually inside the capture region, not the whole
+   * page, so a scene is not blocked by something it was never going to show.
+   */
+  async function assertNothingLocal(region) {
+    const home = process.env.HOME;
+    const user = process.env.USER || home?.split("/").pop();
+    const needles = [home, user].filter((s) => s && s.length > 2);
+    if (!needles.length) return;
+
+    const found = await evaluate((box, words) => {
+      const within = (r) => !box || !(
+        r.right < box.x || r.left > box.x + box.width ||
+        r.bottom < box.y || r.top > box.y + box.height
+      );
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      const hits = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const word = words.find((w) => node.data.includes(w));
+        if (!word) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        if (within(range.getBoundingClientRect())) hits.push(node.data.trim().slice(0, 160));
+      }
+      return hits;
+    }, region ?? null, needles);
+
+    if (found.length) {
+      throw new Error(
+        `the capture region shows a local path (${needles.join(" or ")}), which must ` +
+        `not be published:\n  ${found.slice(0, 3).join("\n  ")}`,
+      );
+    }
+  }
+
+  /**
    * shot captures a PNG.
    *
    * clip takes a selector, a box, or a list of selectors whose union is the
@@ -326,6 +369,8 @@ function makePage(conn, sessionId, viewport) {
         scale: 1,
       };
     }
+    await assertNothingLocal(region);
+
     const { data } = await send("Page.captureScreenshot", {
       format: "png",
       ...(region ? { clip: region } : {}),
