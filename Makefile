@@ -14,7 +14,7 @@ FIXTURES := $(patsubst testdata/fixtures/%.c,build/%,$(wildcard testdata/fixture
 # Where `gem install --user-install` puts executables. Only `make docs` needs it.
 GEM_BIN := $(shell ruby -e 'puts Gem.user_dir' 2>/dev/null)/bin
 
-.PHONY: all build test test-integration test-fuzz lint fmt vet fixtures run docs docs-images vendor-verify clean
+.PHONY: all build test test-integration test-fuzz lint fmt vet fixtures run docs docs-check docs-images vendor-verify clean
 
 all: build
 
@@ -95,9 +95,20 @@ run: build fixtures
 docs:
 	@PATH="$(GEM_BIN):$$PATH" command -v jekyll >/dev/null || { \
 	  echo "jekyll not found. Install it with:"; \
-	  echo "  gem install --user-install --no-document bundler jekyll jekyll-remote-theme"; \
+	  echo "  gem install --user-install --no-document bundler jekyll jekyll-remote-theme jekyll-relative-links"; \
 	  exit 1; }
 	cd docs && PATH="$(GEM_BIN):$$PATH" jekyll serve --baseurl '' --livereload
+
+# Build the site and follow every internal link in it.
+#
+# Against the built HTML, not the Markdown: `[Install](install.md)` points at a
+# file that exists, so a source-level check passes while the site 404s, because
+# the built page is install.html.
+docs-check:
+	@PATH="$(GEM_BIN):$$PATH" command -v jekyll >/dev/null || { \
+	  echo "jekyll not found; see the docs target"; exit 1; }
+	cd docs && PATH="$(GEM_BIN):$$PATH" jekyll build --baseurl ''
+	python3 scripts/check-links.py
 
 # The screenshots the site uses. Regenerates every image; see
 # scripts/screenshots/README.md.

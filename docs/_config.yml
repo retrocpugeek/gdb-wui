@@ -15,6 +15,15 @@ baseurl: /gdb-wui
 remote_theme: just-the-docs/just-the-docs
 plugins:
   - jekyll-remote-theme
+  # Rewrites `[Install](install.md)` to the built page's URL. Without it those
+  # links render as href="install.md" and 404 on the site, while the sidebar —
+  # which the theme generates from front matter — keeps working, so the site
+  # looks fine until someone follows a link in the text.
+  #
+  # The alternative is writing .html in the source, which would then break when
+  # the same file is read on GitHub. This way one link works in both places.
+  # Both plugins are on GitHub Pages' allowlist, so nothing is built by hand.
+  - jekyll-relative-links
 
 # The developer documents live in this directory too, and are deliberately not
 # part of the site: they describe the wire protocol and the decompiler's

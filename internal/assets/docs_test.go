@@ -57,6 +57,48 @@ func TestFlagsDocumented(t *testing.T) {
 	}
 }
 
+// TestRelativeLinksPluginIsConfigured pins the thing the pages' links rely on.
+//
+// Pages link to each other as `[Install](install.md)`, which is what keeps one
+// link working both on the site and when the same file is read on GitHub. On
+// the site that only works because jekyll-relative-links rewrites it to
+// install.html at build time; without the plugin every such link 404s.
+//
+// This is not hypothetical. The links shipped broken exactly once, and the
+// source-level check below did not catch it — install.md really was there, so
+// it had no reason to complain. Only the built HTML could tell, which is what
+// scripts/check-links.py is for; this test is the cheap half that runs without
+// Ruby.
+func TestRelativeLinksPluginIsConfigured(t *testing.T) {
+	root := repoRoot(t)
+
+	config, err := os.ReadFile(filepath.Join(root, docsDir, "_config.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "jekyll-relative-links") {
+		t.Error("docs/_config.yml does not enable jekyll-relative-links; " +
+			"every .md link between pages will 404 on the built site")
+	}
+
+	// And the links it rewrites really do exist, or the plugin has nothing to
+	// work with and leaves them alone.
+	var found int
+	link := regexp.MustCompile(`\]\(([^):]+\.md(#[^)]*)?)\)`)
+	for _, page := range markdownPages(t, root) {
+		body, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found += len(link.FindAllSubmatch(body, -1))
+	}
+	if found == 0 {
+		t.Error("no page links to another with a .md target; either the pages " +
+			"have stopped cross-linking or they now hardcode .html, which " +
+			"breaks reading them on GitHub")
+	}
+}
+
 // TestDocImagesExist: every image a page references is actually there.
 func TestDocImagesExist(t *testing.T) {
 	root := repoRoot(t)

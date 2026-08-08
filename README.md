@@ -128,6 +128,7 @@ make test-integration  # the same, plus tests against a real gdb
 make run               # serve this repo with assets from disk
 
 make docs              # preview the documentation site at 127.0.0.1:4000
+make docs-check        # build it and follow every internal link
 make docs-images       # regenerate every screenshot in it
 ```
 
@@ -136,7 +137,7 @@ this project — GitHub builds the published site, so this is purely for seeing 
 change before pushing it:
 
 ```sh
-gem install --user-install --no-document bundler jekyll jekyll-remote-theme
+gem install --user-install --no-document bundler jekyll jekyll-remote-theme jekyll-relative-links
 ```
 
 The Makefile puts the user gem directory on `PATH` itself, so there is nothing

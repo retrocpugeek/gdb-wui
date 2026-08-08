@@ -51,7 +51,7 @@ That is also the honest limit. If gdb cannot do it, neither can this.
 - **[Install](install.md)** — what you need, and what is optional.
 - **[A first session](tour.md)** — load, break, step, inspect, in about five
   minutes, against a program in this repository.
-- **[Features](features/)** — one page each, with what it will not do.
+- **[Features](features/index.md)** — one page each, with what it will not do.
 - **[Troubleshooting](troubleshooting.md)** — the errors we actually hit, and
   what they mean.
 
