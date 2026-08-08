@@ -106,9 +106,9 @@ func (s *Server) routes() {
 }
 
 // ServeHTTP applies the security headers, then the bootstrap flow, then
-// authorization, then routes. The order is the point: nothing reaches a handler
-// without having passed the gate, and there is one gate rather than one per
-// route, because the route somebody forgets to protect is the one that matters.
+// authorization, then routes. The order matters: nothing reaches a handler
+// without passing the gate. There is one gate rather than one per route,
+// because a route somebody forgets to protect would otherwise be unprotected.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.setSecurityHeaders(w)
 
@@ -124,8 +124,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The mint endpoint carries its own credential instead of the session
-	// cookie — the whole point of it is to hand out a way to *get* a cookie.
-	// It still passes the Host and Origin checks first.
+	// cookie, because what it hands out is a way to get a cookie. It still
+	// passes the Host and Origin checks first.
 	if r.URL.Path == MintPath {
 		if !s.checkHost(w, r) || !s.checkOrigin(w, r) {
 			return
@@ -277,8 +277,8 @@ func (s *Server) writeFSError(w http.ResponseWriter, err error) {
 	case errors.Is(err, srcfs.ErrNotFound):
 		s.writeError(w, http.StatusNotFound, wire.CodeNotFound, "no such file or directory")
 	case errors.Is(err, srcfs.ErrDenied):
-		// Deliberately identical in shape to not-found so a probe cannot use
-		// the distinction to map the filesystem outside the root.
+		// Identical in shape to not-found, so that a probe cannot use the
+		// distinction to map the filesystem outside the root.
 		s.writeError(w, http.StatusForbidden, wire.CodePathDenied, "path is outside the project root")
 	case errors.Is(err, srcfs.ErrTooLarge):
 		s.writeError(w, http.StatusRequestEntityTooLarge, wire.CodeTooLarge, err.Error())

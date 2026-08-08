@@ -46,7 +46,7 @@ func FuzzParseRecord(f *testing.F) {
 		}
 
 		// Re-rendering and re-parsing must be stable. This catches escaper and
-		// parser disagreeing about a byte, which is exactly the bug class that
+		// parser disagreeing about a byte, which is the bug class that
 		// hand-rolled C-string handling produces.
 		if r.Type == RecGarbage {
 			return

@@ -10,8 +10,8 @@ import (
 )
 
 // The M4 done-criteria, as tests: expand a nested struct, watch an expression,
-// see <optimized out> rendered honestly, and confirm the varobj registry is
-// empty after a re-run.
+// see <optimized out> shown as itself, and confirm the varobj registry is empty
+// after a re-run.
 
 // structsBreakLine is the line in structs.c after cfg is fully populated.
 const structsBreakLine = 42 // inspect(&cfg);
@@ -110,7 +110,7 @@ func TestExpandNestedStruct(t *testing.T) {
 	// arrives expandable. That is a real limitation of the trade: a string is
 	// shown as an openable array of chars rather than as "item-0". The
 	// alternative, --all-values, would eagerly stringify every array in scope,
-	// which is exactly the 100k-element problem the design set out to avoid.
+	// which is the 100k-element problem the design set out to avoid.
 	name, ok := nodeByName(second.Children, "name")
 	if !ok {
 		t.Fatalf("no name field under the pointer in %+v", second.Children)
@@ -261,8 +261,8 @@ func TestWatchRemove(t *testing.T) {
 	}
 }
 
-// TestOptimizedOutIsHonest is the -O2 criterion: the value gdb gives is shown,
-// not hidden or faked.
+// TestOptimizedOutIsHonest is the -O2 criterion: the value gdb gives is shown
+// rather than hidden or replaced.
 func TestOptimizedOutIsHonest(t *testing.T) {
 	h := startReal(t, "opt")
 	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "opt"})

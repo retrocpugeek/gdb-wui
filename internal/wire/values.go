@@ -27,8 +27,8 @@ const (
 )
 
 // OptimizedOut is the value gdb reports for a variable the compiler erased. It
-// is a value like any other on the wire; the UI renders it differently, and
-// honestly, rather than pretending the variable is missing.
+// is a value like any other on the wire. The UI renders it differently rather
+// than hiding the variable.
 const OptimizedOut = "<optimized out>"
 
 // VarNode is one row in the variables tree.
@@ -42,8 +42,8 @@ type VarNode struct {
 	// Path is the stable identity. Roots are "local:<name>" or "watch:<n>".
 	Path string `json:"path"`
 	// ID is the gdb varobj name, empty until one has been created. A flat local
-	// that has never been expanded has no varobj at all — that is the point of
-	// --simple-values.
+	// that has never been expanded has no varobj at all, which is what
+	// --simple-values buys.
 	ID string `json:"id,omitempty"`
 	// Name is what to display: the field name, or the array index.
 	Name string `json:"name"`

@@ -8,9 +8,8 @@
 // Two populations live in the same list and they behave differently on a
 // double-click. A symbol with debug info knows its source file and jumps
 // there; one from the ELF table alone knows only an address and jumps to the
-// disassembly. The row says which before you click, because a jump that
-// silently does something other than what you expected is worse than one that
-// is labelled.
+// disassembly. The row says which before you click, so that a jump does what
+// the label says.
 
 // searchDebounce is the pause after a keystroke before asking the server. Long
 // enough that typing a whole word is one request, short enough to feel live.
@@ -176,8 +175,8 @@ export function createSymbols({ element, input, kindSelect, countEl, onQuery, on
 
   input?.addEventListener("input", schedule);
   input?.addEventListener("keydown", (ev) => {
-    // Enter from the box jumps to the top hit — the whole point of typing a
-    // name you already know into a filter.
+    // Enter from the box jumps to the top hit, which is what typing a name you
+    // already know into a filter is for.
     if (ev.key === "Enter") {
       ev.preventDefault();
       clearTimeout(timer);

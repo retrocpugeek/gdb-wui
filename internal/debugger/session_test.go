@@ -382,7 +382,7 @@ func TestFatStoppedEvent(t *testing.T) {
 	if stopped.StopSeq != 1 {
 		t.Errorf("stopSeq = %d, want 1", stopped.StopSeq)
 	}
-	// One event carrying everything is the whole point.
+	// One event has to carry everything.
 	if len(stopped.Threads) != 1 {
 		t.Errorf("threads = %d, want 1", len(stopped.Threads))
 	}
@@ -632,7 +632,7 @@ func TestPendingBreakpointResolves(t *testing.T) {
 }
 
 // TestTemporaryBreakpointWeDidNotCreateIsHidden is finding 11: -exec-run
-// --start injects one, and a marker the user cannot delete is worse than none.
+// --start injects one, and the user cannot delete a marker they did not make.
 func TestTemporaryBreakpointWeDidNotCreateIsHidden(t *testing.T) {
 	h := start(t, loadTranscript+`
 > -break-list
@@ -711,9 +711,9 @@ func TestSnapshotRestoresStoppedState(t *testing.T) {
 	}
 }
 
-// TestNoDeclaredTypeIsUnsupported is the debugger half of the docs-honesty
-// check: every type in wire.RequestTypes must be routed somewhere. Whether it
-// succeeds depends on state; coming back "unsupported" never does.
+// TestNoDeclaredTypeIsUnsupported is the debugger half of the docs check: every
+// type in wire.RequestTypes must be routed somewhere. Whether it succeeds
+// depends on state; coming back "unsupported" never does.
 func TestNoDeclaredTypeIsUnsupported(t *testing.T) {
 	h := start(t, ``)
 	for _, typ := range wire.RequestTypes {
@@ -938,8 +938,7 @@ func TestDetachClearsRemoteFlag(t *testing.T) {
 // -thread-select is never needed for this server's own commands, which always
 // pass --thread. Issuing it anyway makes gdb probe the target with a T packet;
 // a minimal remote stub that does not implement T answers empty and logs
-// "command not supported", which is exactly the sort of message somebody
-// reasonably assumes means their frame click failed.
+// "command not supported", which reads as though the frame click failed.
 func TestFrameSelectDoesNotReselectTheThread(t *testing.T) {
 	h := start(t, loadTranscript+stopTranscript+`
 > -stack-select-frame 1

@@ -41,8 +41,8 @@ type Result struct {
 	Value Value
 }
 
-// Value is an MI value. Tuples and lists share Items deliberately: MI lists can
-// hold *named* elements with the same name repeated (stack=[frame={},frame={}],
+// Value is an MI value. Tuples and lists share Items because MI lists can hold
+// named elements with the same name repeated (stack=[frame={},frame={}],
 // body=[bkpt={},bkpt={}]), so an ordered slice is the only representation that
 // keeps both order and duplicates. A map would silently drop every frame but
 // the last, which is why encoding/json cannot read MI and this type exists.
@@ -167,9 +167,9 @@ func (rs Results) List(name string) ([]Value, bool) {
 // Delegating accessors so callers can chain through nested values without
 // reaching into .Items at every step.
 //
-// There is deliberately no Value.Str(name) — Str is the constant's own text,
-// and a field and a method cannot share a name. Reach for v.StrOK(name) when
-// presence matters, or v.Results().Str(name) when it does not.
+// There is no Value.Str(name), because Str is the constant's own text and a
+// field and a method cannot share a name. Use v.StrOK(name) when presence
+// matters, or v.Results().Str(name) when it does not.
 
 // Results views a tuple's or list's contents as a result list.
 func (v Value) Results() Results { return Results(v.Items) }

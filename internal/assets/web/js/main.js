@@ -1244,8 +1244,8 @@ function runRemoteCommand(line, pending) {
 // Only `file` establishes the architecture, by reading it out of the ELF
 // header. Measured against gdb 17.1 with a MIPS64 image: `file` gives
 // mips:octeon/big, while `symbol-file` and `add-symbol-file` both leave it at
-// the host's i386/little. So loading *symbols* is not enough, which is exactly
-// the trap — the symbols pane looks like it did the job.
+// the host's i386/little. Loading symbols is therefore not enough, and it is
+// easy to miss because the symbols pane looks as though it worked.
 //
 // exePath is the signal because it is set only by exe.load, which is the
 // tree click, which is `file`. Someone who set the architecture by hand at the
@@ -1467,8 +1467,8 @@ function showDisasmAt(target, { explicit = false } = {}) {
 // cases are genuinely different rather than fallbacks for one another. Debug
 // info means a source line. An ELF symbol means an address and therefore
 // disassembly. A symbol whose source file is real but outside the project is
-// neither: the honest answer is to say where it claims to live, because the
-// user can then add a substitution and try again.
+// neither, so the answer is to say where it claims to live; the user can then
+// add a substitution and try again.
 function jumpToSymbol(sym) {
   if (sym.file) {
     disasmPin = null;

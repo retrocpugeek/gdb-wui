@@ -33,7 +33,7 @@ type Session interface {
 // Config configures a Hub.
 type Config struct {
 	// Session handles domain requests. May be nil, in which case only the
-	// session.* group works — which is exactly M2.
+	// session.* group works.
 	Session Session
 	// AllowedOrigins is passed to websocket.Accept. Setting it explicitly means
 	// behaviour never depends on a library default changing.
@@ -289,11 +289,11 @@ func (h *Hub) writePump(ctx context.Context, c *conn) {
 // sendTo queues one message for one connection.
 //
 // A full queue closes the connection rather than blocking. This is the opposite
-// of the policy in internal/mi, and deliberately so: there, blocking
-// backpressures gdb, which is correct. Here, blocking would let one wedged
-// browser tab stall the debugger for every other client, so the wedged tab is
-// the thing that gets sacrificed. It will reconnect and receive a fresh
-// snapshot, which is exactly the recovery path hello already provides.
+// of the policy in internal/mi, where blocking backpressures gdb, and is
+// correct there. Here, blocking would let one wedged browser tab stall the
+// debugger for every other client, so the wedged tab is dropped instead. It
+// will reconnect and receive a fresh snapshot, which is the recovery path
+// hello already provides.
 func (h *Hub) sendTo(c *conn, msg []byte) {
 	select {
 	case c.out <- msg:

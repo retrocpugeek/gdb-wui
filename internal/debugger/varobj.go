@@ -15,10 +15,10 @@ import (
 // gdb variable objects are a server-side resource with no garbage collector:
 // every -var-create leaks until a matching -var-delete, and a debugger UI that
 // creates one per visible row per stop will accumulate tens of thousands over
-// an afternoon. So they are created as late as possible, kept as long as they
-// are useful, and deleted deliberately.
+// an afternoon. They are therefore created as late as possible, kept as long
+// as they are useful, and deleted explicitly.
 //
-// Three decisions shape everything here:
+// Three decisions shape this file:
 //
 //   - The flat locals list uses no varobjs at all. -stack-list-variables
 //     --simple-values omits "value" exactly for aggregates, which is both the
@@ -26,11 +26,11 @@ import (
 //     costs nothing until someone opens it.
 //   - Varobjs exist only for expanded subtrees and watches, and they *persist
 //     across stops*, refreshed with a single -var-update. Persisting is what
-//     keeps ids stable so the tree stays open while you step — the single most
+//     keeps ids stable so the tree stays open while you step, which is the
 //     important property of that panel.
 //   - Roots get names we choose (r17), so deleting one is deterministic;
 //     children keep the names gdb assigns (r17.items), because deleting a root
-//     deletes its children and we want that to be gdb's problem, not ours.
+//     deletes its children and gdb then handles that bookkeeping.
 
 // maxRoots bounds the registry. Expanding a struct a few hundred times over a
 // long session is ordinary; leaking a varobj for each is not.
@@ -84,8 +84,8 @@ type varobj struct {
 
 // frameIdentity is what makes two stops "the same frame" for cache purposes.
 //
-// Deliberately not the frame address. That is the program counter, which
-// changes with every single step *within* a function, so an address-keyed cache
+// Not the frame address. That is the program counter, which changes with every
+// single step within a function, so an address-keyed cache
 // would be invalidated constantly and the variables tree would collapse on
 // every step.
 type frameIdentity struct {

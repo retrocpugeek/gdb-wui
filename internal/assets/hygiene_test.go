@@ -83,7 +83,7 @@ func TestColourLiteralsOnlyInTokens(t *testing.T) {
 		}
 		// tokens.css is the one file allowed colours; vendored code is exempt
 		// because it is byte-identical third-party source and rewriting it
-		// would break the hash manifest that keeps it honest.
+		// would break the hash manifest that verifies it.
 		if p == "css/tokens.css" || strings.HasPrefix(p, "vendor/") {
 			return nil
 		}
@@ -165,8 +165,8 @@ func TestModuleImportsResolve(t *testing.T) {
 	}
 }
 
-// TestImportDirection keeps the layering honest: core is infrastructure and
-// must not reach up into the panels that use it.
+// TestImportDirection checks the layering: core is infrastructure and must not
+// reach up into the panels that use it.
 func TestImportDirection(t *testing.T) {
 	fsys := embedded(t)
 	err := fs.WalkDir(fsys, "js/core", func(p string, d fs.DirEntry, err error) error {
@@ -187,7 +187,7 @@ func TestImportDirection(t *testing.T) {
 	}
 }
 
-// TestProtocolDocumented is the docs-honesty test. Every request type, event
+// TestProtocolDocumented checks the docs against the code. Every request type, event
 // and error code the code knows about must be written down, because the
 // frontend is not type-checked against the server and the document is the only
 // thing standing in for that.
@@ -339,9 +339,9 @@ func TestVendoredHashes(t *testing.T) {
 	}
 }
 
-// TestVendoredModulesAreBrowserLoadable guards the trap the plan calls out: an
-// ESM build that turns out to be a CommonJS wrapper loads fine in Node and not
-// at all in a browser, and the symptom is a blank page.
+// TestVendoredModulesAreBrowserLoadable catches an ESM build that is really a
+// CommonJS wrapper. Such a build loads fine in Node and not at all in a
+// browser, and the symptom is a blank page.
 func TestVendoredModulesAreBrowserLoadable(t *testing.T) {
 	fsys := embedded(t)
 	bare := regexp.MustCompile(`(?m)(?:^|[;\s])(?:import|export)\s*(?:[^'"\n]*\sfrom\s*)?["']([^."'/][^"']*)["']`)

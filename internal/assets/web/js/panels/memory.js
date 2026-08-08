@@ -6,8 +6,8 @@
 // visible rows are ever fetched.
 //
 // Bytes live in a sparse cache of 4 KiB chunks with an LRU bound. Missing bytes
-// render "??" rather than zeros, because a hex viewer that invents zeros for
-// unmapped memory is worse than useless: it looks like data.
+// render "??" rather than zeros, because zeros for unmapped memory would look
+// like data.
 
 import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 

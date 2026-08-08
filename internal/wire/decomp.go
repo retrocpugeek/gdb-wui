@@ -174,9 +174,9 @@ type DecompFunction struct {
 // decompiling the function again on every step. A few kilobytes per step at
 // human speeds.
 type ExecStepLineRequest struct {
-	// Lines is the function's map. Empty degrades to a single instruction
-	// step, which is honest: with nothing to step over, one instruction is the
-	// most that can be claimed.
+	// Lines is the function's map. Empty degrades to a single instruction step,
+	// because with nothing to step over, one instruction is all that can be
+	// claimed.
 	Lines []DecompLine `json:"lines,omitempty"`
 	// BodyStart and BodyEnd bound the function, so a walk that returns into a
 	// caller does not keep matching by coincidence.

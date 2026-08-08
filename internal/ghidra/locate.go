@@ -12,8 +12,8 @@ import (
 //
 // Ghidra is not on PATH and has no single canonical location: it is a zip you
 // unpack somewhere. So unlike gdb, which is `exec.LookPath("gdb")`, this has to
-// go looking — and must fail with a message that says where it looked, because
-// "Ghidra not found" on a machine that has Ghidra is a maddening thing to read.
+// go looking, and must fail with a message that says where it looked. "Ghidra
+// not found" on a machine that has Ghidra installed is not actionable.
 
 // analyzeHeadless is the entry point under an installation directory.
 const analyzeHeadless = "support/analyzeHeadless"
@@ -38,8 +38,8 @@ type Install struct {
 //
 // The search order is explicit flag, then environment, then the places the
 // distribution is conventionally unpacked. A glob is included because the
-// official zip unpacks to a version-stamped directory, which is exactly the
-// thing a user will not have renamed.
+// official zip unpacks to a version-stamped directory, which users rarely
+// rename.
 func Locate(explicit string) (*Install, error) {
 	var tried []string
 

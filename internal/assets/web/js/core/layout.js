@@ -131,8 +131,7 @@ export function initTheme({ toggle }) {
     }
     update();
     // Terminals build their palette from the tokens at construction, so they
-    // have to be told. Reloading is the honest answer rather than pretending
-    // the change is complete.
+    // have to be told, and reloading them is the only way to apply it.
     document.dispatchEvent(new CustomEvent("gdb-wui:theme", { detail: next }));
   });
 

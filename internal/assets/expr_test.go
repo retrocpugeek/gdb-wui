@@ -202,7 +202,7 @@ console.log(JSON.stringify(out));
 // TestAlternateBase guards the reason this uses BigInt. A register value is a
 // 64-bit quantity, and float64 silently rounds the top of one: 0x7ffffffde000
 // through Number is fine, but a pointer with bits set above 2^53 is not, and a
-// tooltip showing a subtly wrong address is worse than showing none.
+// tooltip would then show an address that is wrong in a way nobody notices.
 func TestAlternateBase(t *testing.T) {
 	var got map[string]string
 	runExpr(t, `

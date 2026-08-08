@@ -291,7 +291,7 @@ func TestMissingFile(t *testing.T) {
 }
 
 // TestETagChangesWithContent: a stale ETag serves stale source next to a live
-// breakpoint marker, which is worse than no caching at all.
+// breakpoint marker, so the two disagree about which line is which.
 func TestETagChangesWithContent(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "a.c")
@@ -488,7 +488,7 @@ func TestIndexLocatePrefersLongerSuffix(t *testing.T) {
 
 // TestIndexRefusesAmbiguousMatch is the important negative case. Showing one of
 // two equally plausible files means debugging the wrong code with line numbers
-// that look right, which is worse than showing nothing.
+// that look correct.
 func TestIndexRefusesAmbiguousMatch(t *testing.T) {
 	f := indexProject(t)
 	ix := f.Index()

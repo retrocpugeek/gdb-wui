@@ -139,8 +139,8 @@ export function symbolExpr(token) {
 // printed as 140737488347136 is hard to read while the same number as
 // 0x7ffffffde000 is recognisably a stack address.
 //
-// BigInt rather than Number: a 64-bit register does not survive float64, and
-// silently rounding the top of an address is worse than not showing it.
+// BigInt rather than Number, because a 64-bit register does not survive
+// float64 and the top of an address would be rounded away.
 export function alternateBase(value) {
   const v = String(value ?? "").trim();
   if (!/^-?\d+$/.test(v)) return "";

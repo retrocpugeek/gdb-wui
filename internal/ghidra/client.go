@@ -1,9 +1,9 @@
 // Package ghidra supervises one resident Ghidra process and speaks a small
 // request/response protocol to it.
 //
-// The shape deliberately mirrors internal/mi: a long-lived child, a scrubbed
-// environment, one goroutine reading replies, requests matched by id, and a
-// death that fails every outstanding and subsequent call rather than hanging.
+// The shape mirrors internal/mi: a long-lived child, a scrubbed environment,
+// one goroutine reading replies, requests matched by id, and a death that
+// fails every outstanding and subsequent call rather than hanging.
 // gdb-wui already owns a debugger this way; owning a decompiler the same way
 // means one set of habits covers both.
 //
@@ -504,8 +504,8 @@ func (c *Client) Close() error {
 		//
 		// Fire-and-forget, because quit has no reply — the server acts on it
 		// and closes the connection. Waiting for one would stall every
-		// shutdown for the full timeout, which is exactly what it did before
-		// the unit suite's runtime made it obvious.
+		// shutdown for the full timeout, which is what it did until the unit
+		// suite's runtime made it apparent.
 		if c.conn != nil {
 			c.writeMu.Lock()
 			_, _ = c.conn.Write([]byte("{\"id\":0,\"op\":\"quit\"}\n"))

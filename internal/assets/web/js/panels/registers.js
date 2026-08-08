@@ -40,7 +40,7 @@ export function createRegisters({ element, onFetch, onError }) {
           if (!reg) return;
           el.classList.toggle("is-changed", Boolean(reg.changed));
           el.querySelector(".reg-num").textContent = String(reg.number);
-          // An empty name is not a bug: gdb's list has gaps at stable indices,
+          // An empty name is normal: gdb's list has gaps at stable indices,
           // and the number is the real identity.
           el.querySelector(".reg-name").textContent = reg.name || `r${reg.number}`;
           el.querySelector(".reg-value").textContent = reg.value;

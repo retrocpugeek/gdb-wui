@@ -1,8 +1,8 @@
 // A tiny observable store.
 //
-// Two properties matter and both are about the step hot path, where a single
-// gdb stop touches half a dozen slices and a held-down F10 delivers stops
-// faster than the browser can paint:
+// Both of the following exist for the step hot path, where one gdb stop touches
+// half a dozen slices and a held-down F10 delivers stops faster than the
+// browser can paint:
 //
 //   1. Writes record dirty dotted paths and notification is deferred to a
 //      microtask, so one event that touches six slices notifies once.

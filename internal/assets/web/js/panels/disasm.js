@@ -70,8 +70,8 @@ export function createDisasm({ element, onGutterClick }) {
     });
   }
 
-  // tokenize splits an AT&T instruction into spans. Deliberately shallow: the
-  // mnemonic, registers, immediates, and the rest.
+  // tokenize splits an AT&T instruction into spans: the mnemonic, registers,
+  // immediates, and the rest. It goes no deeper than that.
   function tokenize(text) {
     const out = [];
     // The mnemonic is the first word; everything after is operands.

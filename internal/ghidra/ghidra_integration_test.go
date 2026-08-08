@@ -177,9 +177,9 @@ func TestDecompileByInteriorAddress(t *testing.T) {
 	}
 }
 
-// TestLineMapAddressesAreInsideTheBody catches a whole class of coordinate
-// confusion: a map whose addresses fall outside the function it describes is
-// worse than no map, because it looks authoritative.
+// TestLineMapAddressesAreInsideTheBody catches a class of coordinate confusion.
+// A map whose addresses fall outside the function it describes still looks
+// authoritative.
 func TestLineMapAddressesAreInsideTheBody(t *testing.T) {
 	c := start(t)
 	fn, err := c.Decompile(context.Background(), "accumulate")

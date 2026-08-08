@@ -86,7 +86,7 @@ const (
 	CodeInternal = "internal"
 )
 
-// ErrorCodes is every code, for the docs-honesty test.
+// ErrorCodes is every code, for the test that checks the docs list them all.
 var ErrorCodes = []string{
 	CodeBadRequest, CodeUnsupported, CodeNotReady, CodeBusy, CodeGDBError,
 	CodeGDBDead, CodeTimeout, CodePathDenied, CodeNotFound, CodeTooLarge,
@@ -244,8 +244,8 @@ type Hello struct {
 	// are dropped.
 	StopSeq uint64 `json:"stopSeq"`
 
-	// Everything below is what makes a page reload indistinguishable from a
-	// first load. A client repaints entirely from this and asks for nothing.
+	// The fields below are what let a client repaint entirely from this
+	// snapshot, so a page reload behaves the same as a first load.
 
 	// ExePath is the loaded program, root-relative, empty if none.
 	ExePath string `json:"exePath,omitempty"`
@@ -325,9 +325,9 @@ type Tree struct {
 	Path string `json:"path"`
 	// Entries are the immediate children, directories first then by name.
 	Entries []TreeEntry `json:"entries"`
-	// Truncated reports that the listing hit the entry cap. Surfaced rather
-	// than silently dropped: a directory that quietly lists 5000 of its 9000
-	// files is worse than one that says so.
+	// Truncated reports that the listing hit the entry cap. It is surfaced
+	// rather than dropped, so that a directory listing 5000 of its 9000 files
+	// says so.
 	Truncated bool `json:"truncated"`
 }
 

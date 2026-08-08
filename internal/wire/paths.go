@@ -13,8 +13,8 @@ const (
 //
 // A prefix, not a file: teaching gdb the prefix once fixes every later frame in
 // that tree, plus `list`, `info line` and whatever the user types at the
-// console. Rewriting paths one file at a time in the UI is a losing game,
-// because gdb keeps reporting the originals.
+// console. Rewriting paths one file at a time in the UI does not work, because
+// gdb keeps reporting the originals.
 type PathSubstituteRequest struct {
 	From string `json:"from"`
 	To   string `json:"to"`

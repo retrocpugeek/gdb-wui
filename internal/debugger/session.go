@@ -77,8 +77,8 @@ type Session struct {
 	// capture diverts console output for one internal command. See runConsole.
 	capture atomic.Pointer[consoleCapture]
 
-	// decomp is the optional decompiler. Deliberately not in st: its cold
-	// start is seconds to minutes, and that must not happen on the actor.
+	// decomp is the optional decompiler. It is not in st, because its cold start
+	// takes seconds to minutes and must not happen on the actor.
 	decomp decomp
 
 	// reqs carries browser requests to the actor.
@@ -571,8 +571,8 @@ func (s *Session) gate(typ string) *wire.Error {
 		// The console is the escape hatch: refusing it while running would
 		// remove the one way out of a situation the UI does not model.
 		wire.TypeConsoleExec, wire.TypeConsoleComplete,
-		// Typing into the program and signalling it are the whole point of
-		// having a terminal, and both only make sense while it runs.
+		// Typing into the program and signalling it are what the terminal is for,
+		// and both only make sense while it runs.
 		wire.TypeInferiorStdin, wire.TypeInferiorSignal, wire.TypeInferiorResize,
 		// Telling gdb where source lives is configuration, not a state query,
 		// and is exactly what a user reaches for when a frame has no source.
@@ -674,8 +674,8 @@ func (s *Session) publish() {
 
 // emit refreshes the snapshot and then broadcasts. Actor goroutine only.
 //
-// The order is the point, and it is not an optimisation detail. serve()
-// publishes only *after* dispatch returns, so a handler that broadcast
+// The order matters and is not an optimisation detail. serve() publishes only
+// after dispatch returns, so a handler that broadcast
 // directly would announce a change the snapshot did not yet carry. A client
 // acting on the event — or a browser connecting in that window and getting
 // `hello` — would be told the program had loaded and simultaneously handed a
