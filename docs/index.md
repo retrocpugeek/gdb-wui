@@ -17,7 +17,7 @@ go build ./cmd/gdb-wui
 It prints a URL and opens a browser at it. Pick an executable from the file tree,
 click a line number to set a breakpoint, and step.
 
-![The whole window, stopped at a breakpoint](images/overview.png)
+[![The whole window, stopped at a breakpoint](images/overview.png)](images/overview.png)
 
 {: .warning }
 > **It runs your programs as you.** gdb-wui starts arbitrary binaries with your

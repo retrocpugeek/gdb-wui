@@ -12,6 +12,7 @@
 // does not appear — a screenshot of the wrong state is worse than none, because
 // nothing downstream can tell.
 
+import { spawn as nodeSpawn } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -78,6 +79,7 @@ async function runScene(scene) {
   let project;
   let running;
   const written = [];
+  const helpers = [];
   try {
     project = await prepareProject(repoRoot, scene.fixtures ?? []);
     running = await startServer(server.bin, {
@@ -98,6 +100,17 @@ async function runScene(scene) {
       project: project.dir,
       repoRoot,
       capabilities,
+      /**
+       * spawn starts a process for the scene's own use — a gdbserver to
+       * connect to, say. Killed when the scene ends, however it ends, because
+       * a scene that fails halfway must not leave a stub holding a port that
+       * the next run needs.
+       */
+      spawn(cmd, args) {
+        const proc = nodeSpawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+        helpers.push(proc);
+        return proc;
+      },
       image(suffix) {
         const name = suffix ? `${scene.name}-${suffix}` : scene.name;
         const path = join(outDir, `${name}.png`);
@@ -123,6 +136,7 @@ async function runScene(scene) {
       detail: `${err.stack}\n${running ? running.log() : ""}`,
     };
   } finally {
+    for (const proc of helpers) proc.kill("SIGKILL");
     if (running) await running.stop();
     if (project) await project.cleanup();
   }

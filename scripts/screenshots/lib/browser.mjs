@@ -244,6 +244,24 @@ function makePage(conn, sessionId, viewport) {
     await send("Input.insertText", { text });
   }
 
+  /**
+   * fill replaces an input's contents rather than appending to them.
+   *
+   * type() appends, which is right for an empty filter box and wrong for the
+   * remote address box — that one ships with `localhost:1234` in it, and
+   * typing into it produced `localhost:1234127.0.0.1:41234` and a connection
+   * that never came.
+   */
+  async function fill(selector, text) {
+    await click(selector);
+    await evaluate((sel) => {
+      const el = document.querySelector(sel);
+      el.focus();
+      el.select();
+    }, selector);
+    await send("Input.insertText", { text });
+  }
+
   async function key(name, { modifiers = 0 } = {}) {
     const codes = {
       Enter: { windowsVirtualKeyCode: 13, key: "Enter", code: "Enter", text: "\r" },
@@ -258,6 +276,22 @@ function makePage(conn, sessionId, viewport) {
     if (!spec) throw new Error(`no key mapping for ${name}`);
     await send("Input.dispatchKeyEvent", { type: "keyDown", modifiers, ...spec });
     await send("Input.dispatchKeyEvent", { type: "keyUp", modifiers, ...spec });
+  }
+
+  /**
+   * answerNextPrompt arms a one-shot reply to the next window.prompt.
+   *
+   * With the Page domain enabled, Chrome hands dialogs to the client and blocks
+   * until one is answered — so a scene that clicks "+ watch" without this would
+   * hang rather than fail. Adding a watch really does go through prompt(), so
+   * this drives the application as it is rather than around it.
+   */
+  function answerNextPrompt(text) {
+    const off = conn.on("Page.javascriptDialogOpening", () => {
+      off();
+      send("Page.handleJavaScriptDialog", { accept: true, promptText: text })
+        .catch(() => {});
+    });
   }
 
   async function goto(url) {
@@ -298,18 +332,44 @@ function makePage(conn, sessionId, viewport) {
       captureBeyondViewport: false,
     });
     await writeFile(path, Buffer.from(data, "base64"));
+    await shrink(path);
     return path;
   }
 
   return {
     evaluate, waitUntil, waitFor, waitForText,
     rect, textRect, centre,
-    click, clickAt, rightClick, hover, type, key,
+    click, clickAt, rightClick, hover, type, fill, key, answerNextPrompt,
     goto, shot, sleep,
   };
 }
 
+/**
+ * shrink quantises a PNG in place, if pngquant is installed.
+ *
+ * These are screenshots of a dark UI with a few dozen distinct colours, so a
+ * palette costs nothing visible and saves about two thirds of the bytes — which
+ * matters when two dozen of them live in the repository forever. Optional
+ * rather than required: the images are correct either way, and refusing to
+ * capture over a missing optimiser would be absurd.
+ */
+async function shrink(path) {
+  const pngquant = await which("pngquant");
+  if (!pngquant) return;
+  await new Promise((resolve) => {
+    const proc = spawn(pngquant, [
+      "--quality=70-95", "--speed", "1", "--force", "--skip-if-larger",
+      "--output", path, "--", path,
+    ], { stdio: "ignore" });
+    // Exit 98 means "the result was larger", which is a decision, not a
+    // failure; every other non-zero leaves the unquantised file in place.
+    proc.on("close", resolve);
+    proc.on("error", resolve);
+  });
+}
+
 async function findChrome() {
+  if (process.env.CHROME) return process.env.CHROME;
   for (const name of CHROME_CANDIDATES) {
     const found = await which(name);
     if (found) return found;
@@ -321,7 +381,6 @@ async function findChrome() {
 }
 
 function which(name) {
-  if (process.env.CHROME) return Promise.resolve(process.env.CHROME);
   return new Promise((resolve) => {
     const proc = spawn("which", [name], { stdio: ["ignore", "pipe", "ignore"] });
     let out = "";

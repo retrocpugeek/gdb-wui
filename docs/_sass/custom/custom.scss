@@ -1,0 +1,27 @@
+// Just enough to make the screenshots read as screenshots.
+//
+// The application is dark and so is this site, so a screenshot's edges vanish
+// into the page and a picture of a window stops looking like one. A border is
+// the whole fix.
+
+.main-content img {
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  // Panel crops are captured at their natural size; letting the page stretch
+  // one to the full column width blurs text that was sharp.
+  max-width: 100%;
+  height: auto;
+}
+
+// A screenshot of the entire window is unreadable at column width whatever we
+// do, so those are wrapped in a link to themselves. Say so, rather than leaving
+// the reader to discover it by chance.
+a > img {
+  cursor: zoom-in;
+}
+
+// gdb's own output, quoted throughout, is fixed-pitch and often wide. Scrolling
+// the block is right; scrolling the page is not.
+.main-content pre {
+  overflow-x: auto;
+}

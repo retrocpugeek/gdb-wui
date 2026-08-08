@@ -51,7 +51,7 @@ two views of it.
 
 Press **Run** in the toolbar, or `Ctrl+F5`.
 
-![The whole window, stopped at a breakpoint](images/overview.png)
+[![The whole window, stopped at a breakpoint](images/overview.png)](images/overview.png)
 
 Everything filled in at once:
 
