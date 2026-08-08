@@ -70,8 +70,17 @@ part. These are:
   with the program counter marked in it.
 - **Other architectures.** Use `-gdb` to select a suitable gdb, then
   [connect to a stub](features/remote.md) — a gdbserver, qemu, an emulator, or a
-  board on a probe. gdb-wui is developed against MIPS64 and AArch64 as well as
-  x86-64.
+  board on a probe.
+
+  gdb-wui holds no architecture-specific knowledge of its own. Registers,
+  disassembly, frames and memory all come from gdb and are passed through as
+  reported, so any architecture the gdb you select supports should work. MIPS64,
+  AArch64 and x86-64 are the ones it is developed and tested against.
+
+  The one exception is the [Decompiled tab](features/decompilation.md), which
+  needs a per-ABI rule to turn Ghidra's stack offsets into expressions gdb can
+  evaluate. Where no rule has been established, stack variables show no value;
+  everything else in that tab still works.
 - **Images that do not run where they were linked.** Load symbols at an offset
   and the addresses line up again.
 - **Identifying what you are looking at.** The memory viewer names the symbol
