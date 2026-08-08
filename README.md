@@ -127,8 +127,20 @@ make test              # go vet + race tests + frontend checks
 make test-integration  # the same, plus tests against a real gdb
 make run               # serve this repo with assets from disk
 
-node scripts/screenshots/capture.mjs   # regenerate the documentation images
+make docs              # preview the documentation site at 127.0.0.1:4000
+make docs-images       # regenerate every screenshot in it
 ```
+
+`make docs` needs Jekyll, which is the only reason Ruby appears anywhere in
+this project — GitHub builds the published site, so this is purely for seeing a
+change before pushing it:
+
+```sh
+gem install --user-install --no-document bundler jekyll jekyll-remote-theme
+```
+
+The Makefile puts the user gem directory on `PATH` itself, so there is nothing
+to add to your shell profile.
 
 ## Licence
 

@@ -1,8 +1,11 @@
-# GitHub Pages builds this. There is nothing to run locally and no toolchain to
-# install, which is the point: the repository's promise is `go build` and done,
-# and a documentation site that needed a bundler would quietly break it.
+# GitHub Pages builds this. Nothing here has to be run to publish it, which is
+# the point: the repository's promise is `go build` and done, and a
+# documentation site that needed a bundler would quietly break it.
 #
 # Serve from master:/docs — Settings → Pages → Deploy from a branch.
+#
+# To preview a change before pushing it: `make docs`, which serves the site at
+# 127.0.0.1:4000. That needs Jekyll installed locally; see the README.
 
 title: gdb-wui
 description: A web UI for GDB — source, disassembly, memory and a real gdb console in a browser tab.

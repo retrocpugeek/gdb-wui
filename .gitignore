@@ -14,3 +14,8 @@ coverage.out
 # compiled fixtures and the Makefile's scratch output
 /testdata/fixtures/*.bin
 /build/
+
+# `make docs` output. GitHub builds the published site from docs/ itself, so
+# nothing here is ever committed.
+/docs/_site/
+/docs/.jekyll-cache/
