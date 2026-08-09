@@ -292,22 +292,6 @@ function makePage(conn, sessionId, viewport) {
     await send("Input.dispatchKeyEvent", { type: "keyUp", modifiers, ...spec });
   }
 
-  /**
-   * answerNextPrompt arms a one-shot reply to the next window.prompt.
-   *
-   * With the Page domain enabled, Chrome hands dialogs to the client and blocks
-   * until one is answered — so a scene that clicks "+ watch" without this would
-   * hang rather than fail. Adding a watch really does go through prompt(), so
-   * this drives the application as it is rather than around it.
-   */
-  function answerNextPrompt(text) {
-    const off = conn.on("Page.javascriptDialogOpening", () => {
-      off();
-      send("Page.handleJavaScriptDialog", { accept: true, promptText: text })
-        .catch(() => {});
-    });
-  }
-
   async function goto(url) {
     await send("Page.navigate", { url });
     await conn.once("Page.loadEventFired", { timeout: 30_000 });
@@ -398,7 +382,7 @@ function makePage(conn, sessionId, viewport) {
   return {
     evaluate, waitUntil, waitFor, waitForText,
     rect, textRect, centre,
-    click, clickAt, doubleClick, rightClick, hover, type, fill, key, answerNextPrompt,
+    click, clickAt, doubleClick, rightClick, hover, type, fill, key,
     goto, shot, sleep,
   };
 }

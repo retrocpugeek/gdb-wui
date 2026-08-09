@@ -11,7 +11,9 @@ nav_order: 4
 
 The Variables pane shows the locals and arguments of the selected frame, which
 can be expanded to any depth. To add an expression that is re-read at every stop
-and kept across stops, click **+ watch**.
+and kept across stops, click **+ watch** and type it into the box that opens
+over the pane's header. An expression gdb will not evaluate leaves the box open
+with what you typed still in it.
 
 Values that changed at the last stop are marked, so when stepping through a loop
 you can see which field moved without comparing against memory yourself.

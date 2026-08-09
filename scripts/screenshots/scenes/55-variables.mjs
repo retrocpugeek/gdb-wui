@@ -20,10 +20,14 @@ export default {
       what: "s to expand",
     });
 
-    // A watch really does go through window.prompt, so this drives the
-    // application rather than the store behind it.
-    page.answerNextPrompt("hidden_total");
+    // A watch really is typed into the in-place editor drawn over the panel
+    // head, so this drives the application rather than the store behind it.
     await page.click("#btn-add-watch");
+    await page.waitFor(".cell-edit", { what: "an edit box for the expression" });
+    await page.fill(".cell-edit", "hidden_total");
+    await page.key("Enter");
+    await page.waitUntil(() => !document.querySelector(".cell-edit"),
+      { what: "the edit box to close once the watch was added" });
     // "Watches" in the DOM; the uppercase in the screenshot is CSS.
     await page.waitForText("#variables", "Watches", { what: "the watches section" });
 
