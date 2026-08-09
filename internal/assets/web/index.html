@@ -73,8 +73,11 @@
       <button class="tab" data-center="memory" role="tab">Memory</button>
       <input id="mem-addr" class="addr-input is-hidden" type="text"
              placeholder="&amp;cfg, $sp, 0x7fff… — Enter to read" spellcheck="false">
-      <span id="source-path" class="panel-title"></span>
-      <span id="source-meta" class="panel-sub"></span>
+      <span class="toolbar-gap"></span>
+      <button id="btn-split" class="btn btn-small"
+              title="Show two views side by side (F7)" aria-pressed="false">⫿</button>
+      <button id="btn-split-orient" class="btn btn-small is-hidden"
+              title="Stack the two views instead (Shift+F7)">⊟</button>
     </div>
     <div id="locate" class="locate-bar is-hidden" role="alert">
       <span id="locate-text"></span>
@@ -103,10 +106,31 @@
       <button id="symbols-load-go" class="btn btn-small">load</button>
       <button id="symbols-load-cancel" class="btn btn-small">cancel</button>
     </div>
-    <div id="source" class="panel-body source" data-center="source" tabindex="0"></div>
-    <div id="disasm" class="panel-body asm is-hidden" data-center="disasm" tabindex="0"></div>
-    <div id="decomp" class="panel-body dec is-hidden" data-center="decomp" tabindex="0"></div>
-    <div id="memory" class="panel-body mem is-hidden" data-center="memory" tabindex="0"></div>
+    <!-- The centre views live in one grid with two slots. A view is placed by
+         its data-slot rather than being reparented, because moving a node
+         resets its scrollTop and you would lose your place in a file every
+         time you moved it between slots. -->
+    <div id="center" class="center" data-split="off">
+      <div class="slot-head" data-slot-head="a">
+        <span class="slot-name" data-slot-name="a"></span>
+        <span id="source-path" class="panel-title"></span>
+        <span id="source-meta" class="panel-sub"></span>
+      </div>
+      <div class="slot-head is-hidden" data-slot-head="b">
+        <span class="slot-name" data-slot-name="b"></span>
+        <span id="source-path-b" class="panel-title"></span>
+        <span id="source-meta-b" class="panel-sub"></span>
+      </div>
+      <div id="split-center-x" class="splitter splitter-v is-hidden" role="separator"
+           aria-orientation="vertical" aria-label="Resize the split" tabindex="0"></div>
+      <div id="split-center-y" class="splitter splitter-h is-hidden" role="separator"
+           aria-orientation="horizontal" aria-label="Resize the split" tabindex="0"></div>
+
+      <div id="source" class="panel-body source" data-center="source" data-slot="a" tabindex="0"></div>
+      <div id="disasm" class="panel-body asm" data-center="disasm" tabindex="0"></div>
+      <div id="decomp" class="panel-body dec" data-center="decomp" tabindex="0"></div>
+      <div id="memory" class="panel-body mem" data-center="memory" tabindex="0"></div>
+    </div>
   </main>
 
   <div id="split-right" class="splitter splitter-v" role="separator"

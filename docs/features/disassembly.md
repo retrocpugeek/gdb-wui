@@ -27,6 +27,9 @@ screenshot is gdb resolving a rip-relative operand to a symbol. Hovering a
 register reads it, and hovering an annotation reads the symbol; see
 [hover](variables.md).
 
+To read the instructions and the recovered C together, rather than switching
+between them, [split the centre view](source.md#two-views-at-once).
+
 ## Pinning the view to a function
 
 The view normally follows the program counter. To look at a different function,

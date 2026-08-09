@@ -30,6 +30,10 @@ While this tab is showing, a step moves to the next decompiled line instead,
 using Ghidra's address map in place of the missing line table. The gutter also
 sets breakpoints, by address.
 
+To read the recovered C against the instructions it came from, rather than
+switching between them, [split the centre view](source.md#two-views-at-once).
+With both showing, the focused one decides how stepping behaves.
+
 ## How the program counter is marked
 
 Recovered C is a model of the program rather than its source, so the pane

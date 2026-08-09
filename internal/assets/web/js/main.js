@@ -9,6 +9,7 @@
 
 import { createStore } from "./core/store.js";
 import { createConnection } from "./core/ws.js";
+import { createCentre } from "./core/centre.js";
 import { createHover } from "./core/hover.js";
 import { createKeymap } from "./core/keys.js";
 import { createTree } from "./panels/tree.js";
@@ -45,6 +46,11 @@ const ui = {
   source: el("source"),
   sourcePath: el("source-path"),
   sourceMeta: el("source-meta"),
+  sourcePathB: el("source-path-b"),
+  sourceMetaB: el("source-meta-b"),
+  centre: el("center"),
+  splitBtn: el("btn-split"),
+  splitOrientBtn: el("btn-split-orient"),
   stack: el("stack"),
   breakpoints: el("breakpoints"),
   variables: el("variables"),
@@ -168,10 +174,19 @@ const registers = createRegisters({
   onError: reportError,
 });
 
-// centerTab tracks which of source/disassembly is showing, because the
-// disassembly is only fetched while visible — most stops are a source-level
-// step and nobody is looking at machine code.
-let centerTab = "source";
+// Where the source view's header goes while it is off screen. Detached, so a
+// file loading in the background writes somewhere that is never displayed.
+const offscreenPath = document.createElement("span");
+const offscreenMeta = document.createElement("span");
+
+// The centre area's two slots. A view is fetched only while it is on screen —
+// most stops are a source-level step and nobody is looking at machine code —
+// so isVisible gates the refreshes, and focused() answers the questions that
+// need exactly one view, such as what F10 steps by.
+const centre = createCentre({
+  element: ui.centre,
+  onChange: onCentreChange,
+});
 
 const disasm = createDisasm({
   element: ui.disasm,
@@ -488,7 +503,7 @@ function handleEvent(msg) {
       break;
     case "decompChanged":
       refreshDecompStatus().then((st) => {
-        if (st?.state === "ready" && centerTab === "decomp") {
+        if (st?.state === "ready" && centre.isVisible("decomp")) {
           refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address);
         }
       });
@@ -670,7 +685,7 @@ function applyStopped(stopped) {
       // takes this branch, so stepping in the decompiled view flipped to the
       // disassembly every single time.
       const where = frame.from ? ` in ${frame.from}` : "";
-      if (centerTab === "source") {
+      if (centre.focused() === "source") {
         setStatus(`Stopped at ${frame.address}${where} with no source — showing disassembly.`);
         showCenter("disasm");
       } else {
@@ -867,7 +882,7 @@ ui.memAddr.addEventListener("keydown", (ev) => {
 // anything reconstructed: it knows about inlining, and about statements the
 // decompiler merged.
 function decompStepMap() {
-  if (centerTab !== "decomp") return null;
+  if (centre.focused() !== "decomp") return null;
   const map = decomp.stepMap();
   return map?.lines?.length ? map : null;
 }
@@ -884,9 +899,13 @@ function stepInto() {
   else exec("exec.step");
 }
 
-// showCenter switches the centre tab programmatically.
+// showCenter brings a view up programmatically.
+//
+// A view already on screen is focused where it is rather than moved into the
+// focused slot, so following a pointer into the disassembly while the
+// decompiled C is beside it does not throw the decompiled C away.
 function showCenter(name) {
-  document.querySelector(`.tab[data-center="${name}"]`)?.click();
+  centre.show(name);
 }
 ui.buttons.continue.addEventListener("click", () => exec("exec.continue"));
 ui.buttons.pause.addEventListener("click", () => exec("exec.pause"));
@@ -1303,6 +1322,8 @@ createKeymap({
     "Shift+F11": () => exec("exec.finish"),
     "Alt+F11": () => exec("exec.stepi"),
     "Alt+F10": () => exec("exec.nexti"),
+    F7: () => centre.toggleSplit(),
+    "Shift+F7": () => centre.toggleOrientation(),
   },
 });
 
@@ -1340,7 +1361,7 @@ function fetchPinned() {
 // every instruction step would make stepping through a loop far slower than it
 // needs to be.
 function refreshDisasm(pc) {
-  if (centerTab !== "disasm") return;
+  if (!centre.isVisible("disasm")) return;
   if (disasmPin) {
     fetchPinned();
     return;
@@ -1361,9 +1382,28 @@ function refreshDisasm(pc) {
     });
 }
 
+// updateCenterMeta labels each slot with what its own view is showing. Split,
+// there are two headers and one shared line cannot say which is which.
 function updateCenterMeta() {
-  if (centerTab === "disasm") ui.sourceMeta.textContent = disasm.summary();
-  else if (centerTab === "decomp") ui.sourceMeta.textContent = decomp.summary();
+  for (const name of centre.visible()) {
+    const slot = centre.slotOf(name);
+    const path = slot === "b" ? ui.sourcePathB : ui.sourcePath;
+    const meta = slot === "b" ? ui.sourceMetaB : ui.sourceMeta;
+    if (name === "source") {
+      // The source view writes its own header as files load, so it is given
+      // the elements rather than asked for the text.
+      source.setLabels(path, meta);
+      continue;
+    }
+    // The source path means nothing in the other views, and "No file open"
+    // beside a screenful of instructions reads as a broken panel.
+    path.textContent = "";
+    meta.textContent =
+      name === "disasm" ? disasm.summary()
+        : name === "decomp" ? decomp.summary()
+          : name === "memory" ? memory.summary()
+            : "";
+  }
 }
 
 // refreshDecomp keeps the decompiled view in step with the program counter.
@@ -1373,7 +1413,7 @@ function updateCenterMeta() {
 // fetch. The middle case matters more here than there — a decompiled function
 // is one round trip to Ghidra, and stepping within one should not pay it.
 function refreshDecomp(pc) {
-  if (centerTab !== "decomp") return;
+  if (!centre.isVisible("decomp")) return;
   if (pc && decomp.has(pc)) {
     const { line, ambiguous } = decomp.lineFor(pc);
     decomp.setPCLine(line, ambiguous);
@@ -1511,7 +1551,7 @@ function jumpToSymbol(sym) {
     // Pin the name, not the address, for the reason in showDisasmAt.
     disasmPin = sym.name;
     disasmPinExplicit = true;
-    const alreadyShowing = centerTab === "disasm";
+    const alreadyShowing = centre.isVisible("disasm");
     showCenter("disasm");
     // Switching tabs fires refreshDisasm, which honours the pin. Fetch here
     // only when the tab was already showing, so the two paths do not both ask.
@@ -1564,39 +1604,61 @@ for (const tab of document.querySelectorAll(".tab")) {
 
 // The centre pane's tabs. A stripped binary has no source at all, so the
 // disassembly is not an advanced view here — it is the only one.
+//
+// A tab acts on the focused slot. Which slot that is comes from where you last
+// clicked, so with two views up the tabs replace the one you were looking at.
 for (const tab of document.querySelectorAll(".tab[data-center]")) {
-  tab.addEventListener("click", () => {
-    centerTab = tab.dataset.center;
-    hover.hide();
-    for (const other of document.querySelectorAll(".tab[data-center]")) {
-      other.classList.toggle("is-active", other === tab);
-    }
-    for (const panel of document.querySelectorAll("[data-center]:not(.tab)")) {
-      panel.classList.toggle("is-hidden", panel.dataset.center !== centerTab);
-    }
-    ui.memAddr.classList.toggle("is-hidden", centerTab !== "memory");
-    if (centerTab === "source") {
-      ui.sourcePath.textContent = ui.sourcePath.dataset.saved ?? "";
-      ui.sourceMeta.textContent = "";
-      return;
-    }
-    // The source path is meaningless in the other views, and "No file open"
-    // beside a screenful of instructions reads as a broken panel.
-    if (ui.sourcePath.textContent) ui.sourcePath.dataset.saved = ui.sourcePath.textContent;
-    ui.sourcePath.textContent = "";
+  tab.addEventListener("click", () => centre.assign(centre.focusedSlot(), tab.dataset.center));
+}
 
-    if (centerTab === "disasm") {
-      const frame = stack.frameAt(store.get("selection.frame"));
-      refreshDisasm(frame?.address);
-    } else if (centerTab === "decomp") {
-      const frame = stack.frameAt(store.get("selection.frame"));
-      refreshDecompStatus();
-      refreshDecomp(frame?.address);
-    } else if (centerTab === "memory") {
-      ui.sourceMeta.textContent = memory.summary();
-      ui.memAddr.focus();
-    }
-  });
+ui.splitBtn.addEventListener("click", () => centre.toggleSplit());
+ui.splitOrientBtn.addEventListener("click", () => centre.toggleOrientation());
+
+// onCentreChange runs whenever the slots or the focus change, and is the one
+// place that reacts to it: the tab markers, the address box, and a fetch for
+// any view that has just come on screen.
+function onCentreChange({ visible, split }) {
+  hover.hide();
+
+  const focusedName = centre.focused();
+  for (const tab of document.querySelectorAll(".tab[data-center]")) {
+    const name = tab.dataset.center;
+    tab.classList.toggle("is-active", name === focusedName);
+    // The other slot's view is marked too, more faintly. Without it the tabs
+    // claim only one view is showing while two are.
+    tab.classList.toggle("is-secondary", visible.includes(name) && name !== focusedName);
+  }
+
+  ui.splitBtn.setAttribute("aria-pressed", String(split !== "off"));
+  ui.splitBtn.title = split === "off"
+    ? "Show two views side by side (F7)"
+    : "Show one view (F7)";
+  ui.splitOrientBtn.classList.toggle("is-hidden", split === "off");
+  ui.splitOrientBtn.textContent = split === "y" ? "⫿" : "⊟";
+  ui.splitOrientBtn.title = split === "y"
+    ? "Put the two views side by side (Shift+F7)"
+    : "Stack the two views (Shift+F7)";
+
+  // Only the splitter for the current orientation is in the grid.
+  el("split-center-x").classList.toggle("is-hidden", split !== "x");
+  el("split-center-y").classList.toggle("is-hidden", split !== "y");
+
+  ui.memAddr.classList.toggle("is-hidden", !centre.isVisible("memory"));
+  if (!centre.isVisible("source")) {
+    // Somewhere harmless to write while the source view is off screen.
+    // Without it, a file loading in the background would put its name in a
+    // header belonging to the disassembly.
+    source.setLabels(offscreenPath, offscreenMeta);
+  }
+
+  const frame = stack.frameAt(store.get("selection.frame"));
+  if (visible.includes("disasm")) refreshDisasm(frame?.address);
+  if (visible.includes("decomp")) {
+    refreshDecompStatus();
+    refreshDecomp(frame?.address);
+  }
+  updateCenterMeta();
+  if (focusedName === "memory") ui.memAddr.focus();
 }
 
 // The bottom pane's tabs. xterm cannot measure a hidden element, so a terminal
@@ -1687,6 +1749,10 @@ initLayout({
     inferiorTerm.resize();
   },
 });
+// Now that the panels exist, apply the restored split and let onCentreChange
+// fetch whatever came back on screen with it.
+centre.sync();
+
 initTheme({ toggle: el("btn-theme") });
 document.addEventListener("gdb-wui:theme", () => {
   // The terminals were built with the old palette, so they have to be told.

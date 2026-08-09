@@ -50,6 +50,30 @@ Every value you read — the Variables pane, and [hover](variables.md) tooltips 
 comes from the **selected** frame, so the markers also tell you which frame the
 values belong to.
 
+## Two views at once
+
+To show two of the four centre views together, press the split button at the
+right of the tab strip, or `F7`.
+
+![Disassembly beside decompiled C](../images/split.png)
+
+The second slot opens with the useful complement of what you were looking at:
+the [decompiled C](decompilation.md) beside the
+[disassembly](disassembly.md), which is the pairing this exists for, and the
+disassembly beside anything else. Either slot can then be changed to any view
+from the tab strip.
+
+Drag the divider to resize. The split button toggles it off again; the button
+beside it, or `Shift+F7`, stacks the two views instead of putting them side by
+side. Both the arrangement and the divider position are remembered.
+
+**One slot is focused, and the tabs and the keys act on it.** Click in a view to
+focus it; the focused slot's header is marked, and its view is the one the tab
+strip shows as active. This matters most for stepping: with the disassembly
+focused, `F10` steps by instruction, and with the decompiled view focused it
+[steps by decompiled line](decompilation.md#stepping-in-the-decompiled-view).
+Both views follow the program counter either way.
+
 ## When the source is not where gdb expects
 
 A binary built on another machine records that machine's source paths. When gdb
