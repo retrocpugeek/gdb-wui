@@ -103,6 +103,13 @@ export async function startServer(bin, { project, exe, flags = [] }) {
     "-project", project,
     "-open=false",
     "-addr", "127.0.0.1:0",
+    // -no-config, because this process inherits the harness's working
+    // directory and gdb-wui searches there. A gdb-wui.json in the checkout —
+    // the developer's own, pointing at their firmware — would otherwise choose
+    // the gdb and the program for every screenshot. Verified: a server started
+    // in the repository root logs "config: .../gdb-wui.json" and tries to load
+    // the exe named in it.
+    "-no-config",
     ...(exe ? ["-exe", exe] : []),
     ...flags,
   ];
@@ -117,6 +124,15 @@ export async function startServer(bin, { project, exe, flags = [] }) {
   for (;;) {
     const line = stdout.split("\n").find((l) => l.startsWith("http://"));
     if (line) {
+      // -no-config above should make this impossible. Checked rather than
+      // assumed, because a config that leaked in would change the gdb and the
+      // program without failing a single assertion: the scenes would keep
+      // passing and the images would quietly describe a different session.
+      if (stderr.includes("config:")) {
+        throw new Error(
+          "a config file reached the harness — screenshots would not be "
+          + `reproducible:\n${stderr}`);
+      }
       return {
         url: line.trim(),
         args,

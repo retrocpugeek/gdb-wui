@@ -18,6 +18,12 @@ const SPLITTERS = [
   { id: "split-tree", prop: "--tree-w", axis: "x", min: 140, max: 600, invert: false },
   { id: "split-right", prop: "--right-w", axis: "x", min: 220, max: 700, invert: true },
   { id: "split-bottom", prop: "--bottom-h", axis: "y", min: 80, max: 600, invert: true },
+  // The centre split. One spec per orientation, because a splitter's axis and
+  // the property it writes are fixed at construction; only the handle matching
+  // the current orientation is in the grid, so only one ever gets events. Both
+  // persist, so each orientation remembers its own divider.
+  { id: "split-center-x", prop: "--center-a-w", axis: "x", min: 160, max: 3000, invert: false },
+  { id: "split-center-y", prop: "--center-a-h", axis: "y", min: 80, max: 2000, invert: false },
 ];
 
 export function initLayout({ app, onResize }) {

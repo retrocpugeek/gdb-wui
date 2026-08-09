@@ -11,6 +11,10 @@ import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 
 export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
   let path = null;
+  // The labels live outside this panel, in the header of whichever slot the
+  // view is in, so they are reassignable rather than fixed at construction.
+  // lastMeta is kept so that a move can repaint them without a refetch.
+  let lastMeta = "";
   let lines = [];
   // Two distinct markers, and the distinction matters. execLine is where the
   // program counter actually is; frameLine is the line of an outer frame the
@@ -109,6 +113,16 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
     list.forEachRendered((row, index) => applyDecorations(row, index + 1));
   }
 
+  function showPath(text) {
+    pathLabel.textContent = text;
+    pathLabel.title = text;
+  }
+
+  function showMeta(text) {
+    lastMeta = text;
+    metaLabel.textContent = text;
+  }
+
   function showMessage(text, className) {
     if (list) {
       list.destroy();
@@ -126,16 +140,14 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
       // tabs blank it while the disassembly or memory view is showing, and a
       // caller re-opening the file it is already on is exactly how you get
       // back — leaving it blank shows a file with no name above it.
-      pathLabel.textContent = next;
-      pathLabel.title = next;
+      showPath(next);
       if (line) reveal(line);
       return;
     }
     const mine = ++token;
     path = next;
-    pathLabel.textContent = next;
-    pathLabel.title = next;
-    metaLabel.textContent = "loading…";
+    showPath(next);
+    showMeta("loading…");
 
     let file;
     try {
@@ -143,7 +155,7 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
     } catch (err) {
       if (mine !== token) return;
       path = null;
-      metaLabel.textContent = "";
+      showMeta("");
       showMessage(errorText(err), "src-error");
       return;
     }
@@ -157,7 +169,7 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
     ensureList();
     refilterBreakpoints();
     list.setCount(lines.length);
-    metaLabel.textContent = `${lines.length} lines · ${formatBytes(file.text.length)}`;
+    showMeta(`${lines.length} lines · ${formatBytes(file.text.length)}`);
     if (line) reveal(line);
   }
 
@@ -239,14 +251,23 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
   return {
     open,
     expressionAt,
+    // setLabels retargets the header this view writes to, for when it changes
+    // slot, and repaints it from what is already loaded.
+    setLabels(nextPath, nextMeta) {
+      if (nextPath === pathLabel && nextMeta === metaLabel) return;
+      pathLabel = nextPath;
+      metaLabel = nextMeta;
+      showPath(path ?? "No file open");
+      metaLabel.textContent = lastMeta;
+    },
     get path() {
       return path;
     },
     clear() {
       path = null;
       lines = [];
-      pathLabel.textContent = "No file open";
-      metaLabel.textContent = "";
+      showPath("No file open");
+      showMeta("");
       showMessage("Choose a file from the tree, or load a program and run it.", "src-empty");
     },
     // setExecLine moves the program-counter marker. Same file: two class

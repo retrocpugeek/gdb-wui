@@ -85,6 +85,45 @@
 
 .panel-head-split { border-top: 1px solid var(--border); }
 
+/* The per-slot header. Thinner than a panel head, because when the view is not
+ * split it is a second bar directly under the tabs and should not read as one. */
+.slot-head {
+  padding: 2px var(--pad);
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  min-height: 20px;
+  font-size: 11px;
+}
+
+/* Which slot the tabs and the keys act on. Marked on the header rather than
+ * the body, so the mark does not move when the view inside the slot changes. */
+.center[data-split="off"] .slot-head { background: var(--bg-2); }
+.center:not([data-split="off"]) .slot-head.is-focused {
+  background: var(--bg-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.slot-name {
+  font-weight: 600;
+  color: var(--fg-1);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* Only meaningful when split: unsplit, the tab strip already says which view
+ * is showing and repeating it in the bar below is noise. */
+.center[data-split="off"] .slot-name { display: none; }
+
+/* The split controls sit at the end of the tab strip. */
+#btn-split[aria-pressed="true"] { background: var(--bg-3); color: var(--fg-0); }
+
+/* The other slot's view. Marked more faintly than the focused one, because
+ * without any mark the tabs claim one view is showing while two are. */
+.tab.is-secondary:not(.is-active) {
+  color: var(--fg-1);
+  box-shadow: inset 0 -2px 0 var(--accent-dim);
+}
+
 /* The title keeps its width and the subtitle gives way. Letting both shrink
  * equally produces "F." next to a full-width path, which is exactly backwards:
  * the path is the expendable one. */

@@ -22,6 +22,12 @@ body {
   --tree-w: 220px;
   --right-w: 380px;
   --bottom-h: 220px;
+  /* The centre split's divider. On #app rather than on .center because the
+   * splitter code in core/layout.js reads and writes track sizes there, which
+   * is also what makes these persist with the rest of the layout. Only a
+   * fallback: the first split sets them to half the centre's real size. */
+  --center-a-w: 480px;
+  --center-a-h: 240px;
 
   height: 100%;
   display: grid;
@@ -78,6 +84,65 @@ body.is-dragging .splitter { pointer-events: auto; }
   overflow: auto;
   min-width: 0;
   min-height: 0;
+}
+
+/* The centre views: one grid with two slots, so that a view can be placed
+ * without being reparented. Reparenting resets scrollTop, which would lose your
+ * place in a file every time you moved it between slots.
+ *
+ * A view is put in a slot by data-slot; one with no data-slot is not on screen.
+ * The three shapes below are the whole of the split. */
+.center {
+  flex: 1 1 auto;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.center[data-split="off"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "head-a"
+    "body-a";
+}
+
+.center[data-split="x"] {
+  grid-template-columns: minmax(0, var(--center-a-w)) 4px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "head-a sp head-b"
+    "body-a sp body-b";
+}
+
+.center[data-split="y"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, var(--center-a-h)) 4px auto minmax(0, 1fr);
+  grid-template-areas:
+    "head-a"
+    "body-a"
+    "sp"
+    "head-b"
+    "body-b";
+}
+
+.center > [data-slot-head="a"] { grid-area: head-a; }
+.center > [data-slot-head="b"] { grid-area: head-b; }
+.center > [data-slot="a"] { grid-area: body-a; }
+.center > [data-slot="b"] { grid-area: body-b; }
+#split-center-x, #split-center-y { grid-area: sp; }
+
+/* A view with no slot is not on screen. Stated as an absence rather than with
+ * is-hidden, so that "which views are visible" has one source of truth. */
+.center > .panel-body:not([data-slot]) { display: none; }
+
+.slot-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pad);
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* The right column stacks the value panels over the stack and breakpoints.

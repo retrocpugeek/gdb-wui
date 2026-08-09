@@ -19,6 +19,8 @@ nav_order: 2
 | `Shift+F11` | Step out |
 | `Alt+F10` | Step over one instruction |
 | `Alt+F11` | Step one instruction |
+| `F7` | Split the centre view, or unsplit it |
+| `Shift+F7` | Switch between side by side and stacked |
 | `Escape` | Close a context menu |
 
 ## Inside a terminal panel
