@@ -124,12 +124,12 @@ that also needs a system JDK 21 or later, and both have to remain optional.
       "frame": { "size": 96, "localSize": 96, "paramOffset": 0,
                  "returnAddressOffset": 0, "growsNegative": true },
       "variables": [
-        { "name": "buf", "type": "char[64]", "size": 64, "param": false,
+        { "name": "buf", "id": "57", "type": "char[64]", "size": 64, "param": false,
           "pc": null, "storage": { "kind": "stack", "offset": -88 } },
-        { "name": "cfg", "type": "config *", "size": 8, "param": true,
+        { "name": "cfg", "id": "58", "type": "config *", "size": 8, "param": true,
           "pc": "0x1011e8", "storage": { "kind": "register", "register": "RDI" } },
-        { "name": "lVar1", "type": "long", "size": 8, "param": false,
-          "pc": "0x1011f9", "storage": { "kind": "unique" } }
+        { "name": "lVar1", "id": "4611715705241337865", "type": "long", "size": 8,
+          "param": false, "pc": "0x1011f9", "storage": { "kind": "unique" } }
       ],
       "lineCount": 20,
       "text": "void inspect(config *cfg)\n\n{\n…",
@@ -190,6 +190,15 @@ Three storage kinds come out of the decompiler and they are not equally useful:
 In `inspect`, `lVar1` and `local_58` look alike in the C text; one of them has
 a location and the other never will. A UI that shows blanks for some variables
 is honest. One that quietly omits them is not.
+
+`id` is Ghidra's symbol id, and it is what addresses a variable for a rename or
+a retype. It is a string rather than a number because a symbol the decompiler
+invented — one with no database entry, `lVar1` above — gets an id around 4.6e18,
+which a JavaScript number cannot hold exactly. Nothing does arithmetic on it.
+
+An id is stable only while the function is unchanged: editing one symbol
+renumbers the others. A consumer holding ids across an edit must refresh them,
+and a producer asked to act on a stale one must refuse rather than guess.
 
 ### `globals`
 

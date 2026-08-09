@@ -77,6 +77,16 @@ type Options struct {
 	// analyzeHeadless with no -process pattern sweeps all of them.
 	Program string
 
+	// Writable permits Rename and Retype. False for a project the user named:
+	// theirs holds their names, types and comments, and gdb-wui writes only to
+	// the one it imported itself.
+	//
+	// It is not the same thing as -readOnly, which protects nothing at all —
+	// under it the sidecar can still rename a function and save the file
+	// (finding 32). This flag is passed to the sidecar as well, so the refusal
+	// exists on both sides of the socket rather than only in the caller.
+	Writable bool
+
 	// Timeout bounds startup. Zero means DefaultStartTimeout.
 	Timeout time.Duration
 
@@ -135,8 +145,15 @@ type Ready struct {
 }
 
 type reply struct {
-	OK       bool            `json:"ok"`
-	Error    string          `json:"error"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error"`
+	// Warning is a successful reply that the caller still has to say something
+	// about — a name that is now ambiguous, an edit that was not saved.
+	Warning string `json:"warning"`
+	// Was and Now describe an edit well enough to undo it: the value before,
+	// and the name the symbol answers to after.
+	Was      string          `json:"was"`
+	Now      string          `json:"now"`
 	Function json.RawMessage `json:"function"`
 	Program  json.RawMessage `json:"program"`
 	Raw      json.RawMessage `json:"-"`
@@ -245,10 +262,15 @@ func (c *Client) spawn(ctx context.Context, sockPath string) (func(), error) {
 	// served, and then thrown away, leaving an empty project for the next run
 	// to fail on. See Import below.
 	//
-	// -readOnly is not an optimisation either. A user's Ghidra project holds
-	// their names, types and comments; gdb-wui reads it and must never write to
-	// it. -noanalysis for the same reason: re-analysing someone's curated
-	// program would undo work.
+	// -noanalysis because re-analysing someone's curated program would undo
+	// their work, and -readOnly so that analyzeHeadless commits nothing of its
+	// own when the sidecar exits.
+	//
+	// -readOnly is *not* what keeps a user's project safe, though it reads that
+	// way. Under it the sidecar can still rename a function and save the file,
+	// and the change is there on the next open: finding 32. What keeps a
+	// project safe is Options.Writable, which is false for one the user named,
+	// and the sidecar's own refusal to answer an edit without it.
 	args := []string{
 		c.opts.ProjectDir, c.opts.ProjectName,
 		"-process", c.opts.Program, "-noanalysis", "-readOnly",
@@ -257,6 +279,9 @@ func (c *Client) spawn(ctx context.Context, sockPath string) (func(), error) {
 		"-scriptPath", scriptDir,
 		"-postScript", "DecompServer.java", sockPath,
 	)
+	if c.opts.Writable {
+		args = append(args, "writable")
+	}
 
 	cmd := exec.Command(c.opts.Install.Headless, args...)
 	// A scrubbed environment, as for gdb. Ghidra needs a JDK: it does not ship
@@ -513,6 +538,50 @@ func (c *Client) Names(ctx context.Context, addrs []string) ([]FunctionName, err
 		return nil, fmt.Errorf("ghidra: decoding names: %w", err)
 	}
 	return out.Names, nil
+}
+
+// Rename gives a function, local or global a new name.
+//
+// Retype is the same call with a type instead, and both return the function
+// decompiled *again* rather than an acknowledgement. That is not politeness: an
+// edit renumbers the ids of the symbols it did not touch (finding 34) and a
+// retype reshapes the body around it, so a caller that patched its own copy
+// would be holding keys that no longer address anything.
+//
+// EditResult also carries what an undo needs, because only the far end can see
+// which symbol the edit landed on when the id was stale and the name matched
+// instead.
+func (c *Client) Rename(ctx context.Context, e Edit) (*EditResult, error) {
+	return c.edit(ctx, "rename", e, map[string]any{"newName": e.Value})
+}
+
+// Retype sets a variable's type, or a function's whole prototype — which in
+// Ghidra also renames it, because a prototype carries a name.
+func (c *Client) Retype(ctx context.Context, e Edit) (*EditResult, error) {
+	return c.edit(ctx, "retype", e, map[string]any{"type": e.Value})
+}
+
+func (c *Client) edit(ctx context.Context, op string, e Edit, extra map[string]any) (
+	*EditResult, error) {
+	req := map[string]any{
+		"kind":     e.Kind,
+		"function": e.Function,
+		"symbol":   e.Symbol,
+		"name":     e.Name,
+		"address":  e.Address,
+	}
+	for k, v := range extra {
+		req[k] = v
+	}
+	rep, err := c.call(ctx, op, req)
+	if err != nil {
+		return nil, err
+	}
+	var fn Function
+	if err := json.Unmarshal(rep.Function, &fn); err != nil {
+		return nil, fmt.Errorf("ghidra: decoding function: %w", err)
+	}
+	return &EditResult{Function: &fn, Warning: rep.Warning, Was: rep.Was, Now: rep.Now}, nil
 }
 
 // Dead returns a channel closed when the process goes away, and the reason.

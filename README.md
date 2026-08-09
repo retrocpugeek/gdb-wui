@@ -80,8 +80,9 @@ breakpoints are kept.
 | Breakpoints by source line, address or symbol | Watchpoints, catchpoints, tracepoints |
 | Locals, nested structs, watch expressions | Per-row display formats — use `p/d x` at the console |
 | Hover a variable or register for its value | Hovering a call — it would run the function |
-| Decompiled C from Ghidra, with the PC marked | Editing Ghidra's names or types from here |
+| Decompiled C from Ghidra, with the PC marked | Reproducing the source — recovered C is a model |
 | A stripped binary's call stack, named by Ghidra | Naming the Threads pane's frames the same way |
+| Renaming and retyping what the decompiler guessed | Editing a Ghidra project of your own — that stays read-only |
 | Double-click to edit a variable, register or byte | Editing an array, struct or union — gdb refuses |
 | Go to a symbol, address or `file.c:65` in the focused view | Back and forward through places you have been |
 | Registers, disassembly, and a hex memory view | Reverse debugging, `rr` |

@@ -172,6 +172,11 @@ public class DecompJson {
 			}
 			first = false;
 			b.append("{\"name\":").append(str(sym.getName()));
+			// The id addresses this symbol for an edit, and it is a string
+			// rather than a number on purpose: a decompiler-only symbol's id is
+			// around 4.6e18, which does not survive a round trip through a
+			// JavaScript number. A consumer never does arithmetic on it.
+			b.append(",\"id\":").append(str(Long.toString(sym.getId())));
 			b.append(",\"type\":").append(
 				str(sym.getDataType() == null ? "" : sym.getDataType().getDisplayName()));
 			b.append(",\"size\":").append(sym.getSize());

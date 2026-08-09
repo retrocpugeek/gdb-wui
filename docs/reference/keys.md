@@ -22,6 +22,7 @@ nav_order: 2
 | `Ctrl+Shift+G` | Go to a symbol, address or line in the focused view |
 | `F7` | Split the centre view, or unsplit it |
 | `Shift+F7` | Switch between side by side and stacked |
+| `Ctrl+Shift+Z` | Undo the last [decompiler rename or retype](../features/decompilation.md#renaming-what-the-decompiler-guessed) |
 | `Escape` | Close a context menu, or the About box |
 
 ## While editing a value

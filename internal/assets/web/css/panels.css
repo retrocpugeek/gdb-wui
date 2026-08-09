@@ -812,6 +812,15 @@
 .ctxmenu-item:hover,
 .ctxmenu-item:focus-visible { background: var(--accent-dim); color: var(--fg-0); }
 
+/* A disabled item is still shown, and still explains itself on hover: the
+   reason it cannot be used is the thing worth reading. */
+.ctxmenu-item[disabled] {
+  color: var(--fg-2);
+  cursor: default;
+}
+
+.ctxmenu-item[disabled]:hover { background: none; color: var(--fg-2); }
+
 .ctxmenu-head {
   padding: 3px 12px 5px;
   color: var(--fg-2);

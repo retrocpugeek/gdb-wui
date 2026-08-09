@@ -14,6 +14,9 @@ const (
 	TypeDecompStatus   = "decomp.status"
 	TypeDecompFunction = "decomp.function"
 	TypeDecompNames    = "decomp.names"
+	TypeDecompRename   = "decomp.rename"
+	TypeDecompRetype   = "decomp.retype"
+	TypeDecompUndo     = "decomp.undo"
 )
 
 // Events.
@@ -24,6 +27,13 @@ const (
 	// pane that shows "starting" for a minute with no way to tell whether
 	// anything is happening.
 	EventDecompLog = "decompLog"
+	// EventDecompEdited reports that a name or a type in the decompiler's
+	// database changed. Broadcast rather than left to the reply, because one
+	// server serves however many browser tabs are open on it and they all show
+	// the old name until told otherwise — and because an edit is not local to
+	// what was edited: changing a function's prototype changes how every
+	// caller decompiles.
+	EventDecompEdited = "decompEdited"
 	// EventDecompChanged reports that the decompiler's availability or the
 	// program it holds has changed — it started, it died, or a different
 	// executable was loaded. Clients refetch status rather than being sent it,
@@ -60,6 +70,12 @@ type DecompStatus struct {
 	Program *DecompProgram `json:"program,omitempty"`
 	// FunctionCount is how many functions it knows about.
 	FunctionCount int `json:"functionCount,omitempty"`
+	// Editable reports whether names and types can be changed. False for a
+	// project the user named with -ghidra-project: that one holds their own
+	// work and gdb-wui only reads it. A client shows the menu items either way
+	// and disables them with the reason, because an item that is absent
+	// teaches nobody that the feature exists.
+	Editable bool `json:"editable,omitempty"`
 	// Mismatch is set when the decompiler's program is not the binary gdb has
 	// loaded. It is a warning rather than a refusal because the two builds are
 	// often the same code — a stripped and an unstripped link of one program
@@ -196,6 +212,78 @@ type DecompNames struct {
 	State string `json:"state,omitempty"`
 }
 
+// Edit kinds. What the user pointed at decides which of Ghidra's APIs can
+// change it, and the three are not interchangeable.
+const (
+	// DecompEditFunction is the function itself. For decomp.rename the value is
+	// a name; for decomp.retype it is a whole C prototype, which in Ghidra also
+	// renames the function.
+	DecompEditFunction = "function"
+	// DecompEditVariable is a local or a parameter.
+	DecompEditVariable = "variable"
+	// DecompEditGlobal is a module-scope symbol. Renaming one is supported;
+	// retyping one is not yet.
+	DecompEditGlobal = "global"
+)
+
+// DecompEditRequest is the payload of both decomp.rename and decomp.retype.
+//
+// The decompiler's names are guesses — FUN_0010d2b0, local_10, undefined8 —
+// and correcting them is most of what makes a stripped binary readable. They go
+// into the Ghidra project gdb-wui imported, so they outlive the session; a
+// project the user named with -ghidra-project is refused, and the refusal says
+// so.
+type DecompEditRequest struct {
+	// Kind is one of the DecompEdit* constants.
+	Kind string `json:"kind"`
+	// Function is the entry address of the function on screen, as the client
+	// was given it — a runtime address, translated back here. Required for
+	// every kind, a global included: it is the function decompiled again for
+	// the reply.
+	Function string `json:"function"`
+	// Symbol is DecompVar.ID, opaque and optional. An edit renumbers the ids of
+	// the symbols it did not touch, so this is routinely one edit stale and
+	// Name is the fallback key.
+	Symbol string `json:"symbol,omitempty"`
+	// Name is the symbol's current name. Sent for every kind, so that a stale
+	// view is reported rather than silently applied to a neighbour.
+	Name string `json:"name,omitempty"`
+	// Address locates a DecompEditGlobal, runtime.
+	Address string `json:"address,omitempty"`
+	// Value is the new name, or the new type.
+	Value   string `json:"value"`
+	StopSeq uint64 `json:"stopSeq,omitempty"`
+}
+
+// DecompUndoRequest reverses the last edit of this session.
+//
+// gdb-wui keeps its own journal of inverse edits rather than using Ghidra's
+// undo, because saving clears Ghidra's undo stack (finding 33) and every edit
+// is saved: an unsaved rename lives only inside the sidecar process, and losing
+// an afternoon of naming to a crash is not a trade worth making.
+type DecompUndoRequest struct {
+	StopSeq uint64 `json:"stopSeq,omitempty"`
+}
+
+// DecompEdit is the reply to decomp.rename, decomp.retype and decomp.undo.
+type DecompEdit struct {
+	// Function is the whole function decompiled again. Not an acknowledgement:
+	// a rename renumbers every other symbol's id and a retype reshapes the body
+	// around it, so a client that patched its own copy would hold keys that no
+	// longer address anything.
+	Function DecompFunction `json:"function"`
+	// Did describes the change in the past tense, for the status line —
+	// "renamed local_10 to count".
+	Did string `json:"did"`
+	// Warning is set when the edit succeeded and the user still has to be told
+	// something: a name that is now ambiguous, or an edit that could not be
+	// saved. Ghidra accepts two functions with one name without a word.
+	Warning string `json:"warning,omitempty"`
+	// CanUndo reports whether anything is left on the journal, so a client can
+	// disable the item rather than offer an undo that will fail.
+	CanUndo bool `json:"canUndo,omitempty"`
+}
+
 // ExecStepLineRequest steps until the program counter leaves a set of
 // addresses — the addresses of the line currently showing.
 //
@@ -274,7 +362,12 @@ const (
 
 // DecompVar is one local or parameter.
 type DecompVar struct {
-	Name  string `json:"name"`
+	Name string `json:"name"`
+	// ID addresses this variable for an edit. Opaque, and a string rather than
+	// a number because a decompiler-only symbol's id is around 4.6e18, which a
+	// JavaScript number cannot hold exactly. Empty for a global, which is
+	// addressed by Addr instead — nothing renumbers an address.
+	ID    string `json:"id,omitempty"`
 	Type  string `json:"type,omitempty"`
 	Param bool   `json:"param,omitempty"`
 	// Storage is one of the DecompStorage* constants.
@@ -285,6 +378,8 @@ type DecompVar struct {
 	Expr string `json:"expr,omitempty"`
 	// PC bounds a register variable's validity, with Bias applied.
 	PC string `json:"pc,omitempty"`
+	// Addr is where a global lives, with Bias applied. Empty for anything else.
+	Addr string `json:"addr,omitempty"`
 }
 
 // DecompFrame is Ghidra's view of the stack layout, passed through so a client

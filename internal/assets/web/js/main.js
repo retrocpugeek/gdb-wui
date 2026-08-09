@@ -10,7 +10,7 @@
 import { createStore } from "./core/store.js";
 import { createConnection } from "./core/ws.js";
 import { createCentre } from "./core/centre.js";
-import { cancelEdit } from "./core/edit.js";
+import { cancelEdit, editCell } from "./core/edit.js";
 import { createHover } from "./core/hover.js";
 import { createKeymap } from "./core/keys.js";
 import { createTree } from "./panels/tree.js";
@@ -281,7 +281,12 @@ for (const [pane, resolve] of [
 ]) {
   pane.addEventListener("contextmenu", (ev) => {
     const hit = resolve(ev);
-    if (!hit) return;
+    // The decompiled view has a second menu even where there is no value: its
+    // *names* are editable, and the ones most worth changing — a decompiler
+    // temporary, a function nobody can evaluate — are exactly the ones with
+    // nothing to show a value for.
+    const editable = pane === ui.decomp ? decompEditTarget(ev) : null;
+    if (!hit && !editable) return;
     ev.preventDefault();
     hover.hide();
     const x = ev.clientX;
@@ -290,28 +295,32 @@ for (const [pane, resolve] of [
     // The value decides half the menu, so it is fetched before the menu opens
     // rather than the menu offering something that cannot work. One round
     // trip, and the hover has usually just made the same one.
-    evaluateForMenu(hit.expr).then((res) => {
+    evaluateForMenu(hit?.expr).then((res) => {
       const items = [];
-      const label = hit.name ?? hit.expr;
+      const label = hit?.name ?? hit?.expr ?? editable?.label ?? "";
 
-      // Where it is kept. A register is not in memory and has no answer here.
-      if (hit.storage !== "register") {
-        items.push({
-          label: "Show where it is stored",
-          title: `the bytes at &(${hit.expr})`,
-          run: () => showAddressOf(hit.expr, label),
-        });
+      if (hit) {
+        // Where it is kept. A register is not in memory and has no answer here.
+        if (hit.storage !== "register") {
+          items.push({
+            label: "Show where it is stored",
+            title: `the bytes at &(${hit.expr})`,
+            run: () => showAddressOf(hit.expr, label),
+          });
+        }
+        // What it points at. Offered for anything whose value is
+        // address-shaped, which is how a register holding a pointer becomes
+        // followable.
+        if (res && res.addr >= LOWEST_PLAUSIBLE_ADDRESS) {
+          const target = "0x" + res.addr.toString(16);
+          items.push({
+            label: `Show what it points to — ${target}`,
+            title: "follow the value as an address",
+            run: () => showAtAddress(res.addr, `*${label}`),
+          });
+        }
       }
-      // What it points at. Offered for anything whose value is address-shaped,
-      // which is how a register holding a pointer becomes followable.
-      if (res && res.addr >= LOWEST_PLAUSIBLE_ADDRESS) {
-        const target = "0x" + res.addr.toString(16);
-        items.push({
-          label: `Show what it points to — ${target}`,
-          title: "follow the value as an address",
-          run: () => showAtAddress(res.addr, `*${label}`),
-        });
-      }
+      items.push(...decompEditItems(editable));
 
       if (!items.length) {
         setStatus(res && res.value
@@ -319,9 +328,220 @@ for (const [pane, resolve] of [
           : `${label} has no address to show.`);
         return;
       }
-      showContextMenu(x, y, label, items);
+      showContextMenu(x, y, label || editable?.fn?.name || "", items);
     });
   });
+}
+
+// decompEditTarget works out what a right-click in the decompiled view is
+// about: the symbol under the pointer if there is one, and the function on
+// screen either way.
+//
+// Both, rather than one or the other, because a right-click on a name inside
+// FUN_0010d2b0 is a plausible way to reach for renaming the function too.
+function decompEditTarget(ev) {
+  const fn = decomp.shown();
+  if (!fn) return null;
+  const sym = decomp.symbolAt(ev);
+  return {
+    fn,
+    sym,
+    label: sym?.name ?? fn.name,
+    // Where to put the editor for an edit that is about the function rather
+    // than about a word: under the pointer, which is where the user was
+    // looking. The function's name is on a line that may be scrolled away.
+    at: { left: ev.clientX, top: ev.clientY, width: 260, height: 22 },
+  };
+}
+
+// decompEditItems offers to correct what the decompiler guessed.
+//
+// The menu is shown even when the project may not be written to, with the
+// reason in the item's title. An item that is simply absent teaches nobody
+// that the feature exists, and "why can't I rename this" is a question the UI
+// should answer where it is asked.
+function decompEditItems(target) {
+  if (!target) return [];
+  const st = store.get("session.decomp");
+  const why = st?.editable ? "" :
+    "this Ghidra project is yours; gdb-wui only edits the one it imported itself";
+  const items = [];
+  const { fn, sym } = target;
+
+  if (sym) {
+    const kind = sym.storage === "global" ? "global" : "variable";
+    items.push({
+      label: `Rename ${sym.name}…`,
+      title: why || `give ${sym.name} a name of your own, in the decompiler`,
+      disabled: Boolean(why),
+      run: () => renameDecompSymbol(sym, fn, kind),
+    });
+    if (kind === "variable") {
+      items.push({
+        label: `Set the type of ${sym.name}…`,
+        title: why || `currently ${sym.type || "unknown"}`,
+        disabled: Boolean(why),
+        run: () => retypeDecompSymbol(sym, fn),
+      });
+    }
+  }
+  items.push({
+    label: `Rename the function ${fn.name}…`,
+    title: why || "the name shown here, in the call stack and in the symbol list",
+    disabled: Boolean(why),
+    run: () => renameDecompFunction(fn, target.at),
+  });
+  items.push({
+    label: `Edit the prototype of ${fn.name}…`,
+    title: why || fn.signature || "return type, parameters and name at once",
+    disabled: Boolean(why),
+    run: () => retypeDecompFunction(fn, target.at),
+  });
+  return items;
+}
+
+// Renaming a recovered frame, from the call stack.
+//
+// This is where FUN_00401154 is most often first seen — a stripped binary's
+// stack is a column of them — and it is the one place where the name and the
+// question "what is this function?" appear together.
+ui.stack.addEventListener("contextmenu", (ev) => {
+  const row = ev.target.closest(".list-row");
+  if (!row) return;
+  const found = stack.recoveredAt(Number(row.dataset.level));
+  // Only a recovered name. A frame gdb named came from a symbol table, and
+  // offering to rename it would be offering something that cannot work.
+  if (!found?.entry) return;
+  ev.preventDefault();
+  hover.hide();
+
+  const st = store.get("session.decomp");
+  const why = st?.editable ? "" :
+    "this Ghidra project is yours; gdb-wui only edits the one it imported itself";
+  showContextMenu(ev.clientX, ev.clientY, found.name, [{
+    label: `Rename ${found.name}…`,
+    title: why || found.signature || "the decompiler's name for this function",
+    disabled: Boolean(why),
+    run: () => editDecomp({
+      type: "decomp.rename",
+      cell: row.querySelector(".list-main"),
+      value: found.name,
+      title: `a new name for ${found.name}`,
+      payload: { kind: "function", function: found.entry, name: found.name },
+    }),
+  }]);
+});
+
+// The four edits. Each opens the same in-place editor the value panels use and
+// sends one request; the server answers with the whole function decompiled
+// again, which is what gets painted.
+
+function renameDecompSymbol(sym, fn, kind) {
+  editDecomp({
+    type: "decomp.rename",
+    over: sym.rect,
+    value: sym.name,
+    title: `a new name for ${sym.name}`,
+    payload: {
+      kind,
+      function: fn.entry,
+      symbol: sym.id,
+      name: sym.name,
+      address: sym.addr,
+    },
+  });
+}
+
+function retypeDecompSymbol(sym, fn) {
+  editDecomp({
+    type: "decomp.retype",
+    over: sym.rect,
+    // The current type, so correcting `undefined8` to `long` is an edit rather
+    // than a retype from memory.
+    value: sym.type,
+    title: `a C type for ${sym.name}`,
+    payload: {
+      kind: "variable",
+      function: fn.entry,
+      symbol: sym.id,
+      name: sym.name,
+    },
+  });
+}
+
+function renameDecompFunction(fn, at) {
+  editDecomp({
+    type: "decomp.rename",
+    over: at,
+    value: fn.name,
+    title: `a new name for ${fn.name}`,
+    payload: { kind: "function", function: fn.entry, name: fn.name },
+  });
+}
+
+function retypeDecompFunction(fn, at) {
+  editDecomp({
+    type: "decomp.retype",
+    over: at,
+    // Ghidra's own rendering of the prototype, which is both the thing being
+    // corrected and a demonstration of the syntax expected.
+    value: fn.signature,
+    title: "a C prototype: return type, name and parameters",
+    payload: { kind: "function", function: fn.entry, name: fn.name },
+  });
+}
+
+function editDecomp({ type, cell = ui.decomp, over, value, title, payload }) {
+  editCell({
+    cell,
+    over,
+    value,
+    title,
+    commit: (typed) => send(type, {
+      ...payload,
+      value: typed,
+      stopSeq: store.get("session.stopSeq"),
+    }).then(applyDecompEdit),
+    onError: (err) => setStatus(err.message ?? String(err), true),
+  });
+}
+
+// applyDecompEdit repaints from the server's answer.
+//
+// Everything here is a refetch rather than a patch, and it has to be: the reply
+// renumbers the symbol ids the pane is holding, and a new prototype changes how
+// callers decompile, so the only safe assumption is that anything showing a
+// decompiler name is now out of date.
+function applyDecompEdit(out) {
+  // Only if the pane is showing the function that was edited. Renaming a frame
+  // from the call stack edits a function the pane may not be on, and painting
+  // it there would navigate somebody away from what they were reading.
+  const shown = decomp.shown();
+  if (out?.function && (!shown || shown.entry === out.function.entry)) {
+    decomp.set(out.function);
+    updateCenterMeta();
+  }
+  // The call stack shows these names, and so does the symbol list.
+  nameUnknownFrames();
+  symbols.refresh();
+  if (out?.warning) {
+    setStatus(`${out.did} — ${out.warning}`, true);
+  } else if (out?.did) {
+    // The undo hint rides on the message rather than living in a menu,
+    // because the moment someone wants it is the moment they have just
+    // renamed the wrong thing.
+    setStatus(out.canUndo ? `${out.did} — Ctrl+Shift+Z undoes it` : out.did);
+  }
+  return out;
+}
+
+// The journal is the server's, not this tab's: two windows on one session
+// share it, and a page that reloaded has no idea what is on it. So this asks
+// and lets the answer — including "nothing to undo" — come back from there.
+function undoDecompEdit() {
+  send("decomp.undo", { stopSeq: store.get("session.stopSeq") })
+    .then(applyDecompEdit)
+    .catch((err) => setStatus(err.message ?? String(err), true));
 }
 
 // LOWEST_PLAUSIBLE_ADDRESS keeps "show what it points to" off values that are
@@ -331,6 +551,10 @@ for (const [pane, resolve] of [
 const LOWEST_PLAUSIBLE_ADDRESS = 0x1000;
 
 function evaluateForMenu(expr) {
+  // Nothing to evaluate: the pointer was over a name the decompiler owns and
+  // gdb has never heard of, which is a menu about editing rather than about
+  // values.
+  if (!expr) return Promise.resolve(null);
   if (store.get("session.runState") !== "stopped") return Promise.resolve(null);
   return send("eval.expr", {
     expr,
@@ -528,6 +752,25 @@ function handleEvent(msg) {
       break;
     case "symbolsInvalidated":
       symbols.refresh();
+      break;
+    case "decompEdited":
+      // Another tab — or this one — changed a name. Everything showing one is
+      // now stale, including the function on screen, because a new prototype
+      // changes how its callers decompile too.
+      nameUnknownFrames();
+      symbols.refresh();
+      // The function this pane is showing, not the one the program counter is
+      // in: someone renaming a symbol has usually navigated somewhere on
+      // purpose, and refetching around the pc would take them back. In the tab
+      // that made the edit this repaints what the reply already painted, which
+      // is one decompile of waste per edit and the price of the other tabs
+      // being right.
+      {
+        const shown = decomp.shown();
+        // Quietly: the pane is already showing this function, and an error
+        // about a refresh nobody asked for is worse than leaving it be.
+        if (shown && centre.isVisible("decomp")) fetchDecomp(shown.entry).catch(() => {});
+      }
       break;
     case "decompLog":
       log.decomp(msg.payload?.text ?? "", msg.payload?.level, msg.payload?.millis);
@@ -1106,19 +1349,11 @@ function describeLocation(loc) {
 }
 
 function showDecompAt(loc) {
-  send("decomp.function", {
-    target: gotoSpec(loc),
-    thread: store.get("selection.thread"),
-    frame: store.get("selection.frame"),
-    stopSeq: store.get("session.stopSeq"),
-  })
-    .then((out) => {
-      decomp.set(out);
-      decomp.setBreakpoints(breakpoints.all());
-      updateCenterMeta();
-      setStatus(describeLocation(loc));
-    })
+  fetchDecomp(gotoSpec(loc))
+    .then(() => setStatus(describeLocation(loc)))
     .catch((err) => {
+      // Loud, unlike the background refresh that shares this fetch: someone
+      // typed a target and is owed an answer about it.
       decomp.message(decompMessage(err), "src-empty");
       updateCenterMeta();
       setStatus(err?.message ?? String(err), true);
@@ -1303,6 +1538,9 @@ function showContextMenu(x, y, heading, items) {
     b.setAttribute("role", "menuitem");
     b.textContent = item.label;
     if (item.title) b.title = item.title;
+    // A disabled item stays on the menu with the reason in its title. Removing
+    // it would leave no way to discover that the thing is possible at all.
+    b.disabled = Boolean(item.disabled);
     b.addEventListener("click", () => {
       hideContextMenu();
       item.run();
@@ -1317,7 +1555,7 @@ function showContextMenu(x, y, heading, items) {
   const box = ui.ctxmenu.getBoundingClientRect();
   ui.ctxmenu.style.left = `${Math.max(0, Math.min(x, window.innerWidth - box.width - 4))}px`;
   ui.ctxmenu.style.top = `${Math.max(0, Math.min(y, window.innerHeight - box.height - 4))}px`;
-  ui.ctxmenu.querySelector(".ctxmenu-item")?.focus();
+  ui.ctxmenu.querySelector(".ctxmenu-item:not([disabled])")?.focus();
 }
 
 function hideContextMenu() {
@@ -1603,6 +1841,9 @@ createKeymap({
       ui.goto.focus();
       ui.goto.select();
     },
+    // Undoing a rename in the decompiler, not in gdb: gdb has no undo and
+    // nothing else here does either, so the chord is unambiguous.
+    "Ctrl+Shift+Z": () => undoDecompEdit(),
   },
 });
 
@@ -1683,6 +1924,30 @@ function updateCenterMeta() {
           : name === "memory" ? memory.summary()
             : "";
   }
+}
+
+// fetchDecomp puts one particular function in the pane, named by an address or
+// a symbol. It resolves when the pane has it and rejects with the server's
+// error, leaving the caller to decide how loud to be about either.
+//
+// Not refreshDecomp, for two reasons. That one follows the *selected frame*,
+// ignoring the address it is given except to decide whether to fetch at all —
+// right when the program moved, wrong when it did not. And it skips the fetch
+// entirely when the address is already on screen, which is exactly wrong after
+// an edit, where the text is the thing that has to be read again.
+function fetchDecomp(target) {
+  return send("decomp.function", {
+    target,
+    thread: store.get("selection.thread"),
+    frame: store.get("selection.frame"),
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((out) => {
+      decomp.set(out);
+      decomp.setBreakpoints(breakpoints.all());
+      updateCenterMeta();
+      return out;
+    });
 }
 
 // refreshDecomp keeps the decompiled view in step with the program counter.

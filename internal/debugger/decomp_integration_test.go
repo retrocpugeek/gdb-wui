@@ -26,9 +26,20 @@ import (
 type decompKit struct {
 	do  func(string, any) any
 	try func(string, any) (any, *wire.Error)
+	// dir is where the fixtures were built, so a test can reach the binaries
+	// or put a Ghidra project of its own beside them.
+	dir string
 }
 
 func decompHarness(t *testing.T) decompKit {
+	t.Helper()
+	return decompHarnessWith(t, nil)
+}
+
+// decompHarnessWith is decompHarness with the decompiler configured
+// differently — the read-only case, where the project belongs to the user and
+// gdb-wui may not write to it.
+func decompHarnessWith(t *testing.T, adjust func(*debugger.DecompConfig)) decompKit {
 	t.Helper()
 	if _, err := exec.LookPath("gdb"); err != nil {
 		t.Skip("gdb is not installed")
@@ -76,6 +87,13 @@ int main(void) { printf("%d\n", accumulate(7)); return 0; }
 		t.Fatal(err)
 	}
 	logf := func(f string, a ...any) { t.Logf(f, a...) }
+	decompCfg := debugger.DecompConfig{
+		Install:   install,
+		CacheRoot: filepath.Join(dir, "cache"),
+	}
+	if adjust != nil {
+		adjust(&decompCfg)
+	}
 	sess, err := debugger.New(t.Context(), debugger.Config{
 		MI:             mi.Options{Dir: dir, Logf: logf},
 		Files:          files,
@@ -83,10 +101,7 @@ int main(void) { printf("%d\n", accumulate(7)); return 0; }
 		Logf:           logf,
 		Version:        "test",
 		CommandTimeout: 30 * time.Second,
-		Decomp: debugger.DecompConfig{
-			Install:   install,
-			CacheRoot: filepath.Join(dir, "cache"),
-		},
+		Decomp:         decompCfg,
 	})
 	if err != nil {
 		t.Fatalf("debugger.New: %v", err)
@@ -111,7 +126,7 @@ int main(void) { printf("%d\n", accumulate(7)); return 0; }
 		}
 		return out
 	}
-	return decompKit{do: do, try: try}
+	return decompKit{do: do, try: try, dir: dir}
 }
 
 // waitReady polls decomp.status until the decompiler stops starting. Import

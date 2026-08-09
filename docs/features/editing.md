@@ -104,7 +104,9 @@ Break on line 65 and run. In the Variables pane, expand `s` and double-click
 - **It does not survive a re-run.** A write changes the process that is running
   now; starting again gets a fresh one.
 - **It does not undo.** The previous value is not kept anywhere. Note it down
-  before you overwrite something you may want back.
+  before you overwrite something you may want back. (Renaming in the
+  [Decompiled tab](decompilation.md#renaming-what-the-decompiler-guessed) does
+  undo — that is an edit to a database rather than to a running process.)
 - **It does not call functions.** `f(x)` would run `f` in the program, so the
   same rule the [hover evaluator](variables.md) uses applies here.
 - **It does not edit the ASCII column** of the hex view, only the hex.

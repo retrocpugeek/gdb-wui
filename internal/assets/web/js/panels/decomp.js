@@ -126,11 +126,16 @@ export function createDecomp({ element, onGutterClick }) {
     onGutterClick?.(addrs[0], Number(row.dataset.line));
   });
 
-  // expressionAt answers the hover controller. The word under the pointer is
-  // found with the same parser the source view uses, then looked up in the
-  // variable table the server sent. Ghidra's names are its own, so without that
-  // map there is nothing for gdb to resolve.
-  function expressionAt(ev) {
+  // symbolAt finds the decompiler symbol under the pointer. The word is parsed
+  // with the same parser the source view uses and looked up in the variable
+  // table the server sent — Ghidra's names are its own, so without that map
+  // there is nothing to resolve against.
+  //
+  // Everything in the map is returned, including the symbols that can never be
+  // shown a value: a decompiler temporary is not readable but it is a real
+  // symbol in Ghidra, and renaming it is exactly as useful as renaming a stack
+  // slot.
+  function symbolAt(ev) {
     const code = ev.target?.closest?.(".dec-code");
     if (!code) return null;
     const caret = caretAt(ev.clientX, ev.clientY);
@@ -142,19 +147,39 @@ export function createDecomp({ element, onGutterClick }) {
     // Only the bare name is looked up. `cfg->count` means nothing here, because
     // the decompiler's locals are not gdb's.
     const v = vars.get(found.expr);
-    if (!v?.expr) return null;
+    if (!v) return null;
     const range = document.createRange();
     range.setStart(caret.node, found.start);
     range.setEnd(caret.node, found.end);
     // storage travels with the hit so that a caller knows what can be done with
-    // it. A register has no address to show in the memory view.
+    // it. A register has no address to show in the memory view; a global is
+    // renamed through its address rather than through a symbol id.
     return {
-      expr: v.expr,
+      expr: v.expr ?? "",
       storage: v.storage,
       name: v.name,
+      id: v.id ?? "",
+      addr: v.addr ?? "",
+      type: v.type ?? "",
+      param: Boolean(v.param),
       rect: range.getBoundingClientRect(),
       anchor: code,
     };
+  }
+
+  // expressionAt answers the hover controller and the value menu, which both
+  // need something gdb can evaluate. That is the one difference from symbolAt.
+  function expressionAt(ev) {
+    const hit = symbolAt(ev);
+    return hit?.expr ? hit : null;
+  }
+
+  // shown is the function on screen, for the menu items that are about the
+  // function rather than about a word under the pointer — renaming
+  // FUN_0010d2b0 does not require finding its name in the text.
+  function shown() {
+    if (!fn) return null;
+    return { name: fn.name, entry: fn.entry, signature: fn.signature ?? "" };
   }
 
   function caretAt(x, y) {
@@ -186,6 +211,8 @@ export function createDecomp({ element, onGutterClick }) {
 
   return {
     expressionAt,
+    symbolAt,
+    shown,
 
     set(out) {
       fn = out;

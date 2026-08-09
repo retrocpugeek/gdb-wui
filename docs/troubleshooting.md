@@ -157,7 +157,29 @@ frames are named once it has analysed the binary. See
 [naming the call stack](features/decompilation.md#naming-the-call-stack).
 
 Those names are the decompiler's, not symbols, and are shown in italics to say
-so. Frames in libc keep gdb's own names.
+so. Frames in libc keep gdb's own names. Right-clicking one offers to
+[rename it](features/decompilation.md#renaming-what-the-decompiler-guessed).
+
+## Rename is greyed out in the Decompiled tab
+
+You started gdb-wui with `-ghidra-project`, so the decompilation is coming from
+a project of yours. That one holds your own names, types and comments, and
+gdb-wui only ever reads it — the menu item stays visible and says so on hover
+rather than disappearing.
+
+Drop `-ghidra-project` and pass `-ghidra` alone to work in the project gdb-wui
+imports for itself, which it may write to. Names made there are keyed on the
+binary's SHA-256 and are not visible in your own Ghidra project.
+
+## My renamed functions are back to FUN_00401136
+
+The analysis is keyed on the binary's SHA-256, so a rebuild gets a fresh project
+with none of the names. That is deliberate: reading one build's names against
+another build's addresses is a confidently wrong answer.
+
+Nothing is lost — the old project is still on disk under the cache root, keyed
+by the old hash — but there is no way to carry names across a rebuild. Name a
+binary you intend to keep.
 
 ## Which version am I running?
 

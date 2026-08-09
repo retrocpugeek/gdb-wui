@@ -25,12 +25,17 @@ let active = null;
  * flight the input stays up and disabled, so a slow gdb does not look like a
  * lost keystroke, and a rejection puts the cursor back in the cell with the
  * text intact — a typo is corrected where it was made rather than retyped.
+ *
+ * over overrides where the box is drawn, for the callers whose target is a run
+ * of text rather than an element: renaming `local_10` in the decompiled view
+ * means editing four words into the middle of a line, and putting the box over
+ * the whole line would point at the statement instead of at the name.
  */
-export function editCell({ cell, value, title = "", commit, onError }) {
+export function editCell({ cell, over, value, title = "", commit, onError }) {
   cancelEdit();
   if (!cell?.isConnected) return;
 
-  const rect = cell.getBoundingClientRect();
+  const rect = over ?? cell.getBoundingClientRect();
   const input = document.createElement("input");
   input.type = "text";
   input.className = "cell-edit";
