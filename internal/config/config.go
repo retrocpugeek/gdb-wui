@@ -42,6 +42,11 @@ func Dir() (string, error) {
 	return filepath.Join(home, ".config", "gdb-wui"), nil
 }
 
+// SaveFlag is the flag that writes a config file. Named here because Save has
+// to leave it out of what it writes: a config that saved itself on every run
+// would be a surprise.
+const SaveFlag = "save-config"
+
 // notConfigurable are flags that name an action rather than a setting. Putting
 // one in a file would mean a config that runs a different program than the one
 // asked for, or that exits before doing anything.
@@ -50,6 +55,7 @@ var notConfigurable = map[string]bool{
 	"print-url": true,
 	"config":    true,
 	"no-config": true,
+	SaveFlag:    true,
 }
 
 // Load applies a config file to fs and returns the file it used, or "" if there

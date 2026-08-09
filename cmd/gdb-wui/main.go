@@ -58,6 +58,7 @@ type options struct {
 	// chose which file to read would be its own puzzle.
 	configPath string
 	noConfig   bool
+	saveConfig savePath
 
 	// Decompilation. Optional throughout: Ghidra is a large dependency and
 	// most sessions never want one.
@@ -94,6 +95,9 @@ func main() {
 		"read settings from this file instead of searching for one")
 	flag.BoolVar(&opt.noConfig, "no-config", false,
 		"ignore any config file")
+	flag.Var(&opt.saveConfig, config.SaveFlag,
+		"write the current settings to a config file and exit; "+
+			"-save-config=PATH chooses where (default ./"+config.FileName+")")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -112,6 +116,20 @@ func main() {
 		log.Printf("config: %s", used)
 	}
 
+	// After Load, so that what is written is the effective configuration
+	// rather than only what was typed. See config.Save.
+	if opt.saveConfig.set {
+		written, backup, err := config.Save(flag.CommandLine, opt.saveConfig.path)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if backup != "" {
+			log.Printf("kept the previous file as %s", backup)
+		}
+		log.Printf("wrote %s", written)
+		return
+	}
+
 	if opt.showVersion {
 		fmt.Println("gdb-wui", version)
 		return
@@ -126,6 +144,35 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
+// savePath backs -save-config, which takes an optional value: bare it writes
+// the default file, and -save-config=PATH writes that one.
+//
+// The flag package spells "optional value" as a Value that reports
+// IsBoolFlag, which makes `-save-config` legal without an argument and stops
+// it from swallowing the next one. A plain string flag would read
+// `-save-config -project .` as saving to a file named "-project".
+type savePath struct {
+	set  bool
+	path string
+}
+
+func (s *savePath) String() string {
+	if s == nil || !s.set {
+		return ""
+	}
+	return s.path
+}
+
+func (s *savePath) Set(v string) error {
+	s.set = true
+	if v != config.DefaultSave {
+		s.path = v
+	}
+	return nil
+}
+
+func (s *savePath) IsBoolFlag() bool { return true }
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `gdb-wui %s — a web UI for GDB

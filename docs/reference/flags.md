@@ -53,9 +53,10 @@ These are all optional, and do nothing without Ghidra. See
 |---|---|
 | `-config PATH` | Read settings from this file instead of searching for one. Fails if it does not exist. |
 | `-no-config` | Ignore any [config file](config.md). |
+| `-save-config` | Write the current settings to `./gdb-wui.json` and exit. `-save-config=PATH` writes somewhere else. |
 
-`-version` and `-print-url` are also excluded from a config file, because they
-are actions rather than settings.
+`-version`, `-print-url` and `-save-config` are also excluded from a config
+file, because they are actions rather than settings.
 
 ## Diagnostics
 
