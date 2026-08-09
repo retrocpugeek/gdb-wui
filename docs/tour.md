@@ -120,6 +120,24 @@ Hold `F10` down to walk the marker through the loop. The Locals pane and the
 tooltip follow, and the tooltip closes as soon as the program moves, so it
 cannot show you a value from the previous stop.
 
+## Go somewhere else
+
+Type `walk` into the box at the right of the tab strip and press Enter. The
+source view opens at the function. `Ctrl+Shift+G` puts the cursor in that box,
+and it also takes an address, a `globals.c:65`, or a bare `:65` for a line in
+the file already open.
+
+Now click the **Disassembly** tab and type `walk` again: the same word, and this
+time you get its instructions. The box acts on whichever view you are looking
+at. See [going somewhere](features/source.md#going-somewhere).
+
+## Change a value
+
+Double-click a value in the Locals pane — `i`, say — type a new one, and press
+Enter. It is written through gdb, so continuing from here uses what you typed.
+The same works on a register and on a byte in the hex view. See
+[changing values](features/editing.md).
+
 ## Next
 
 - Try the same program with the debug info removed, to see what the

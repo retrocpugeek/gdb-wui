@@ -82,6 +82,7 @@ breakpoints are kept.
 | Hover a variable or register for its value | Hovering a call — it would run the function |
 | Decompiled C from Ghidra, with the PC marked | Editing Ghidra's names or types from here |
 | Double-click to edit a variable, register or byte | Editing an array, struct or union — gdb refuses |
+| Go to a symbol, address or `file.c:65` in the focused view | Back and forward through places you have been |
 | Registers, disassembly, and a hex memory view | Reverse debugging, `rr` |
 | A searchable symbol list, functions and globals | Types, macros, and other symbol domains |
 | The gdb console, with tab completion | Core dumps, attach-to-pid |

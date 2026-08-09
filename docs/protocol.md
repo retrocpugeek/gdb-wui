@@ -111,6 +111,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `mem.symbols` | `{addresses, stopSeq?}` | `{symbols}` | Which symbol each address falls in. Capped at 128 per request. |
 | `mem.write` | `{address, offset?, dataHex, stopSeq?}` | `{stopSeq, addr, count}` | `dataHex` is two hex digits per byte. Capped at 4 KiB. Empty and odd-length are refused. |
 | `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. Also the hover evaluator, which is why the client debounces it. |
+| `goto.locate` | `{target, thread?, frame?, stopSeq?}` | [`GotoLocation`](#gotolocation) | Where a symbol, address, expression or `FILE:LINE` is. Needs a program, not a running one. |
 | `symbols.list` | `{filter?, kind?, limit?}` | [`SymbolsList`](#symbols) | Allowed while the inferior runs: the symbol table is a property of the file. |
 | `symbols.load` | `{path, mode?, offset?}` | `{path, mode, available}` | Symbols without an exec file. `mode` is `replace` or `add`. |
 | `decomp.status` | `{}` | [`DecompStatus`](#decompilation) | Answered even with no program loaded: it is how a client learns the feature exists. |
@@ -482,6 +483,48 @@ The viewer computes rows rather than storing them: row N is `base + N*16`. Only
 the bytes for visible rows are fetched, into a sparse cache of 4 KiB chunks with
 an LRU bound, so a region gigabytes wide costs nothing. The cache is dropped at
 every stop, because memory is what changes while a program runs.
+
+### GotoLocation
+
+`goto.locate` answers "where is this?" for the go-to box, which acts on
+whichever centre view has focus.
+
+```json
+{
+  "target": "structs.c:42",
+  "address": "0x555555555337",
+  "addr": 93824992235831,
+  "func": "main",
+  "source": {"available": true, "path": "structs.c", "line": 42}
+}
+```
+
+`target` is a symbol, an address, any gdb expression, or `FILE:LINE`.
+
+One resolver rather than one per view, because the views want different facts
+about the same place: the source view needs a file and a line, the disassembly
+needs an address, and neither is derivable from the other without gdb. It also
+has to be gdb that answers — `-symbol-info-*` reports link-time addresses, so a
+client resolving names against the symbol table would be wrong about every one
+of them once a position-independent executable is running and relocated.
+
+Every field but `target` is optional, and a partial answer is ordinary rather
+than a failure:
+
+- A stripped binary's symbol has an address and no `source`.
+- A line that generated no code — a declaration, a blank line — has a `source`
+  and no address. Returning a neighbouring line's address instead would put the
+  disassembly somewhere that was not asked for and give no sign of it.
+- A stack or heap address has neither `func` nor `source`.
+
+`FILE:LINE` has no MI command behind it. `-data-disassemble -f FILE -l LINE`
+starts at the *containing function's* entry rather than at the line, so the
+address is found by looking through the grouped output for the line rather than
+by trusting where gdb began. `-n -1` asks for the whole function, which bounds
+the work by the function's size and guarantees the line is inside the reply.
+The alternative, `info line FILE:N`, returns an English sentence naming only
+the file's basename, and resolving a source path into the project needs the
+full one.
 
 ### Symbolising addresses
 
