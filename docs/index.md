@@ -71,7 +71,9 @@ part. These are:
   [names the call stack](features/decompilation.md#naming-the-call-stack),
   which gdb otherwise reports as a column of `?? ()`, and you can
   [rename and retype](features/decompilation.md#renaming-what-the-decompiler-guessed)
-  what it guessed as you work the binary out.
+  what it guessed and
+  [comment](features/decompilation.md#writing-down-what-you-worked-out) what you
+  work out, as you go.
 - **Other architectures.** Use `-gdb` to select a suitable gdb, then
   [connect to a stub](features/remote.md) — a gdbserver, qemu, an emulator, or a
   board on a probe.
@@ -96,4 +98,6 @@ part. These are:
 ## About
 
 The **?** button in the toolbar shows the version of gdb-wui you are running,
-the gdb it is driving, and where the licence and this documentation live.
+the gdb it is driving, and where the licence and this documentation live. The
+same on this site, with what is vendored and under which licence: [about
+gdb-wui](about.md).
