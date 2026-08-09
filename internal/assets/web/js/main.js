@@ -10,6 +10,7 @@
 import { createStore } from "./core/store.js";
 import { createConnection } from "./core/ws.js";
 import { createCentre } from "./core/centre.js";
+import { cancelEdit } from "./core/edit.js";
 import { createHover } from "./core/hover.js";
 import { createKeymap } from "./core/keys.js";
 import { createTree } from "./panels/tree.js";
@@ -62,6 +63,11 @@ const ui = {
   memAddr: el("mem-addr"),
   ctxmenu: el("ctxmenu"),
   hovertip: el("hovertip"),
+  about: el("about"),
+  aboutOpen: el("btn-about"),
+  aboutClose: el("about-close"),
+  aboutVersion: el("about-version"),
+  aboutGdb: el("about-gdb"),
   confirm: el("confirm"),
   confirmText: el("confirm-text"),
   confirmYes: el("confirm-yes"),
@@ -108,6 +114,10 @@ const store = createStore({
     stopSeq: 0,
     exePath: "",
     gdbVersion: "",
+    // server is the gdb-wui build, which only the About box shows. It comes
+    // from the snapshot rather than being baked into the page, so a browser
+    // left open across a server upgrade reports the server it is talking to.
+    server: "",
     lastStopReason: "",
     // remote is the server's word on whether gdb is attached to a target it
     // did not start. Null until the first snapshot says otherwise.
@@ -161,16 +171,30 @@ const breakpoints = createBreakpoints({
   },
 });
 
+// Double-clicking a value edits it. Every write carries the stop it was read
+// at, so a value typed against numbers that have since been superseded is
+// refused rather than landing in whatever frame is current now.
 const variables = createVariables({
   element: ui.variables,
   onExpand: (req) => send("vars.expand", req),
   onRemoveWatch: (path) => send("watch.remove", { path }).catch(reportError),
+  onAssign: (req) => send("vars.assign", {
+    ...req,
+    thread: store.get("selection.thread"),
+    frame: store.get("selection.frame"),
+    stopSeq: store.get("session.stopSeq"),
+  }),
   onError: reportError,
 });
 
 const registers = createRegisters({
   element: ui.registers,
   onFetch: (req) => send("regs.values", req),
+  onWrite: (req) => send("regs.write", {
+    ...req,
+    thread: store.get("selection.thread"),
+    stopSeq: store.get("session.stopSeq"),
+  }),
   onError: reportError,
 });
 
@@ -206,6 +230,10 @@ const memory = createMemory({
   element: ui.memory,
   onRead: (req) => send("mem.read", req),
   onSymbols: (req) => send("mem.symbols", req),
+  onWrite: (req) => send("mem.write", {
+    ...req,
+    stopSeq: store.get("session.stopSeq"),
+  }),
   onError: reportError,
 });
 
@@ -450,6 +478,7 @@ function handleEvent(msg) {
       store.patch({ "session.runState": msg.payload.runState });
       // A value was only true for the stop it was read at.
       hover.hide();
+      cancelEdit();
       source.clearExecLine();
       stack.clear();
       variables.clear();
@@ -459,6 +488,7 @@ function handleEvent(msg) {
       // The session the prompt was guarding has ended on its own.
       hideConfirm();
       hover.hide();
+      cancelEdit();
       store.patch({
         "session.runState": msg.payload.runState,
         "session.lastStopReason": exitText(msg.payload),
@@ -494,6 +524,9 @@ function handleEvent(msg) {
       break;
     case "watchesChanged":
       variables.setWatches(msg.payload.watches, msg.payload.stopSeq);
+      break;
+    case "valueWritten":
+      applyValueWritten(msg.payload);
       break;
     case "symbolsInvalidated":
       symbols.refresh();
@@ -569,6 +602,7 @@ function applySnapshot(hello) {
     "session.stopSeq": hello.stopSeq ?? 0,
     "session.exePath": hello.exePath ?? "",
     "session.gdbVersion": hello.gdbVersion ?? "",
+    "session.server": hello.server ?? "",
     "session.lastStopReason": describeReason(hello.lastStopReason),
     "session.remote": hello.remote ?? null,
   });
@@ -647,6 +681,10 @@ ui.locateApply.addEventListener("click", () => {
 function applyStopped(stopped) {
   execBusy = false;
   hover.hide();
+  // The cell an editor is sitting over now holds a value from a different
+  // stop. Committing what was typed against the old one would write it
+  // somewhere the user was not looking.
+  cancelEdit();
   store.patch({
     "session.runState": stopped.runState,
     "session.stopSeq": stopped.stopSeq,
@@ -693,6 +731,44 @@ function applyStopped(stopped) {
       }
     }
   }
+}
+
+// applyValueWritten reacts to a write — this browser's or another one's.
+//
+// It refreshes everything rather than the panel that was edited, because a
+// write does not stay where it was made: assigning a local changes the bytes
+// the hex view is showing, and writing a byte changes a variable in the tree.
+// There is no subset that is safe to leave alone, and a write is a deliberate
+// act a person just performed, so the cost of re-reading is invisible.
+function applyValueWritten(payload) {
+  if (!payload) return;
+  setStatus(payload.value
+    ? `${payload.detail} = ${payload.value}`
+    : `wrote ${payload.detail}`);
+
+  memory.invalidate();
+  registers.refetch();
+
+  const stopSeq = store.get("session.stopSeq");
+  send("vars.locals", {
+    thread: store.get("selection.thread"),
+    frame: store.get("selection.frame"),
+    stopSeq,
+  })
+    .then((out) => {
+      variables.setLocals(out.variables ?? [], out.stopSeq);
+      // The locals list is only the top level. An expanded struct holds its
+      // own values, and a write into one of them — through the hex view, or
+      // through a pointer — would otherwise show the old number.
+      return variables.refreshOpen();
+    })
+    .catch(() => {
+      // The program has moved on since the write — a stop event is on its way
+      // and will repaint everything anyway.
+    });
+  send("watch.list", {})
+    .then((out) => variables.setWatches(out.watches ?? [], out.stopSeq))
+    .catch(() => {});
 }
 
 function describeStop(stopped) {
@@ -1583,6 +1659,10 @@ function localsToNodes(locals) {
     inScope: true,
     arg: Boolean(v.arg),
     optimizedOut: Boolean(v.optimizedOut),
+    // The same rule localNodes applies on the server, for the same reason:
+    // --simple-values prints a value for exactly the types gdb will let you
+    // assign to, which is also what expandable is derived from.
+    editable: !v.expandable && !v.optimizedOut,
   }));
 }
 
@@ -1752,6 +1832,31 @@ initLayout({
 // Now that the panels exist, apply the restored split and let onCentreChange
 // fetch whatever came back on screen with it.
 centre.sync();
+
+// About. The version and the gdb it is driving are filled in when the box is
+// opened rather than kept in sync, because it is the only thing that shows
+// them and it is shut almost all of the time.
+function showAbout() {
+  ui.aboutVersion.textContent = store.get("session.server") || "dev";
+  ui.aboutGdb.textContent = store.get("session.gdbVersion") || "not started";
+  ui.about.classList.remove("is-hidden");
+  ui.aboutClose.focus();
+}
+
+function hideAbout() {
+  ui.about.classList.add("is-hidden");
+}
+
+ui.aboutOpen.addEventListener("click", showAbout);
+ui.aboutClose.addEventListener("click", hideAbout);
+// The backdrop, but not the box itself, so a click that misses a link does not
+// shut what it was aiming at.
+ui.about.addEventListener("click", (ev) => {
+  if (ev.target === ui.about) hideAbout();
+});
+ui.about.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") hideAbout();
+});
 
 initTheme({ toggle: el("btn-theme") });
 document.addEventListener("gdb-wui:theme", () => {

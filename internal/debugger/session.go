@@ -477,6 +477,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.varsLocals(r)
 	case wire.TypeVarsExpand:
 		return s.varsExpand(r)
+	case wire.TypeVarsAssign:
+		return s.varsAssign(r)
 
 	case wire.TypeWatchAdd:
 		return s.watchAdd(r)
@@ -489,6 +491,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.regsNames(r)
 	case wire.TypeRegsValues:
 		return s.regsValues(r)
+	case wire.TypeRegsWrite:
+		return s.regsWrite(r)
 
 	case wire.TypeConsoleExec:
 		return s.consoleExec(r)
@@ -521,6 +525,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.evalExpr(r)
 	case wire.TypeMemSymbols:
 		return s.memSymbols(r)
+	case wire.TypeMemWrite:
+		return s.memWrite(r)
 
 	case wire.TypeSymbolsList:
 		return s.symbolsList(r)
@@ -603,7 +609,11 @@ func (s *Session) gate(typ string) *wire.Error {
 		wire.TypeThreadsList, wire.TypeThreadSelect,
 		wire.TypeDisasmFunction, wire.TypeDisasmRange,
 		wire.TypeExecStepI, wire.TypeExecNextI, wire.TypeExecStepLine,
-		wire.TypeMemRead, wire.TypeEvalExpr, wire.TypeMemSymbols:
+		wire.TypeMemRead, wire.TypeEvalExpr, wire.TypeMemSymbols,
+		// The writes sit with the reads: gdb needs a stopped inferior to
+		// resolve an expression in a frame, and a value written into a
+		// half-executed instruction stream is not one anybody asked for.
+		wire.TypeVarsAssign, wire.TypeRegsWrite, wire.TypeMemWrite:
 		if s.st.runState != wire.RunStateStopped {
 			return wire.NewError(wire.CodeNotReady,
 				"no stopped inferior; load a program and run it first")

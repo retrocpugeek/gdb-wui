@@ -21,7 +21,21 @@ nav_order: 2
 | `Alt+F11` | Step one instruction |
 | `F7` | Split the centre view, or unsplit it |
 | `Shift+F7` | Switch between side by side and stacked |
-| `Escape` | Close a context menu |
+| `Escape` | Close a context menu, or the About box |
+
+## While editing a value
+
+Double-clicking a value opens a box over it. See
+[changing values](../features/editing.md).
+
+| Key | What it does |
+|---|---|
+| `Enter` | Write the value through gdb |
+| `Escape` | Leave the value alone |
+
+The function keys still work while the box is open, so `F10` steps — and the box
+closes when the program moves, since the value under it is a value from a stop
+that has passed.
 
 ## Inside a terminal panel
 

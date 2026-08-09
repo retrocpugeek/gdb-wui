@@ -91,8 +91,10 @@ Everything below needs a debugger session except the `session.*` group; with
 | `watch.add` | `{expr}` | [`WatchList`](#watches) | Floating varobj; a gdb error is returned as `gdb_error`. |
 | `watch.remove` | `{path}` | [`WatchList`](#watches) | Allowed while running. |
 | `watch.list` | — | [`WatchList`](#watches) | Allowed while running. |
+| `vars.assign` | `{path, id?, expr?, value, thread?, frame?, stopSeq?}` | `{path, id, value, stopSeq}` | Writes a variable. `value` is a gdb expression. The reply carries the value read back, not the one sent. |
 | `regs.names` | — | `{names}` | Cached per program. **Empty entries are preserved.** |
 | `regs.values` | `{thread?, format?, stopSeq?}` | `{stopSeq, threadId, format, registers}` | `format` is one of `x d o t N r z`, default `x`. |
+| `regs.write` | `{number, value, thread?, format?, stopSeq?}` | `{stopSeq, threadId, format, register}` | Writes one register, by number. Refused for a register gdb has not named. |
 | `console.exec` | `{line}` | `{resynced, runState, stopSeq}` | Allowed while running. A gdb error is shown as console output, not a failed request. |
 | `console.complete` | `{prefix}` | `{completion, matches, truncated}` | gdb does the completion. |
 | `inferior.stdin` | `{dataB64}` | `{written}` | Bypasses the command queue. Allowed while running. |
@@ -107,6 +109,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `exec.stepLine` | `{lines?, bodyStart?, bodyEnd?, over?, thread?, stopSeq?}` | [`ExecAck`](#execack) | Step until the pc reaches a different decompiled line. For views with no line table. |
 | `mem.read` | `{address, offset?, count, stopSeq?}` | [`Memory`](#memory) | `address` is any gdb expression. Capped at 64 KiB per read. |
 | `mem.symbols` | `{addresses, stopSeq?}` | `{symbols}` | Which symbol each address falls in. Capped at 128 per request. |
+| `mem.write` | `{address, offset?, dataHex, stopSeq?}` | `{stopSeq, addr, count}` | `dataHex` is two hex digits per byte. Capped at 4 KiB. Empty and odd-length are refused. |
 | `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. Also the hover evaluator, which is why the client debounces it. |
 | `symbols.list` | `{filter?, kind?, limit?}` | [`SymbolsList`](#symbols) | Allowed while the inferior runs: the symbol table is a property of the file. |
 | `symbols.load` | `{path, mode?, offset?}` | `{path, mode, available}` | Symbols without an exec file. `mode` is `replace` or `add`. |
@@ -150,7 +153,7 @@ anything. Requesting one now returns `unsupported`.
 
 `exe.unload` · `exec.until` `exec.return` ·
 `bp.setFunction` `bp.setWatch` `bp.setCondition`
-`bp.setIgnoreCount` · `vars.setFormat` `vars.assign`
+`bp.setIgnoreCount` · `vars.setFormat`
 
 ## Events
 
@@ -165,6 +168,7 @@ anything. Requesting one now returns `unsupported`.
 | `selectionChanged` | The selected thread or frame changed. | [`Selection`](#selection) |
 | `varsInvalidated` | Every variable node the client holds is dead. | `{}` |
 | `watchesChanged` | The watch list or its values changed. | [`WatchList`](#watches) |
+| `valueWritten` | A variable, register or byte was written by hand. | `{stopSeq, what, detail, value}` |
 | `console` | gdb wrote console or log output. | `{text, stream}` |
 | `inferiorOutput` | The debuggee wrote to its terminal. | `{dataB64}` |
 | `threadsChanged` | Threads appeared or disappeared. | [`ThreadsList`](#threads) |

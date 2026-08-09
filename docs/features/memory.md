@@ -2,7 +2,7 @@
 title: Memory
 layout: default
 parent: Features
-nav_order: 6
+nav_order: 7
 ---
 
 # Memory
@@ -19,6 +19,8 @@ table of a stripped binary, which needs no debug info.
 
 Rows that belong to no symbol are left blank. Most of the stack and heap is
 blank, which is accurate rather than missing.
+
+To change a byte, double-click it. See [changing values](editing.md).
 
 ## Entering an address
 
@@ -61,8 +63,6 @@ down, because the stack belongs to no symbol.
 
 ## What the memory viewer does not do
 
-- **It does not write memory.** Use `set {int}0x404040 = 9` at the
-  [console](console.md).
 - **It does not search** for a byte pattern.
 - **It does not set watchpoints.** Use `watch` at the console.
 - **It does not overlay structures.** It shows bytes; use the

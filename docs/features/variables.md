@@ -16,6 +16,8 @@ and kept across stops, click **+ watch**.
 Values that changed at the last stop are marked, so when stepping through a loop
 you can see which field moved without comparing against memory yourself.
 
+To change a value, double-click it. See [changing values](editing.md).
+
 ## Reading a value by hovering
 
 To read a value, rest the pointer on it for 300 ms.
@@ -80,8 +82,6 @@ characters themselves.
 
 ## What variables and hover do not do
 
-- **They do not edit values.** There is no `set var`, no register write and no
-  memory write in the UI. `set` at the [console](console.md) works.
 - **They do not call functions**, as above.
 - **They do not recover optimised-out values.** At `-O2` a local may not exist
   anywhere; the pane and the tooltip both show `<optimized out>` rather than a

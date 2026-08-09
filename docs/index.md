@@ -86,3 +86,10 @@ part. These are:
 - **Identifying what you are looking at.** The memory viewer names the symbol
   each row falls in, and hovering a variable reads the whole expression rather
   than the word under the pointer.
+- **Trying a different value.** Double-click a variable, a register or a byte of
+  memory to [change it](features/editing.md) and carry on from there.
+
+## About
+
+The **?** button in the toolbar shows the version of gdb-wui you are running,
+the gdb it is driving, and where the licence and this documentation live.

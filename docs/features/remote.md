@@ -2,7 +2,7 @@
 title: Remote targets
 layout: default
 parent: Features
-nav_order: 12
+nav_order: 13
 ---
 
 # Remote targets

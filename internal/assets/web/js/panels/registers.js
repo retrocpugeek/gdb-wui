@@ -9,9 +9,10 @@
 // from diffing here — gdb already tracks it, and its answer accounts for
 // register aliasing that a naive value comparison would miss.
 
+import { editCell } from "../core/edit.js";
 import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 
-export function createRegisters({ element, onFetch, onError }) {
+export function createRegisters({ element, onFetch, onWrite, onError }) {
   let registers = [];
   let list = null;
   let visible = false;
@@ -38,7 +39,9 @@ export function createRegisters({ element, onFetch, onError }) {
         update(el, index) {
           const reg = registers[index];
           if (!reg) return;
+          el.dataset.number = String(reg.number);
           el.classList.toggle("is-changed", Boolean(reg.changed));
+          el.classList.toggle("is-editable", editable(reg));
           el.querySelector(".reg-num").textContent = String(reg.number);
           // An empty name is normal: gdb's list has gaps at stable indices,
           // and the number is the real identity.
@@ -55,9 +58,48 @@ export function createRegisters({ element, onFetch, onError }) {
     return Number.isFinite(n) && n > 0 ? n : 19;
   }
 
+  // editable excludes the registers gdb prints as a brace-enclosed set of
+  // views — the vector and floating-point files, where "{v4_float = {…}}" is
+  // several readings of the same bytes and there is no single value to type
+  // over. A register with no name is excluded too: the write goes out as
+  // `$name = …`, and gdb's numbering has gaps with nothing to put there.
+  function editable(reg) {
+    return Boolean(onWrite) && Boolean(reg.name) && !reg.value?.startsWith("{");
+  }
+
   function render() {
     ensureList();
     list.setCount(registers.length);
+  }
+
+  element.addEventListener("dblclick", (ev) => {
+    const row = ev.target.closest?.(".reg-row");
+    const cell = ev.target.closest?.(".reg-value");
+    if (!row || !cell) return;
+    const reg = registers.find((r) => String(r.number) === row.dataset.number);
+    if (!reg || !editable(reg)) return;
+    // Otherwise the double-click also selects the value behind the box.
+    ev.preventDefault();
+    editCell({
+      cell,
+      value: reg.value,
+      title: `$${reg.name} — a value or an expression, Enter to write`,
+      onError,
+      commit: (typed) => onWrite({ number: reg.number, value: typed, format })
+        .then((res) => {
+          // Repaint from the reply rather than waiting for the refresh that
+          // the write's broadcast will trigger, so the number changes the
+          // instant Enter is pressed.
+          if (res?.register) apply(res.register);
+        }),
+    });
+  });
+
+  function apply(next) {
+    const at = registers.findIndex((r) => r.number === next.number);
+    if (at < 0) return;
+    registers[at] = { ...registers[at], ...next };
+    list?.refresh();
   }
 
   async function refresh() {
@@ -90,6 +132,13 @@ export function createRegisters({ element, onFetch, onError }) {
     },
     setFormat(next) {
       format = next;
+      fetchedSeq = -1;
+      refresh();
+    },
+    // refetch drops the "already fetched this stop" guard. A write changes the
+    // register file without advancing stopSeq, which is exactly the case that
+    // guard would otherwise suppress.
+    refetch() {
       fetchedSeq = -1;
       refresh();
     },

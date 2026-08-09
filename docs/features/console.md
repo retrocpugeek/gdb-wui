@@ -2,7 +2,7 @@
 title: Console, terminal and log
 layout: default
 parent: Features
-nav_order: 11
+nav_order: 12
 ---
 
 # Console, terminal and log

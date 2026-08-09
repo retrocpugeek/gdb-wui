@@ -2,7 +2,7 @@
 title: Threads and the stack
 layout: default
 parent: Features
-nav_order: 10
+nav_order: 11
 ---
 
 # Threads and the call stack

@@ -207,6 +207,20 @@ function makePage(conn, sessionId, viewport) {
   }
 
   /**
+   * doubleClick sends the pair of clicks a dblclick is made of.
+   *
+   * Not one press with clickCount 2: Chrome raises dblclick off the *second*
+   * click of a sequence, so a single dispatch with the count set produces the
+   * click events and no dblclick at all — which reads in a scene as "the
+   * handler never ran".
+   */
+  async function doubleClick(selector) {
+    const point = centre(await rect(selector));
+    await clickAt(point, { clickCount: 1 });
+    await clickAt(point, { clickCount: 2 });
+  }
+
+  /**
    * rightClick opens a context menu and waits for it.
    *
    * Chrome raises contextmenu from a dispatched right press, but only when the
@@ -384,7 +398,7 @@ function makePage(conn, sessionId, viewport) {
   return {
     evaluate, waitUntil, waitFor, waitForText,
     rect, textRect, centre,
-    click, clickAt, rightClick, hover, type, fill, key, answerNextPrompt,
+    click, clickAt, doubleClick, rightClick, hover, type, fill, key, answerNextPrompt,
     goto, shot, sleep,
   };
 }
