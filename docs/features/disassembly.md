@@ -33,8 +33,10 @@ between them, [split the centre view](source.md#two-views-at-once).
 ## Pinning the view to a function
 
 The view normally follows the program counter. To look at a different function,
-double-click a symbol in the [Symbols pane](symbols.md); this pins the view
-there so that switching to this tab does not jump back to the program counter.
+type its name into the go-to box at the right of the tab strip — see
+[going somewhere](source.md#going-somewhere) — or double-click a symbol in the
+[Symbols pane](symbols.md). Either pins the view there, so that switching to
+this tab does not jump back to the program counter.
 The pin is dropped at the next stop, because the program counter has then moved
 and following it is useful again.
 

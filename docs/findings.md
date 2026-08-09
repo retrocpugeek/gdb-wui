@@ -216,3 +216,27 @@ implementing:
     reason a stop does. It cannot reuse the stop's refresh unchanged, though,
     because that clears every change mark first — which would erase the mark on
     the value the user had just written.
+
+30. **`-data-disassemble -f FILE -l LINE` does not start at that line.** It
+    starts at the entry of the function *containing* it: `-f globals.c -l 65
+    -n 200 -- 5` came back with its first group labelled `line="57"`, main's
+    opening brace, and reached line 65 some way in. So the address of a line is
+    found by looking through the grouped output for that line, not by taking
+    the first instruction returned. `-n -1` asks for the whole function, which
+    bounds the work by the function's size and guarantees the line is inside
+    the reply.
+
+    MI has no other route. `-symbol-info-line` does not exist — gdb 17.1
+    answers `^error,msg="Undefined MI command: symbol-info-line"` — and
+    `info line FILE:N` is an English sentence: *Line 65 of "globals.c" starts
+    at address 0x401251 <main+123> and ends at 0x401286 <main+176>.* That is
+    parseable here, because gdb is started with `LC_ALL=C` on purpose, but it
+    names only the file's basename, and resolving a source path into the
+    project needs the full one that `-data-disassemble` reports as `fullname`.
+
+    Two neighbouring answers are worth knowing. A line that generated no code
+    gives *Line 55 ... is at address 0x4011d6 <main> but contains no code* —
+    the address is the *next* line's, so treating it as line 55's would be
+    wrong. And a line past the end of the file is `^done` with a console
+    warning rather than an error, so "no address found" has to be an ordinary
+    outcome rather than a failure.
