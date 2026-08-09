@@ -26,6 +26,12 @@
 //   <- {"id":2,"ok":true,"function":{...}}
 //   -> {"id":3,"op":"functions","offset":0,"limit":500}
 //   <- {"id":3,"ok":true,"functions":[{...}],"total":1415}
+//   -> {"id":4,"op":"names","addresses":"0x10d2b0,0x101040"}
+//   <- {"id":4,"ok":true,"names":[{"addr":"0x10d2b0","name":"FUN_0010d2b0",...}]}
+//
+// The addresses of "names" are one comma-separated string rather than a JSON
+// array, because the parser below is deliberately hand-rolled and a list of
+// hex numbers needs nothing more.
 //
 // A failed request is {"id":n,"ok":false,"error":"..."} and never closes the
 // connection: one undecompilable function must not take down the session.
@@ -135,6 +141,8 @@ public class DecompServer extends GhidraScript {
 						(int) num(req, "limit", 500), field(req, "filter"));
 				case "decompile":
 					return decompileOne(id, field(req, "function"));
+				case "names":
+					return nameFunctions(id, field(req, "addresses"));
 				default:
 					return fail(id, "unknown op " + op);
 			}
@@ -188,6 +196,73 @@ public class DecompServer extends GhidraScript {
 			}
 		}
 		return null;
+	}
+
+	// MAX_NAMES is an outer bound on one naming request, well above the 128 its
+	// caller sends and the 64 frames gdb will report. It is here because this
+	// is a socket: the caller is trusted, but a bound that lives only in the
+	// caller is not a bound.
+	private static final int MAX_NAMES = 256;
+
+	// nameFunctions answers "which function is each of these addresses in".
+	//
+	// The call stack of a stripped binary is a column of "?? ()", and this is
+	// the only thing in the system that can fill it in. Deliberately not a
+	// decompilation: it is one function-manager lookup per address, so naming a
+	// whole stack costs about what writing the reply costs.
+	//
+	// An address in no function is omitted rather than reported. Padding
+	// between functions, a PLT stub and a data address are all ordinary things
+	// to find on a stack, and inventing a name for them would be worse than
+	// leaving gdb's "??" in place.
+	private boolean nameFunctions(long id, String addresses) {
+		StringBuilder b = new StringBuilder();
+		b.append("{\"id\":").append(id).append(",\"ok\":true,\"names\":[");
+		int n = 0;
+		if (addresses != null) {
+			for (String raw : addresses.split(",")) {
+				String want = raw.trim();
+				if (want.isEmpty() || n >= MAX_NAMES) {
+					continue;
+				}
+				Function f = functionAt(want);
+				if (f == null) {
+					continue;
+				}
+				if (n > 0) {
+					b.append(",");
+				}
+				n++;
+				b.append("{\"addr\":").append(DecompJson.str(want));
+				b.append(",\"name\":").append(DecompJson.str(f.getName()));
+				b.append(",\"entry\":").append(DecompJson.str(DecompJson.hex(f.getEntryPoint())));
+				b.append(",\"signature\":").append(DecompJson.str(f.getPrototypeString(true, false)));
+				b.append(",\"thunk\":").append(f.isThunk());
+				b.append("}");
+			}
+		}
+		b.append("]}");
+		return send(b.toString());
+	}
+
+	// functionAt is the address half of resolve, without the name fallback: a
+	// caller naming stack frames has addresses, and the fallback is a linear
+	// scan of every function in the program for each one that misses.
+	private Function functionAt(String which) {
+		try {
+			Address a = currentProgram.getAddressFactory().getAddress(which);
+			if (a == null) {
+				return null;
+			}
+			Function at = currentProgram.getFunctionManager().getFunctionAt(a);
+			if (at == null) {
+				at = currentProgram.getFunctionManager().getFunctionContaining(a);
+			}
+			return at;
+		}
+		catch (Exception ignored) {
+			return null;
+		}
 	}
 
 	private boolean listFunctions(long id, int offset, int limit, String filter) {

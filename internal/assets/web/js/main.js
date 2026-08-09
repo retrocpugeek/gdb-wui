@@ -535,6 +535,10 @@ function handleEvent(msg) {
       log.decomp(msg.payload?.text ?? "", msg.payload?.level, msg.payload?.millis);
       break;
     case "decompChanged":
+      // The stack was drawn before the decompiler had anything to say. Ask
+      // again now it has: this is the moment a column of "?? ()" can stop
+      // being one, and nothing else would trigger it until the next stop.
+      nameUnknownFrames();
       refreshDecompStatus().then((st) => {
         if (st?.state === "ready" && centre.isVisible("decomp")) {
           refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address);
@@ -615,6 +619,7 @@ function applySnapshot(hello) {
   const frames = hello.frames ?? [];
   const selectedFrame = hello.selection?.frame ?? 0;
   stack.set(frames, selectedFrame);
+  nameUnknownFrames();
   store.patch({
     "selection.thread": hello.selection?.threadId ?? 0,
     "selection.frame": selectedFrame,
@@ -694,6 +699,7 @@ function applyStopped(stopped) {
   });
 
   stack.set(stopped.frames ?? [], 0);
+  nameUnknownFrames();
   threads.set(stopped.threads ?? [], stopped.threadId);
   disasmPin = null;
   refreshDisasm(stopped.frames?.[0]?.address);
@@ -771,6 +777,28 @@ function applyValueWritten(payload) {
     .catch(() => {});
 }
 
+// nameUnknownFrames fills in the frames gdb has no symbol for.
+//
+// gdb reports "??" for every frame of a stripped binary, and the decompiler
+// knows what is there. Asked rather than pushed, for the reason mem.symbols is:
+// it is a handful of addresses per stop, and asking on the stop path would put
+// a Ghidra round trip in front of the stack appearing at all.
+//
+// The decompiler's state is not checked first. The server answers an empty
+// list when it has nothing, and asking is also what starts it — so a user who
+// configured -ghidra and never opened the Decompiled tab still gets a named
+// stack.
+function nameUnknownFrames() {
+  const addresses = stack.unnamed();
+  if (!addresses.length) return;
+  send("decomp.names", { addresses, stopSeq: store.get("session.stopSeq") })
+    .then((out) => stack.setNames(out.names ?? []))
+    .catch(() => {
+      // A stack that stays as gdb reported it is the status quo, not a
+      // failure worth a message on every stop.
+    });
+}
+
 function describeStop(stopped) {
   switch (stopped.reason) {
     case "breakpoint-hit":
@@ -814,7 +842,10 @@ function applySelection(sel) {
   // Frames arrive when the selection changed the stack — switching threads.
   // Without this the panel keeps rendering the previous thread's frames, which
   // looks exactly like a working UI showing the wrong data.
-  if (sel.frames?.length) stack.set(sel.frames, sel.frame);
+  if (sel.frames?.length) {
+    stack.set(sel.frames, sel.frame);
+    nameUnknownFrames();
+  }
   else stack.select(sel.frame);
   if (sel.locals) variables.setLocals(localsToNodes(sel.locals), sel.stopSeq);
   if (sel.threadId) threads.select(sel.threadId);

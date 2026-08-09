@@ -67,7 +67,9 @@ part. These are:
 - **Binaries with no source.** The Symbols pane reads the ELF symbol table, the
   disassembly is a first-class view rather than a fallback, and if Ghidra is
   installed the [Decompiled tab](features/decompilation.md) shows recovered C
-  with the program counter marked in it.
+  with the program counter marked in it. Ghidra also
+  [names the call stack](features/decompilation.md#naming-the-call-stack),
+  which gdb otherwise reports as a column of `?? ()`.
 - **Other architectures.** Use `-gdb` to select a suitable gdb, then
   [connect to a stub](features/remote.md) — a gdbserver, qemu, an emulator, or a
   board on a probe.

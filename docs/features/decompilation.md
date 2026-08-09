@@ -21,6 +21,38 @@ every function is named after its address, such as `FUN_00401156`.
 This tab needs the `-ghidra` argument. See
 [Install](../install.md#installing-ghidra-optional).
 
+## Naming the call stack
+
+gdb has no symbol for a stripped binary's own functions, so every frame inside
+the program reads `?? ()`. The decompiler does know what is there, and the names
+are filled in once it has finished analysing.
+
+![A stripped binary's call stack, named by the decompiler](../images/stack-names.png)
+
+Recovered names are *italic*, and hovering one shows the recovered prototype.
+They are marked because they are not symbols: `FUN_00401154` is obviously a
+guess, but a function you have renamed in Ghidra is not, and a stack that showed
+the two alike would be claiming knowledge it does not have.
+
+Three details in that screenshot are the whole behaviour:
+
+- `#1` and `#4` are the program's own functions. gdb had nothing; these names
+  and the `+0x4c` offsets come from Ghidra. The offset matters — every frame
+  but the innermost is a return address partway through a function, and a bare
+  name would be equally true of a hundred instructions.
+- `#2` and `#3` are libc, named by gdb from libc's own symbols and left alone. A
+  real symbol beats a recovered one.
+- `#0` is `printf@plt`, which is *inside* the program, so the decompiler has a
+  name for it too — and it is not used, for the same reason.
+
+Names appear when analysis finishes, so the stack changes under you the first
+time you stop in a binary Ghidra has not seen before. Nothing needs to be open
+for this: the Decompiled tab can stay shut, and passing `-ghidra` is the opt-in.
+
+Renaming a function in Ghidra and re-running gdb-wui shows your name here, which
+is what makes working through unfamiliar firmware get easier rather than
+staying equally hard.
+
 ## Stepping in the decompiled view
 
 gdb's own stepping needs a line table. Without one its step range is the whole
@@ -98,8 +130,11 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
 ## What decompilation does not do
 
 - **It does not edit Ghidra's names or types.** Rename in Ghidra and reload.
-- **It does not decompile a function you are not stopped in.** Break in it
-  first.
+- **It does not name anything but the call stack.** The Threads pane shows a
+  frame per thread and leaves gdb's `??` on it.
+- **It does not name a frame outside the program.** libc and the dynamic loader
+  are not in the binary Ghidra was given, so their frames keep whatever gdb
+  says — usually a real symbol, sometimes nothing.
 - **It does not reproduce the source.** Recovered C compiles to the same
   behaviour, not to the same text: loop shapes change, variables merge, and
   types are inferred. Read it as a model.

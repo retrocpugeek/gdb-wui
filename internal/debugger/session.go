@@ -537,6 +537,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.decompStatus(r)
 	case wire.TypeDecompFunction:
 		return s.decompFunction(r)
+	case wire.TypeDecompNames:
+		return s.decompNames(r)
 
 	case wire.TypePathSubstitute:
 		return s.pathSubstitute(r)
@@ -592,7 +594,11 @@ func (s *Session) gate(typ string) *wire.Error {
 		// Decompilation is a property of the file, not of the inferior, and
 		// the status request must answer even when nothing is loaded — it is
 		// how the UI learns the feature exists at all.
-		wire.TypeDecompStatus, wire.TypeDecompFunction:
+		wire.TypeDecompStatus, wire.TypeDecompFunction,
+		// Naming frames is a question about the program's code rather than
+		// about the process, and the panel that asks has already drawn the
+		// stack it wants to correct.
+		wire.TypeDecompNames:
 		return nil
 	}
 

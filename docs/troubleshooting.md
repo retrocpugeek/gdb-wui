@@ -149,6 +149,16 @@ not behind a flag: without it, a slow start looks the same as a stuck one.
 
 If it never finishes, the log will say why in Ghidra's own words.
 
+## The call stack is all `?? ()`
+
+gdb has no symbol for the functions of a stripped binary, so it says so. To get
+names, run gdb-wui with `-ghidra`: the decompiler knows what is there, and the
+frames are named once it has analysed the binary. See
+[naming the call stack](features/decompilation.md#naming-the-call-stack).
+
+Those names are the decompiler's, not symbols, and are shown in italics to say
+so. Frames in libc keep gdb's own names.
+
 ## Which version am I running?
 
 Click **?** in the toolbar.

@@ -1191,3 +1191,107 @@ func trimGhidraNoise(line string) string {
 	}
 	return strings.TrimSpace(line)
 }
+
+// --- naming frames ---------------------------------------------------------
+
+// maxNameAddresses bounds one decomp.names request. gdb caps a stack at 64
+// frames; anything much beyond that is a client asking about something other
+// than a stack.
+const maxNameAddresses = 128
+
+// decompNames says which function each address falls in.
+//
+// It exists for the call stack of a stripped binary, which gdb renders as a
+// column of "?? ()" — it has no symbol for any of it, and the decompiler is the
+// only thing here that knows otherwise. This does not decompile: the sidecar
+// answers from Ghidra's function manager, so a whole stack is one round trip.
+//
+// An unready decompiler is an empty answer rather than an error. The caller is
+// a panel that has already drawn gdb's "??" and is asking whether it can do
+// better; "no" is an ordinary reply, and turning it into an error would put a
+// message in the status bar on every stop in a binary Ghidra has never seen.
+func (s *Session) decompNames(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.DecompNamesRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+
+	s.decomp.mu.Lock()
+	client, state := s.decomp.client, s.decomp.state
+	s.decomp.mu.Unlock()
+
+	if client == nil {
+		// Same as the pane: asking is what starts it. Configuring -ghidra is
+		// the opt-in, and a user who never opens the Decompiled tab should
+		// still get their stack named.
+		s.maybeStartDecomp()
+		if state == "" {
+			state = wire.DecompOff
+		}
+		return wire.DecompNames{State: state}, nil
+	}
+
+	out := wire.DecompNames{State: wire.DecompReady}
+	if len(req.Addresses) == 0 {
+		return out, nil
+	}
+
+	bias, _ := s.decompBias(r, client)
+
+	// Into Ghidra's coordinates, and back again on the way out.
+	//
+	// Addresses outside the program are *not* filtered here, although a stack
+	// routinely runs out through libc and the dynamic loader and Ghidra has
+	// neither. Ghidra's own getFunctionContaining answers null for them, so a
+	// pre-filter would be a second opinion on containment that no test could
+	// tell from the first — and it would cost an ELF parse per request to
+	// find the image range. The same reasoning covers a bias that could not be
+	// established: it is then zero, a PIE's runtime addresses stay far outside
+	// the image, and Ghidra names none of them.
+	wanted := make([]string, 0, len(req.Addresses))
+	back := make(map[string]string, len(req.Addresses))
+	for i, a := range req.Addresses {
+		if i >= maxNameAddresses {
+			break
+		}
+		n, err := parseAddress(a)
+		if err != nil {
+			continue
+		}
+		key := fmt.Sprintf("0x%x", uint64(int64(n)-bias))
+		wanted = append(wanted, key)
+		back[key] = a
+	}
+	if len(wanted) == 0 {
+		return out, nil
+	}
+
+	names, err := client.Names(r.ctx, wanted)
+	if err != nil {
+		// A naming failure is not worth interrupting a stop for. The panel
+		// keeps gdb's "??", which is what it was showing anyway.
+		s.decompLog(wire.DecompLogWarn, "naming %d addresses: %v", len(wanted), err)
+		return out, nil
+	}
+
+	for _, n := range names {
+		asked, ok := back[n.Addr]
+		if !ok {
+			continue
+		}
+		name := wire.DecompName{
+			Addr:      asked,
+			Name:      n.Name,
+			Signature: n.Signature,
+			Entry:     shiftAddr(n.Entry, bias),
+			Thunk:     n.Thunk,
+		}
+		if entry, err := parseAddress(name.Entry); err == nil {
+			if at, err := parseAddress(asked); err == nil && at >= entry {
+				name.Offset = int(at - entry)
+			}
+		}
+		out.Names = append(out.Names, name)
+	}
+	return out, nil
+}

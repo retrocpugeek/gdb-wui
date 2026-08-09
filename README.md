@@ -81,6 +81,7 @@ breakpoints are kept.
 | Locals, nested structs, watch expressions | Per-row display formats — use `p/d x` at the console |
 | Hover a variable or register for its value | Hovering a call — it would run the function |
 | Decompiled C from Ghidra, with the PC marked | Editing Ghidra's names or types from here |
+| A stripped binary's call stack, named by Ghidra | Naming the Threads pane's frames the same way |
 | Double-click to edit a variable, register or byte | Editing an array, struct or union — gdb refuses |
 | Registers, disassembly, and a hex memory view | Reverse debugging, `rr` |
 | A searchable symbol list, functions and globals | Types, macros, and other symbol domains |
