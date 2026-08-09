@@ -48,7 +48,14 @@ public class ExportDecomp extends GhidraScript {
 		Pattern filter = args.length > 1 ? Pattern.compile(args[1]) : null;
 
 		DecompInterface decomp = new DecompInterface();
-		decomp.setOptions(new DecompileOptions());
+		// Comments are indented twenty characters by default, which lands a
+		// note about a statement in the middle of the page with nothing under
+		// it. This pane is narrower than Ghidra's own window, and a comment
+		// that does not sit above the line it is about is worse than no
+		// comment; four puts it on the body's own indent.
+		DecompileOptions options = new DecompileOptions();
+		options.setCommentIndent(4);
+		decomp.setOptions(options);
 		decomp.toggleCCode(true);
 		decomp.toggleSyntaxTree(true);
 		decomp.setSimplificationStyle("decompile");

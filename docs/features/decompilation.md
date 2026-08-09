@@ -100,6 +100,36 @@ reading one build's names against another build's addresses is a confidently
 wrong answer — but it does mean the naming is worth doing on a binary you are
 going to keep.
 
+## Writing down what you worked out
+
+Renaming corrects what the decompiler guessed. A comment records what you
+understood, and it has nowhere else to go: there is no source file to write it
+in, and the thing you have just spent twenty minutes establishing about a loop
+is exactly what you will have forgotten by tomorrow.
+
+![A comment written onto recovered C](../images/decomp-comment.png)
+
+Right-click in the Decompiled tab:
+
+- **Comment this line…** — a note above that line. Right-clicking a comment
+  offers **Edit the comment on this line…** instead, opening on what you typed,
+  and **Remove the comment on this line**.
+- **Comment the function…** — a note above the whole function, where its
+  purpose belongs.
+
+A line that came from no address — a brace, a declaration, a blank — cannot
+hold a comment, because there is nothing to attach one to. Those are the same
+lines that cannot hold a breakpoint, and the gutter already shows which they
+are.
+
+Comments are stored in the Ghidra project alongside the names, so they are
+there next time, and `Ctrl+Shift+Z` undoes the last one. They are also
+*Ghidra's* comments: open the same project in Ghidra and they are in the
+Listing and the Decompiler windows, where you would expect them.
+
+Comments go on a line or on a function, one line of text at a time. Longer
+notes wrap when the decompiler prints them.
+
 ## Stepping in the decompiled view
 
 gdb's own stepping needs a line table. Without one its step range is the whole
@@ -154,8 +184,9 @@ the program within it:
   -ghidra-program firmware
 ```
 
-Your names and types are used and **nothing is written back**: renaming is
-disabled for a project you named, and the menu items say so. gdb-wui only edits
+Your names, types and comments are used and **nothing is written back**:
+renaming and commenting are disabled for a project you named, and the menu items
+say so. gdb-wui only edits
 the project it imported itself. `-ghidra-program` is required, because a Ghidra
 project usually holds several programs.
 
@@ -179,8 +210,8 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
 
 - **It does not edit a project you named.** `-ghidra-project` is read-only:
   renaming works only in the project gdb-wui imports for itself.
-- **It does not edit struct fields.** Names, variable types and function
-  prototypes, but not the members of a type.
+- **It does not edit struct fields.** Names, variable types, function
+  prototypes and comments, but not the members of a type.
 - **It does not name anything but the call stack.** The Threads pane shows a
   frame per thread and leaves gdb's `??` on it.
 - **It does not name a frame outside the program.** libc and the dynamic loader

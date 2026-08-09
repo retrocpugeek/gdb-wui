@@ -317,3 +317,23 @@ implementing:
     this call can rename or retype either. It is what turns the second kind
     into the first: after renaming one, it came back with a small database id
     like the rest.
+
+39. **The decompiler prints two kinds of comment and stores five.** Ghidra's
+    listing holds PRE, POST, EOL, PLATE and REPEATABLE comments, but
+    `DecompileOptions` defaults display to PRE only — `commentPREInclude` is
+    true, `commentPLATEInclude`, `commentPOSTInclude` and `commentEOLInclude`
+    are all false — plus the entry point's PLATE comment, which
+    `commentHeadInclude` prints as the function's header comment.
+
+    So a comment written anywhere else is stored correctly and shown nowhere:
+    an edit that appears to do nothing. gdb-wui writes those two only, and
+    refuses a PRE comment on an address outside the function whose text is on
+    screen for the same reason — it would be a note the writer never sees
+    again.
+
+    A comment token carries the address of the *statement it annotates* rather
+    than of any code generated for it. That is why the line map throws those
+    addresses away — counted, they would put the program counter on a comment —
+    and why the same address is worth reporting separately: it is the only way
+    back from a comment on the page to the thing it is about, and so the only
+    way a right-click on one can edit it.

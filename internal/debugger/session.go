@@ -546,6 +546,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.decompRename(r)
 	case wire.TypeDecompRetype:
 		return s.decompRetype(r)
+	case wire.TypeDecompComment:
+		return s.decompComment(r)
 	case wire.TypeDecompUndo:
 		return s.decompUndoLast(r)
 
@@ -611,7 +613,8 @@ func (s *Session) gate(typ string) *wire.Error {
 		// Naming things in the decompiler's own database changes nothing about
 		// the inferior, and reading a running program's disassembly is exactly
 		// when someone works out what a function is called.
-		wire.TypeDecompRename, wire.TypeDecompRetype, wire.TypeDecompUndo:
+		wire.TypeDecompRename, wire.TypeDecompRetype, wire.TypeDecompComment,
+		wire.TypeDecompUndo:
 		return nil
 	}
 

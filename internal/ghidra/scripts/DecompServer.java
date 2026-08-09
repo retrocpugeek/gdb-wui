@@ -39,6 +39,9 @@
 //   -> {"id":5,"op":"rename","kind":"variable","function":"0x10d2b0",
 //       "symbol":"57","name":"local_10","newName":"count"}
 //   <- {"id":5,"ok":true,"function":{...}}
+//   -> {"id":6,"op":"comment","kind":"line","function":"0x10d2b0",
+//       "address":"0x10d2c4","text":"retry count, not a length"}
+//   <- {"id":6,"ok":true,"function":{...},"was":"","now":"retry count, ..."}
 //
 // An edit replies with the whole re-decompiled function rather than an
 // acknowledgement. It has to: renaming one symbol renumbers the others
@@ -78,7 +81,9 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.Listing;
 import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.symbol.SourceType;
@@ -116,7 +121,14 @@ public class DecompServer extends GhidraScript {
 		end(true);
 
 		decomp = new DecompInterface();
-		decomp.setOptions(new DecompileOptions());
+		// Comments are indented twenty characters by default, which lands a
+		// note about a statement in the middle of the page with nothing under
+		// it. This pane is narrower than Ghidra's own window, and a comment
+		// that does not sit above the line it is about is worse than no
+		// comment; four puts it on the body's own indent.
+		DecompileOptions options = new DecompileOptions();
+		options.setCommentIndent(4);
+		decomp.setOptions(options);
 		decomp.toggleCCode(true);
 		decomp.toggleSyntaxTree(true);
 		decomp.setSimplificationStyle("decompile");
@@ -190,6 +202,8 @@ public class DecompServer extends GhidraScript {
 					return rename(id, req);
 				case "retype":
 					return retype(id, req);
+				case "comment":
+					return comment(id, req);
 				default:
 					return fail(id, "unknown op " + op);
 			}
@@ -257,6 +271,9 @@ public class DecompServer extends GhidraScript {
 	//                symbol: a decompiler local frequently has no database
 	//                variable at all, and this is what creates one. Finding 38.
 	//   a global     Symbol.setName on the label at its address.
+	//   a comment    Listing.setComment on the address a line came from. Not a
+	//                symbol at all: it changes nothing about the program and
+	//                everything about reading it.
 	//
 	// Every one of them runs in its own transaction and is saved immediately.
 	// Without the save the new name lives only in this process and any crash
@@ -416,6 +433,102 @@ public class DecompServer extends GhidraScript {
 		// A signature carries a name, so applying one renames the function too.
 		return edited(id, f, duplicateWarning(kind, f.getName()), was,
 			now == null ? f.getName() : now);
+	}
+
+	// comment writes a note into the program's listing, where the decompiler
+	// picks it up and prints it in the C.
+	//
+	// Two kinds, because the decompiler prints two:
+	//
+	//   line      a PRE comment on the address the line was generated from,
+	//             printed above the statement.
+	//   function  the PLATE comment on the entry point, printed as the
+	//             function's header comment.
+	//
+	// Those are the two the decompiler displays with its default options; PLATE
+	// comments elsewhere, POST and EOL comments are all stored happily and
+	// shown nowhere, which would be an edit that appears to do nothing.
+	// Finding 39.
+	//
+	// Empty text removes the comment rather than storing an empty one — a
+	// stored empty comment prints as a bare `/* */`, which is a mark on the
+	// page that says nothing.
+	//
+	// The free text arrives in the field named "text" and that name is not
+	// arbitrary: the caller encodes its request with Go's encoding/json, which
+	// sorts the keys, and "text" sorts after every other key this op reads. The
+	// scanner below takes the first match for a key, so a comment containing
+	// something that looks like `"kind":"function"` cannot be read as one.
+	private boolean comment(long id, String req) {
+		if (!writable) {
+			return fail(id, READ_ONLY);
+		}
+		String kind = field(req, "kind");
+		String target = field(req, "function");
+		Function f = functionAt(target);
+		if (f == null) {
+			return fail(id, "no function at " + target);
+		}
+
+		Address at;
+		CommentType type;
+		if ("function".equals(kind)) {
+			at = f.getEntryPoint();
+			type = CommentType.PLATE;
+		}
+		else if ("line".equals(kind)) {
+			at = address(field(req, "address"));
+			if (at == null) {
+				return fail(id, field(req, "address") + " is not an address");
+			}
+			// Refused rather than written, because a comment outside the
+			// function is one the user will never see again: it is not in the
+			// text they were reading when they wrote it.
+			if (!f.getBody().contains(at)) {
+				return fail(id, field(req, "address") + " is not inside " + f.getName());
+			}
+			type = CommentType.PRE;
+		}
+		else {
+			return fail(id, "cannot comment a " + kind);
+		}
+
+		String text = field(req, "text");
+		text = text == null ? "" : text.trim();
+		Listing listing = currentProgram.getListing();
+		String was = listing.getComment(type, at);
+		String err = null;
+		boolean ok = false;
+		int tx = currentProgram.startTransaction(text.isEmpty() ? "remove a comment" : "comment");
+		try {
+			listing.setComment(at, type, text.isEmpty() ? null : text);
+			ok = true;
+		}
+		catch (Exception e) {
+			err = e.getClass().getSimpleName() + ": " + e.getMessage();
+		}
+		finally {
+			currentProgram.endTransaction(tx, ok);
+		}
+		if (!ok) {
+			return fail(id, err);
+		}
+		// was may be null — there was no comment — and the caller needs to tell
+		// that from an empty one, because the inverse of "added a comment" is
+		// "remove it" and the inverse of "changed one" is the old text.
+		return edited(id, f, null, was == null ? "" : was, text);
+	}
+
+	private Address address(String text) {
+		if (text == null || text.isEmpty()) {
+			return null;
+		}
+		try {
+			return currentProgram.getAddressFactory().getAddress(text);
+		}
+		catch (Exception ignored) {
+			return null;
+		}
 	}
 
 	private DataType parseType(String text) throws Exception {

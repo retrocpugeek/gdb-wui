@@ -457,6 +457,18 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 		}
 		out.Lines = append(out.Lines, wire.DecompLine{N: l.N, Addrs: shifted})
 	}
+	for _, c := range fn.CommentLines {
+		out.CommentLines = append(out.CommentLines, wire.DecompCommentLine{
+			N: c.N, Addr: shiftAddr(c.Addr, bias),
+		})
+	}
+	for _, c := range fn.Comments {
+		out.Comments = append(out.Comments, wire.DecompComment{
+			Addr: shiftAddr(c.Addr, bias),
+			Kind: c.Kind,
+			Text: c.Text,
+		})
+	}
 	out.PCLine, out.PCLineAmbiguous, out.PCLineApprox =
 		pcLine(out.Lines, pc, out.BodyStart, out.BodyEnd)
 

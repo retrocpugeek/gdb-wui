@@ -905,6 +905,12 @@
 
 .dec-code { padding: 0 10px; color: var(--tok-plain); }
 
+/* A comment is the one thing on this page that a person wrote rather than a
+ * machine recovered, and it reads as prose in the middle of C. Colouring it is
+ * not decoration: the server says which lines these are from the decompiler's
+ * own markup, so this never mistakes a string literal for a comment. */
+.dec-row.is-comment .dec-code { color: var(--tok-comment); font-style: italic; }
+
 .dec-row.is-pc { background: var(--exec-line); }
 .dec-row.is-pc .dec-gutter { background: var(--exec-line); color: var(--fg-0); }
 

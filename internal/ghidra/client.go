@@ -561,6 +561,17 @@ func (c *Client) Retype(ctx context.Context, e Edit) (*EditResult, error) {
 	return c.edit(ctx, "retype", e, map[string]any{"type": e.Value})
 }
 
+// Comment writes a note against a line of the recovered C — EditLine, with the
+// address the line came from — or against the function, where it becomes the
+// header comment. Empty text removes the comment rather than storing one that
+// prints as a bare `/* */`.
+//
+// EditResult.Was is the comment that was there, empty if there was none, which
+// is what an inverse needs: undoing a comment that was added means removing it.
+func (c *Client) Comment(ctx context.Context, e Edit) (*EditResult, error) {
+	return c.edit(ctx, "comment", e, map[string]any{"text": e.Value})
+}
+
 func (c *Client) edit(ctx context.Context, op string, e Edit, extra map[string]any) (
 	*EditResult, error) {
 	req := map[string]any{

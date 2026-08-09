@@ -16,6 +16,7 @@ const (
 	TypeDecompNames    = "decomp.names"
 	TypeDecompRename   = "decomp.rename"
 	TypeDecompRetype   = "decomp.retype"
+	TypeDecompComment  = "decomp.comment"
 	TypeDecompUndo     = "decomp.undo"
 )
 
@@ -139,8 +140,18 @@ type DecompFunction struct {
 	// Text is the whole function. Line n of it is line n of Lines.
 	Text  string       `json:"text"`
 	Lines []DecompLine `json:"lines"`
-	Vars  []DecompVar  `json:"vars,omitempty"`
-	Frame *DecompFrame `json:"frame,omitempty"`
+	// CommentLines are the lines of Text that are wholly comment, so a client
+	// can draw them as comment and let one be edited by pointing at it. The
+	// decompiler's own markup says which, rather than the text: `puts("/* x
+	// */")` defeats any prefix test, and a long comment is wrapped across lines
+	// of which only the first would match.
+	CommentLines []DecompCommentLine `json:"commentLines,omitempty"`
+	// Comments are the comments stored against this function, as typed —
+	// undecorated and unwrapped, which is what an editor has to be prefilled
+	// with. Addresses are runtime, like everything else here.
+	Comments []DecompComment `json:"comments,omitempty"`
+	Vars     []DecompVar     `json:"vars,omitempty"`
+	Frame    *DecompFrame    `json:"frame,omitempty"`
 	// Bias is what to add to a Ghidra address to get the one gdb shows. Zero
 	// for a non-PIE loaded where it was linked, which firmware usually is.
 	// Computed server-side from a symbol both sides know, never from image
@@ -224,9 +235,16 @@ const (
 	// DecompEditGlobal is a module-scope symbol. Renaming one is supported;
 	// retyping one is not yet.
 	DecompEditGlobal = "global"
+	// DecompEditLine is one line of the recovered C, addressed by the address
+	// it was generated from. Only decomp.comment takes it: a line has no name
+	// and no type, and a line that came from no address — a brace, a blank —
+	// cannot be commented at all, because there is nothing to hang the comment
+	// on. Those are the same lines that cannot hold a breakpoint.
+	DecompEditLine = "line"
 )
 
-// DecompEditRequest is the payload of both decomp.rename and decomp.retype.
+// DecompEditRequest is the payload of decomp.rename, decomp.retype and
+// decomp.comment.
 //
 // The decompiler's names are guesses — FUN_0010d2b0, local_10, undefined8 —
 // and correcting them is most of what makes a stripped binary readable. They go
@@ -246,11 +264,16 @@ type DecompEditRequest struct {
 	// Name is the fallback key.
 	Symbol string `json:"symbol,omitempty"`
 	// Name is the symbol's current name. Sent for every kind, so that a stale
-	// view is reported rather than silently applied to a neighbour.
+	// view is reported rather than silently applied to a neighbour. A comment
+	// hangs on an address rather than on a symbol, so for decomp.comment this
+	// carries the function's name and is used only to describe the edit.
 	Name string `json:"name,omitempty"`
-	// Address locates a DecompEditGlobal, runtime.
+	// Address locates a DecompEditGlobal or a DecompEditLine, runtime.
 	Address string `json:"address,omitempty"`
-	// Value is the new name, or the new type.
+	// Value is the new name, the new type, or the comment text. Empty is
+	// refused for a name and a type, and for a comment means remove it: a
+	// stored empty comment prints as a bare `/* */`, which is a mark on the
+	// page that says nothing.
 	Value   string `json:"value"`
 	StopSeq uint64 `json:"stopSeq,omitempty"`
 }
@@ -265,7 +288,8 @@ type DecompUndoRequest struct {
 	StopSeq uint64 `json:"stopSeq,omitempty"`
 }
 
-// DecompEdit is the reply to decomp.rename, decomp.retype and decomp.undo.
+// DecompEdit is the reply to decomp.rename, decomp.retype, decomp.comment and
+// decomp.undo.
 type DecompEdit struct {
 	// Function is the whole function decompiled again. Not an acknowledgement:
 	// a rename renumbers every other symbol's id and a retype reshapes the body
@@ -341,6 +365,44 @@ func (f DecompFunction) LineCount() int {
 type DecompLine struct {
 	N     int      `json:"n"`
 	Addrs []string `json:"addrs"`
+}
+
+// Comment kinds, matching what the decompiler displays.
+const (
+	// DecompCommentPre is printed above the statement its address generated.
+	DecompCommentPre = "pre"
+	// DecompCommentPlate is on the entry point and is printed as the
+	// function's header comment.
+	DecompCommentPlate = "plate"
+)
+
+// DecompCommentLine is one rendered line that is wholly comment.
+//
+// Addr is what makes a comment editable by pointing at it: a comment is
+// printed on its own line, which claims no addresses of its own — a comment
+// line is deliberately absent from Lines, so that the program counter is never
+// put on one — and without this there would be no way back from the text to
+// the address the comment hangs on.
+type DecompCommentLine struct {
+	// N is 1-based into Text.
+	N int `json:"n"`
+	// Addr is the address the comment annotates, runtime. Empty for a
+	// decompiler warning, which belongs to no address and is not editable.
+	Addr string `json:"addr,omitempty"`
+}
+
+// DecompComment is one note stored in the Ghidra program, as typed.
+//
+// Sent so that editing an existing comment starts from what is there. It cannot
+// be recovered from Text: the rendering is wrapped to the decompiler's print
+// width and decorated with /* */, so reconstructing the original from it is
+// guesswork.
+type DecompComment struct {
+	// Addr is the address the comment hangs on, runtime.
+	Addr string `json:"addr"`
+	// Kind is DecompCommentPre or DecompCommentPlate.
+	Kind string `json:"kind"`
+	Text string `json:"text"`
 }
 
 // Storage kinds for a decompiled variable. They are not equally useful and the

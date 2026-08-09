@@ -319,6 +319,301 @@ func TestReadOnlyClientRefusesEdits(t *testing.T) {
 	}
 }
 
+// TestCommentAppearsInTheDecompiledText is the whole claim of the feature: a
+// comment written into the listing is printed in the C, which is not something
+// a caller can assume. The decompiler displays PRE comments and the entry
+// point's PLATE comment with its default options, and nothing else (finding
+// 39) — a comment stored anywhere else would be an edit that appears to do
+// nothing at all.
+func TestCommentAppearsInTheDecompiledText(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	line := firstMappedLine(t, fn)
+
+	res, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  line.Addrs[0],
+		Value:    "the running total lives here",
+	})
+	if err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+	if !strings.Contains(res.Function.Text, "the running total lives here") {
+		t.Fatalf("the comment is not in the decompiled text:\n%s", res.Function.Text)
+	}
+	if res.Was != "" {
+		t.Errorf("was = %q, want empty — there was no comment before", res.Was)
+	}
+
+	// It is reported both as stored text and as a rendered line, and the two
+	// are different things: an editor needs the first, a pane needs the second.
+	stored := findComment(res.Function.Comments, line.Addrs[0])
+	if stored == nil {
+		t.Fatalf("no stored comment at %s: %+v", line.Addrs[0], res.Function.Comments)
+	}
+	if stored.Text != "the running total lives here" || stored.Kind != ghidra.CommentPre {
+		t.Errorf("stored comment = %+v, want the text back as a pre comment", stored)
+	}
+	marked := findCommentLine(res.Function.CommentLines, line.Addrs[0])
+	if marked == nil {
+		t.Fatalf("no comment line for %s: %+v", line.Addrs[0], res.Function.CommentLines)
+	}
+	if !strings.Contains(textLine(res.Function.Text, marked.N), "the running total lives here") {
+		t.Errorf("line %d is %q, which is not the comment",
+			marked.N, textLine(res.Function.Text, marked.N))
+	}
+	// And it claims no addresses, so the program counter can never land on it.
+	for _, l := range res.Function.Lines {
+		if l.N == marked.N {
+			t.Errorf("comment line %d also appears in the address map as %v", l.N, l.Addrs)
+		}
+	}
+
+	// Editing it reports what was there, which is what an undo needs.
+	res2, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  line.Addrs[0],
+		Value:    "second thoughts",
+	})
+	if err != nil {
+		t.Fatalf("second Comment: %v", err)
+	}
+	if res2.Was != "the running total lives here" {
+		t.Errorf("was = %q, want the previous comment", res2.Was)
+	}
+	if strings.Contains(res2.Function.Text, "the running total lives here") {
+		t.Error("the old comment is still in the text")
+	}
+
+	// And empty removes it rather than leaving a bare /* */ on the page.
+	res3, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  line.Addrs[0],
+		Value:    "",
+	})
+	if err != nil {
+		t.Fatalf("removing Comment: %v", err)
+	}
+	if strings.Contains(res3.Function.Text, "second thoughts") {
+		t.Error("the comment survived being removed")
+	}
+	if len(res3.Function.Comments) != 0 {
+		t.Errorf("comments = %+v after removing the only one", res3.Function.Comments)
+	}
+}
+
+// TestFunctionCommentIsTheHeader: the PLATE comment on the entry point is what
+// the decompiler prints above the prototype. Any other placement stores fine
+// and shows nothing.
+func TestFunctionCommentIsTheHeader(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	res, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Value:    "sums the list; callers rely on the wrap",
+	})
+	if err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+	if !strings.Contains(res.Function.Text, "sums the list") {
+		t.Fatalf("the header comment is not in the text:\n%s", res.Function.Text)
+	}
+	stored := findComment(res.Function.Comments, fn.Entry)
+	if stored == nil || stored.Kind != ghidra.CommentPlate {
+		t.Errorf("comments = %+v, want a plate comment at the entry point",
+			res.Function.Comments)
+	}
+	// Above the prototype: a header comment that printed below the signature
+	// would still contain the text and be the wrong thing.
+	body := strings.Index(res.Function.Text, "accumulate")
+	if at := strings.Index(res.Function.Text, "sums the list"); at > body {
+		t.Errorf("the comment is at %d, after the function's own name at %d", at, body)
+	}
+}
+
+// TestCommentSurvivesARestart. The same proof as TestEditsReachTheDisk and for
+// the same reason: an in-process read-back passes even when nothing was saved.
+func TestCommentSurvivesARestart(t *testing.T) {
+	c, opts := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	if _, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Value:    "written before the restart",
+	}); err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	again, err := ghidra.Start(ctx, opts)
+	if err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	defer again.Close()
+
+	back, err := again.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile after restart: %v", err)
+	}
+	if !strings.Contains(back.Text, "written before the restart") {
+		t.Errorf("the comment did not survive:\n%s", back.Text)
+	}
+}
+
+// TestACommentIsFreeText. Names and types are constrained; a comment is the
+// first thing a user can type that reaches Ghidra unfiltered, and it crosses
+// the socket through a hand-rolled scanner on the far side. A comment that
+// spells out a field name of the request must not be read as one.
+func TestACommentIsFreeText(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	nasty := `"kind":"function", a \ backslash, a "quote" and a	tab`
+	res, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Value:    nasty,
+	})
+	if err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+	stored := findComment(res.Function.Comments, fn.Entry)
+	if stored == nil {
+		t.Fatalf("no comment stored: %+v", res.Function.Comments)
+	}
+	if stored.Text != nasty {
+		t.Errorf("stored %q, want %q — it did not survive the round trip",
+			stored.Text, nasty)
+	}
+	// The function is still a function: a request read as `kind: function` in
+	// the wrong place would have renamed or retyped something.
+	if res.Function.Name != fn.Name || res.Function.Signature != fn.Signature {
+		t.Errorf("the function became %q %q; the comment was acted on",
+			res.Function.Name, res.Function.Signature)
+	}
+}
+
+// TestCommentOutsideTheFunctionIsRefused. A comment on an address the user is
+// not looking at is one they will never see again, so it is refused rather
+// than written somewhere else in the program.
+func TestCommentOutsideTheFunctionIsRefused(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	_, err = c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  "0x0",
+		Value:    "nowhere near",
+	})
+	if err == nil {
+		t.Fatal("a comment outside the function was accepted")
+	}
+	if !strings.Contains(err.Error(), "accumulate") {
+		t.Errorf("error = %q, which does not say which function it is not in", err)
+	}
+}
+
+// TestReadOnlyClientRefusesComments. The same guard as for a rename: -readOnly
+// protects nothing (finding 32), so the refusal is the only thing between a
+// user's own project and a write.
+func TestReadOnlyClientRefusesComments(t *testing.T) {
+	c := start(t) // Writable is false.
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	_, err = c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Value:    "should not be written",
+	})
+	if err == nil {
+		t.Fatal("a read-only sidecar accepted a comment")
+	}
+	if !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("error = %q, which does not say why", err)
+	}
+	after, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	if strings.Contains(after.Text, "should not be written") {
+		t.Error("the refused comment was written anyway")
+	}
+}
+
+// firstMappedLine is a line that came from an address, which is the only kind
+// that can hold a comment.
+func firstMappedLine(t *testing.T, fn *ghidra.Function) ghidra.Line {
+	t.Helper()
+	for _, l := range fn.Lines {
+		if len(l.Addrs) > 0 {
+			return l
+		}
+	}
+	t.Fatalf("%s has no line with an address", fn.Name)
+	return ghidra.Line{}
+}
+
+func findComment(comments []ghidra.Comment, addr string) *ghidra.Comment {
+	for i := range comments {
+		if comments[i].Addr == addr {
+			return &comments[i]
+		}
+	}
+	return nil
+}
+
+func findCommentLine(lines []ghidra.CommentLine, addr string) *ghidra.CommentLine {
+	for i := range lines {
+		if lines[i].Addr == addr {
+			return &lines[i]
+		}
+	}
+	return nil
+}
+
+// textLine is line n of a function's text, 1-based like everything else here.
+func textLine(text string, n int) string {
+	lines := strings.Split(text, "\n")
+	if n < 1 || n > len(lines) {
+		return ""
+	}
+	return lines[n-1]
+}
+
 func hasVar(vars []ghidra.Var, name string) bool { return findVar(vars, name) != nil }
 
 func findVar(vars []ghidra.Var, name string) *ghidra.Var {
