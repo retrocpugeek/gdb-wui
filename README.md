@@ -78,10 +78,11 @@ breakpoints are kept.
 | Stripped binaries, disassembly-first | Launching `gdbserver` or an emulator for you |
 | Multiple threads, all-stop, thread switching | Non-stop mode, per-thread run control |
 | Breakpoints by source line, address or symbol | Watchpoints, catchpoints, tracepoints |
-| Locals, nested structs, watch expressions | Editing values, register writes, memory writes |
+| Locals, nested structs, watch expressions | Per-row display formats — use `p/d x` at the console |
 | Hover a variable or register for its value | Hovering a call — it would run the function |
 | Decompiled C from Ghidra, with the PC marked | Editing Ghidra's names or types from here |
-| Registers, disassembly, memory (read-only) | Reverse debugging, `rr` |
+| Double-click to edit a variable, register or byte | Editing an array, struct or union — gdb refuses |
+| Registers, disassembly, and a hex memory view | Reverse debugging, `rr` |
 | A searchable symbol list, functions and globals | Types, macros, and other symbol domains |
 | The gdb console, with tab completion | Core dumps, attach-to-pid |
 | A program with its own terminal | Full terminal emulation for curses programs |
@@ -91,8 +92,8 @@ breakpoints are kept.
 | | Windows, macOS |
 
 Anything in the right-hand column that gdb itself supports still works when
-typed into the console — watchpoints, `set var`, breakpoint conditions. A
-breakpoint set at the console appears in the UI like any other.
+typed into the console — watchpoints, breakpoint conditions, `set` on a whole
+struct. A breakpoint set at the console appears in the UI like any other.
 
 ## Documentation
 

@@ -9,6 +9,7 @@
 // render "??" rather than zeros, because zeros for unmapped memory would look
 // like data.
 
+import { editCell } from "../core/edit.js";
 import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 
 const BYTES_PER_ROW = 16;
@@ -22,7 +23,7 @@ const CHUNK = 4096;
 // rounding error next to the page holding it.
 const MAX_CHUNKS = 512;
 
-export function createMemory({ element, onRead, onSymbols, onError }) {
+export function createMemory({ element, onRead, onSymbols, onWrite, onError }) {
   let base = 0n;
   let rows = 0;
   let expression = "";
@@ -162,43 +163,97 @@ export function createMemory({ element, onRead, onSymbols, onError }) {
 
   element.addEventListener("scroll", scheduleSymbols, { passive: true });
 
+  // A byte is edited where it is shown. The address goes out as the row's
+  // address plus an offset rather than as one arithmetic result, because the
+  // row address is a string the server can resolve and BigInt arithmetic on
+  // the client is one more place for the two to disagree about a 64-bit value.
+  element.addEventListener("dblclick", (ev) => {
+    if (!onWrite) return;
+    const cell = ev.target.closest?.(".mem-byte");
+    const row = ev.target.closest?.(".mem-row");
+    if (!cell || !row || !cell.classList.contains("is-editable")) return;
+    ev.preventDefault();
+
+    const offset = Number(cell.dataset.index);
+    const addr = "0x" + row.dataset.addr;
+    editCell({
+      cell,
+      value: cell.textContent,
+      title: `${addToHex(row.dataset.addr, offset)} — one byte in hex, Enter to write`,
+      onError,
+      // Nothing repaints here. A write is announced to every client, and that
+      // announcement is what drops the cache — in this browser as in any
+      // other. Doing it locally as well would be a second path no test can
+      // tell from the first, because the reply carries no bytes to show.
+      commit: (typed) => onWrite({ address: addr, offset, dataHex: typed }),
+    });
+  });
+
+  function addToHex(hex, offset) {
+    return "0x" + (BigInt("0x" + hex) + BigInt(offset)).toString(16);
+  }
+
+  // invalidate drops the cached bytes without touching the names or the
+  // scroll position. Used after a write, where the program has not moved, so
+  // the symbol column is still true.
+  function invalidate() {
+    chunks.clear();
+    order.length = 0;
+    list?.refresh();
+  }
+
   function ensureList() {
     if (list) return;
     list = createVirtualList({
       container: element,
       rowHeight: measureRowHeight(element, cssLineHeight()),
       renderRow: {
+        // One span per byte, rather than the whole row's hex as one string.
+        // A byte has to be a click target of its own to be double-clicked,
+        // and the alternative — working out which byte the pointer was over
+        // from its x offset and the character width — is arithmetic that a
+        // font substitution silently breaks.
         create() {
           const row = document.createElement("div");
           row.className = "mem-row";
-          row.innerHTML =
-            '<span class="mem-addr"></span><span class="mem-hex"></span>' +
-            '<span class="mem-ascii"></span><span class="mem-sym"></span>';
+          const hex = document.createElement("span");
+          hex.className = "mem-hex";
+          for (let i = 0; i < BYTES_PER_ROW; i++) {
+            const cell = document.createElement("span");
+            cell.className = "mem-byte";
+            cell.dataset.index = String(i);
+            hex.append(cell);
+          }
+          row.innerHTML = '<span class="mem-addr"></span>';
+          row.append(hex);
+          row.insertAdjacentHTML("beforeend",
+            '<span class="mem-ascii"></span><span class="mem-sym"></span>');
           return row;
         },
         update(el, index) {
           const rowAddr = base + BigInt(index) * BigInt(BYTES_PER_ROW);
+          el.dataset.addr = rowAddr.toString(16);
           el.querySelector(".mem-addr").textContent =
             rowAddr.toString(16).padStart(12, "0");
 
-          let hex = "";
+          const cells = el.querySelectorAll(".mem-byte");
           let ascii = "";
           let missing = false;
           for (let i = 0; i < BYTES_PER_ROW; i++) {
             const addr = rowAddr + BigInt(i);
             const value = byteAt(addr);
             const isKnown = value !== undefined && value !== null && knownAt(addr);
+            const cell = cells[i];
             if (!isKnown) {
               missing = true;
-              hex += "?? ";
+              cell.textContent = "??";
               ascii += value === null ? "." : " ";
             } else {
-              hex += value.toString(16).padStart(2, "0") + " ";
+              cell.textContent = value.toString(16).padStart(2, "0");
               ascii += value >= 0x20 && value < 0x7f ? String.fromCharCode(value) : ".";
             }
-            if (i === 7) hex += " ";
+            cell.classList.toggle("is-editable", Boolean(onWrite) && isKnown);
           }
-          el.querySelector(".mem-hex").textContent = hex;
           el.querySelector(".mem-ascii").textContent = ascii;
           el.classList.toggle("has-holes", missing);
 
@@ -247,6 +302,7 @@ export function createMemory({ element, onRead, onSymbols, onError }) {
       list?.refresh();
       scheduleSymbols();
     },
+    invalidate,
     summary() {
       if (!list) return "";
       const parts = ["0x" + base.toString(16)];

@@ -588,6 +588,16 @@
 .mem-hex { color: var(--tok-number); flex: 0 0 auto; }
 .mem-ascii { color: var(--fg-1); flex: 0 0 auto; }
 
+/* Bytes are separate elements so each is a click target, and the widths below
+ * are what keeps the column alignment the single hex string used to give for
+ * free: three characters each, four after the eighth to keep the halves
+ * apart. */
+.mem-byte {
+  display: inline-block;
+  width: 3ch;
+}
+.mem-byte[data-index="7"] { width: 4ch; }
+
 /* A row with unreadable bytes is dimmed, so "??" reads as absent rather than
  * as a value. */
 .mem-row.has-holes .mem-hex { color: var(--fg-2); }
@@ -900,3 +910,114 @@
   text-overflow: ellipsis;
   max-width: 28ch;
 }
+
+/* --- editing a value ------------------------------------------------------ */
+
+/* An editable cell says so on hover and nowhere else. A permanent mark on
+ * every scalar in the tree would be noise on the panel that is read most, and
+ * the affordance is only needed at the moment the pointer is over one. */
+.var-row.is-editable .var-value:hover,
+.reg-row.is-editable .reg-value:hover,
+.mem-byte.is-editable:hover {
+  cursor: text;
+  background: var(--accent-dim);
+  border-radius: 2px;
+}
+
+/* The editor floats over the cell rather than sitting in it, because the rows
+ * underneath are recycled by the virtual list. Fixed positioning is what makes
+ * the coordinates the cell's own bounding box. */
+.cell-edit {
+  position: fixed;
+  z-index: 60;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  padding: 0 4px;
+  color: var(--fg-0);
+  background: var(--bg-0);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+  box-shadow: 0 2px 8px var(--shadow-popup);
+}
+
+.cell-edit.is-busy { border-color: var(--border-strong); opacity: 0.7; }
+
+/* A rejected value stays in the box to be corrected. Marking the box is the
+ * only way to tell that apart from a write that went through, since the panel
+ * behind it is unchanged either way. */
+.cell-edit.is-bad { border-color: var(--danger); }
+
+/* --- about ---------------------------------------------------------------- */
+
+/* Outside #app for the same reason the context menu is: every panel sets
+ * `contain: layout paint`, which would clip a dialog rendered inside one. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--shadow-popup);
+}
+
+.about {
+  width: min(380px, calc(100vw - 32px));
+  padding: 20px;
+  text-align: center;
+  background: var(--bg-1);
+  color: var(--fg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px var(--shadow-popup);
+}
+
+.about-avatar {
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+}
+
+.about-name {
+  margin: 8px 0 2px;
+  font-size: 18px;
+  color: var(--fg-0);
+}
+
+.about-tagline { margin: 0 0 14px; color: var(--fg-2); }
+
+/* Two columns, label right-aligned against value: a definition list reads as
+ * a table here without being one. */
+.about-facts {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: center;
+  gap: 2px 10px;
+  margin: 0 0 14px;
+  font-size: 11px;
+}
+
+.about-facts dt { color: var(--fg-2); text-align: right; }
+.about-facts dd {
+  margin: 0;
+  text-align: left;
+  font-family: var(--font-mono);
+  color: var(--fg-1);
+}
+
+.about-copy {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--fg-2);
+  line-height: 1.5;
+}
+
+.about-links {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin: 0 0 16px;
+}
+
+.about a { color: var(--accent); }

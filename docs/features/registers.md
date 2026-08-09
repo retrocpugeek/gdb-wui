@@ -14,6 +14,9 @@ gdb's order, read from the frame selected in the call stack. Registers that
 changed at the last stop are marked, which makes single-stepping through a
 prologue easier to follow.
 
+To change a register, double-click its value. See
+[changing values](editing.md).
+
 The number beside each name is gdb's register number. It is the register's real
 identity: gdb's list has gaps at stable indices, so a register with no name is
 normal rather than a fault.
@@ -35,8 +38,6 @@ gdb-wui. See [remote targets](remote.md).
 
 ## What the Registers tab does not do
 
-- **It does not write registers.** Use `set $rax = 1` at the
-  [console](console.md); the pane will show the result.
 - **It does not switch format per register.** Use `p/d $rax` at the console.
 - **It does not group or filter.** The list is flat and complete, which on an
   architecture with several hundred registers is a long list.

@@ -10,13 +10,16 @@
 //     LRU eviction; the path survives, so the tree stays open while stepping,
 //     which is when a value is being watched.
 
+import { editCell } from "../core/edit.js";
 import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 
 // How many expansions to re-issue at once after a stop. Unbounded, a deeply
 // expanded tree floods the socket ahead of the traffic the user is waiting for.
 const REEXPAND_CONCURRENCY = 4;
 
-export function createVariables({ element, onExpand, onAddWatch, onRemoveWatch, onError }) {
+export function createVariables({
+  element, onExpand, onAddWatch, onRemoveWatch, onAssign, onError,
+}) {
   // expanded holds paths, so it survives every id churn underneath.
   const expanded = new Set();
   // children maps path -> array of nodes.
@@ -27,6 +30,13 @@ export function createVariables({ element, onExpand, onAddWatch, onRemoveWatch, 
   let list = null;
   let stopSeq = 0;
   let pending = new Set();
+  // Paths written by hand since the last stop.
+  //
+  // gdb's change tracking runs off -var-update, which compares against the
+  // previous *stop*, and the flat locals carry no change flag at all. So an
+  // edit's mark has to be remembered here, or it would vanish the moment the
+  // panel re-read the locals — which is the first thing a write does.
+  const written = new Set();
 
   function ensureList() {
     if (list) return;
@@ -53,11 +63,13 @@ export function createVariables({ element, onExpand, onAddWatch, onRemoveWatch, 
           el.style.paddingLeft = `${4 + row.depth * 12}px`;
           el.classList.toggle("is-expandable", row.node.expandable);
           el.classList.toggle("is-expanded", expanded.has(row.node.path));
-          el.classList.toggle("is-changed", Boolean(row.node.changed));
+          el.classList.toggle("is-changed",
+            Boolean(row.node.changed) || written.has(row.node.path));
           el.classList.toggle("is-stale", row.node.inScope === false);
           el.classList.toggle("is-optimized-out", Boolean(row.node.optimizedOut));
           el.classList.toggle("is-arg", Boolean(row.node.arg));
           el.classList.toggle("is-header", row.kind === "header");
+          el.classList.toggle("is-editable", editable(row));
 
           el.querySelector(".var-twisty").textContent = row.node.expandable
             ? (expanded.has(row.node.path) ? "▾" : "▸")
@@ -85,6 +97,15 @@ export function createVariables({ element, onExpand, onAddWatch, onRemoveWatch, 
     const raw = getComputedStyle(document.documentElement).getPropertyValue("--line-h");
     const n = parseFloat(raw);
     return Number.isFinite(n) && n > 0 ? n : 19;
+  }
+
+  // editable comes from the server, which asked gdb. Deriving it here from the
+  // type string would mean recognising every spelling of an array and every
+  // typedef in front of one, and getting a struct row to offer an edit that
+  // can only be refused.
+  function editable(row) {
+    return Boolean(onAssign) && row.kind !== "header" && row.kind !== "note"
+      && Boolean(row.node.editable);
   }
 
   // flatten walks the visible tree into the array the virtual list indexes.
@@ -194,12 +215,48 @@ export function createVariables({ element, onExpand, onAddWatch, onRemoveWatch, 
     }
     const node = findNode(path);
     if (!node?.expandable) return;
+    // The value cell belongs to the editor. Without this a pointer — which is
+    // both expandable and editable — would expand and collapse under the edit
+    // box on the way to opening it.
+    if (ev.target.closest(".var-value") && node.editable) return;
     if (expanded.has(path)) {
       expanded.delete(path);
       render();
     } else {
       expand(path).catch((err) => onError?.(err));
     }
+  });
+
+  element.addEventListener("dblclick", (ev) => {
+    const el = ev.target.closest?.(".var-row");
+    const cell = ev.target.closest?.(".var-value");
+    if (!el || !cell) return;
+    const row = rows.find((r) => r.node.path === el.dataset.path);
+    if (!row || !editable(row)) return;
+    // A double-click on an expandable row would otherwise also have toggled
+    // it twice via the click handler, leaving the tree flapping under the
+    // editor. Stopping here is enough: the click handler ignores .var-value.
+    ev.preventDefault();
+
+    editCell({
+      cell,
+      value: row.node.value,
+      title: `${row.node.name} — a value or an expression, Enter to write`,
+      onError,
+      commit: (typed) => onAssign({
+        path: row.node.path,
+        id: row.node.id,
+        expr: row.node.expr,
+        value: typed,
+      }).then((res) => {
+        // Repaint from the reply, which carries what gdb stored rather than
+        // what was typed: assigning 321 to a char shows 65 immediately.
+        row.node.value = res?.value ?? row.node.value;
+        if (res?.id) row.node.id = res.id;
+        written.add(row.node.path);
+        list?.refresh();
+      }),
+    });
   });
 
   return {
@@ -218,8 +275,20 @@ export function createVariables({ element, onExpand, onAddWatch, onRemoveWatch, 
     async onStop(nextLocals, seq) {
       stopSeq = seq;
       locals = nextLocals ?? [];
+      // An edit's mark lasts until the program moves, at which point gdb's own
+      // change tracking takes over and a mark left here would claim the user
+      // wrote something during this stop.
+      written.clear();
       render();
       await reexpand();
+    },
+    // refreshOpen re-fetches every open subtree without waiting for a stop.
+    //
+    // A write changes values inside those subtrees and does not advance
+    // stopSeq, so nothing else would: setting a byte through the hex view
+    // would leave the struct field it belongs to showing the old number.
+    refreshOpen() {
+      return reexpand();
     },
     // invalidate drops every varobj-derived row. The server sends this when it
     // has deleted the objects wholesale, so the ids we hold are dead.
@@ -230,6 +299,7 @@ export function createVariables({ element, onExpand, onAddWatch, onRemoveWatch, 
     clear() {
       locals = [];
       children.clear();
+      written.clear();
       render();
     },
     expandedPaths() {

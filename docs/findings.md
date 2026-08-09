@@ -169,3 +169,50 @@ implementing:
     its own goroutine. `emitOffActor` exists for the two genuinely off-actor
     events — inferior output and gdb dying — whose payloads carry no session
     state. A source-level test checks that nothing calls `Broadcast` directly.
+
+25. **MI has no register-write command.** `-data-list-register-values` has no
+    counterpart: gdb 17.1 answers `-data-write-register-values` with
+    `^error,msg="Undefined MI command: data-write-register-values"`. Writing a
+    register goes through `-gdb-set var $rax = …` instead.
+
+    `-gdb-set` does take the general `--thread` option, which is what makes a
+    per-thread register write possible: `-gdb-set --thread 1 var $rbx = 0x5678`
+    is accepted. That is not obvious from its documentation, which describes it
+    as a pass-through to the CLI `set`.
+
+26. **`-data-write-memory-bytes ""` succeeds and writes nothing.** An empty hex
+    string is `^done`, so a UI that lets a value cell be committed empty would
+    report a write that never happened. The other malformed inputs gdb does
+    catch: `"f"` and `"abc"` give *"Hex-encoded 'f' must represent an integral
+    number of addressable memory units"*, and `"zz"` gives *"Invalid argument"*.
+
+    So does `"0xff"` — the prefix is rejected, with the same unhelpful
+    *"Invalid argument"*. The hex view writes addresses with a `0x` prefix, so
+    a user typing one into a byte cell is following the screen; gdb-wui strips
+    it before the command goes out.
+
+27. **`-var-assign` refuses aggregates, and `-var-show-attributes` says so in
+    advance.** Assigning to a struct or an array gives *"-var-assign: Variable
+    object is not editable"*. `-var-show-attributes` answers `attr="editable"`
+    or `attr="noneditable"` — note that the second contains the first as a
+    substring, so the answer has to be compared rather than searched.
+
+    For *children* the answer comes free: `-var-list-children --simple-values`
+    omits `value` for exactly the aggregate types, which is the same signal the
+    tree already uses to decide whether a row can be expanded. Only roots — the
+    watches — need the extra round trip.
+
+28. **`-var-assign` returns the value that landed, not the one sent.** Assigning
+    `321` to a `char` replies `^done,value="65 'A'"`. Echoing the input back to
+    the UI would hide the truncation until the next stop.
+
+29. **`-var-list-children` answers from gdb's varobj cache.** Re-listing a
+    struct's children after its bytes have changed underneath returns the old
+    values; only `-var-update` re-reads them. Between stops nothing issues one,
+    so writing memory through `-data-write-memory-bytes` left an expanded
+    struct in the UI showing numbers the program no longer held.
+
+    The consequence is that a *write* has to refresh varobjs for the same
+    reason a stop does. It cannot reuse the stop's refresh unchanged, though,
+    because that clears every change mark first — which would erase the mark on
+    the value the user had just written.

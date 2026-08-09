@@ -80,6 +80,10 @@ type varobj struct {
 	hasMore  bool
 	inScope  bool
 	changed  bool
+	// editable is gdb's answer to whether -var-assign will be accepted: true
+	// for scalars and pointers, false for arrays, structs and unions. It is
+	// asked once, at creation, because the type of a varobj does not change.
+	editable bool
 }
 
 // frameIdentity is what makes two stops "the same frame" for cache purposes.
@@ -220,8 +224,39 @@ func (s *Session) createRoot(ctx context.Context, path, expr string, thread, fra
 	if !floating {
 		v.frame = s.currentFrameIdentity(thread, frame)
 	}
+	v.editable = s.editableP(ctx, v.name)
 	s.vars.add(v)
 	return v, nil
+}
+
+// editableP asks gdb whether a varobj can be assigned to.
+//
+// One extra round trip per *root*, which is a watch or a subtree somebody
+// opened — a handful over a session, not one per row. Children get the same
+// answer for free, from whether --simple-values printed them a value, so this
+// is not on the path of expanding a large struct.
+//
+// Guessing from the type string was the alternative and is not tempting: the
+// answer would have to recognise every spelling of an array and a typedef, and
+// gdb has already computed it. Finding 27.
+func (s *Session) editableP(ctx context.Context, name string) bool {
+	rec, werr := s.send(ctx, "-var-show-attributes "+name)
+	if werr != nil {
+		// Not knowing means offering the edit and letting gdb refuse it, which
+		// is the better failure: a wrong "no" hides a legitimate edit with no
+		// way to discover it.
+		s.logf("-var-show-attributes %s: %s", name, werr.Message)
+		return true
+	}
+	// gdb answers "editable" or "noneditable", and the second contains the
+	// first as a substring, so this looks for the refusal rather than for the
+	// permission — and anything it does not recognise falls through to yes.
+	for _, attr := range strings.Split(rec.Results.Str("attr"), ",") {
+		if strings.TrimSpace(attr) == "noneditable" {
+			return false
+		}
+	}
+	return true
 }
 
 // evictIfFull deletes the least recently used root to stay under the cap.
@@ -268,11 +303,24 @@ func (s *Session) refreshVarobjs(ctx context.Context) {
 		return
 	}
 	// Clear last stop's marks first, or a value that changed once stays
-	// highlighted forever.
+	// highlighted forever. Only on a stop: a write must keep its own mark, and
+	// updateVarobjs is shared with that path.
 	for _, v := range s.vars.byName {
 		v.changed = false
 	}
+	s.updateVarobjs(ctx)
+}
 
+// updateVarobjs re-reads every live varobj without clearing the change marks.
+//
+// It exists separately because a *write* invalidates varobj caches exactly as a
+// stop does, and nothing else notices: -var-list-children answers from gdb's
+// cached values, so an expanded struct would go on showing the old number after
+// a byte underneath it was changed through the hex view. Finding 29.
+func (s *Session) updateVarobjs(ctx context.Context) {
+	if len(s.vars.byName) == 0 {
+		return
+	}
 	rec, werr := s.send(ctx, "-var-update --all-values *")
 	if werr != nil {
 		s.logf("-var-update: %s", werr.Message)
@@ -370,6 +418,10 @@ func (s *Session) listChildren(ctx context.Context, parent *varobj, from, to int
 		value, hasValue := res.StrOK("value")
 		child.value = value
 		child.hasMore, _ = res.Bool("has_more")
+		// --simple-values prints a value for exactly the types gdb will let you
+		// assign to, so the presence of one answers "editable" without the
+		// -var-show-attributes round trip a root pays.
+		child.editable = hasValue
 
 		// If gdb already gave us this child, keep the *registered* object
 		// rather than the one just built. -var-update sets `changed` on the
@@ -382,6 +434,7 @@ func (s *Session) listChildren(ctx context.Context, parent *varobj, from, to int
 			existing.numChild = child.numChild
 			existing.hasMore = child.hasMore
 			existing.inScope = child.inScope
+			existing.editable = child.editable
 			child = existing
 		} else {
 			s.vars.add(child)
@@ -407,6 +460,7 @@ func nodeFor(v *varobj, expandable bool) wire.VarNode {
 		InScope:      v.inScope,
 		Changed:      v.changed,
 		OptimizedOut: v.value == wire.OptimizedOut,
+		Editable:     v.editable && v.inScope && v.value != wire.OptimizedOut,
 	}
 	return node
 }

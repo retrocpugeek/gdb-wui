@@ -53,6 +53,11 @@ func localNodes(locals []wire.Variable) []wire.VarNode {
 			InScope:      true,
 			Arg:          v.Arg,
 			OptimizedOut: v.OptimizedOut,
+			// No varobj exists yet to ask, and none is created to find out:
+			// --simple-values already prints a value for exactly the types gdb
+			// will let you assign to, which is the same signal Expandable is
+			// derived from.
+			Editable: !v.Expandable && !v.OptimizedOut,
 		})
 	}
 	return out
@@ -72,7 +77,7 @@ func (s *Session) varsExpand(r *request) (any, *wire.Error) {
 	thread := s.thread(req.Thread)
 	frame := req.Frame
 
-	parent, werr := s.varobjFor(r.ctx, req, thread, frame)
+	parent, werr := s.varobjFor(r.ctx, req.Path, req.ID, req.Expr, thread, frame)
 	if werr != nil {
 		return nil, werr
 	}
@@ -96,34 +101,34 @@ func (s *Session) varsExpand(r *request) (any, *wire.Error) {
 // Three cases, in order of preference: one already exists for this path and is
 // still usable; the client named an id we still know; or nothing exists and one
 // has to be created from the expression. The last case is the common one — a
-// flat local being opened for the first time.
-func (s *Session) varobjFor(ctx context.Context, req wire.VarsExpandRequest, thread, frame int) (*varobj, *wire.Error) {
-	if v, ok := s.vars.get(req.Path); ok && s.usable(v, thread, frame) {
+// flat local being opened for the first time, or edited without ever having
+// been opened at all.
+func (s *Session) varobjFor(ctx context.Context, path, id, expr string, thread, frame int) (*varobj, *wire.Error) {
+	if v, ok := s.vars.get(path); ok && s.usable(v, thread, frame) {
 		return v, nil
 	}
-	if req.ID != "" {
-		if v, ok := s.vars.byVarName(req.ID); ok && s.usable(v, thread, frame) {
+	if id != "" {
+		if v, ok := s.vars.byVarName(id); ok && s.usable(v, thread, frame) {
 			return v, nil
 		}
 	}
 
-	expr := req.Expr
 	if expr == "" {
-		expr = exprFromPath(req.Path)
+		expr = exprFromPath(path)
 	}
 	if expr == "" {
 		return nil, wire.NewError(wire.CodeBadRequest,
-			"cannot expand "+req.Path+" without an expression")
+			"cannot resolve "+path+" without an expression")
 	}
 	// A path that already exists but is stale — wrong frame, or out of scope —
 	// is replaced rather than reused.
-	if old, ok := s.vars.get(req.Path); ok {
+	if old, ok := s.vars.get(path); ok {
 		if _, werr := s.send(ctx, "-var-delete "+old.root); werr != nil {
 			s.logf("replacing stale varobj %s: %s", old.name, werr.Message)
 		}
 		s.vars.evictRoot(old.root)
 	}
-	return s.createRoot(ctx, req.Path, expr, thread, frame, false)
+	return s.createRoot(ctx, path, expr, thread, frame, false)
 }
 
 // usable reports whether an existing varobj still describes what the client
@@ -306,12 +311,9 @@ func (s *Session) regsValues(r *request) (any, *wire.Error) {
 	if werr := s.checkStopSeq(req.StopSeq); werr != nil {
 		return nil, werr
 	}
-	format := req.Format
-	if format == "" {
-		format = "x"
-	}
-	if len(format) != 1 || !strings.Contains("xdotNrz", format) {
-		return nil, wire.NewError(wire.CodeBadRequest, "format must be one of x d o t N r z")
+	format, werr := registerFormat(req.Format)
+	if werr != nil {
+		return nil, werr
 	}
 	thread := s.thread(req.Thread)
 

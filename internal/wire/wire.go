@@ -134,6 +134,7 @@ var RequestTypes = []string{
 
 	TypeVarsLocals,
 	TypeVarsExpand,
+	TypeVarsAssign,
 
 	TypeWatchAdd,
 	TypeWatchRemove,
@@ -141,6 +142,7 @@ var RequestTypes = []string{
 
 	TypeRegsNames,
 	TypeRegsValues,
+	TypeRegsWrite,
 
 	TypeConsoleExec,
 	TypeConsoleComplete,
@@ -162,6 +164,7 @@ var RequestTypes = []string{
 	TypeMemRead,
 	TypeEvalExpr,
 	TypeMemSymbols,
+	TypeMemWrite,
 
 	TypePathSubstitute,
 	TypePathAddDir,
@@ -208,6 +211,7 @@ var EventNames = []string{
 
 	EventVarsInvalidated,
 	EventWatchesChanged,
+	EventValueWritten,
 
 	EventInferiorOutput,
 	EventThreadsChanged,

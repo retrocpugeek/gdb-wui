@@ -7,6 +7,7 @@ const (
 	TypeMemRead    = "mem.read"
 	TypeEvalExpr   = "eval.expr"
 	TypeMemSymbols = "mem.symbols"
+	TypeMemWrite   = "mem.write"
 )
 
 // MemReadRequest reads bytes.
@@ -51,6 +52,28 @@ type Memory struct {
 	// outcome — pointing a hex viewer at an unmapped page is how you find out
 	// it is unmapped — not an error worth interrupting the user for.
 	Unreadable bool `json:"unreadable,omitempty"`
+}
+
+// MemWriteRequest writes bytes.
+//
+// Address takes the same expressions mem.read does, so the viewer can write
+// back to a row using the address it already has in hand.
+type MemWriteRequest struct {
+	Address string `json:"address"`
+	Offset  int    `json:"offset,omitempty"`
+	// DataHex is the bytes, two hex digits each, no separators — the same
+	// encoding MemoryRange uses on the way out. Bytes rather than a value and a
+	// width, because the hex view edits bytes and nothing else has to agree
+	// about endianness.
+	DataHex string `json:"dataHex"`
+	StopSeq uint64 `json:"stopSeq,omitempty"`
+}
+
+// MemWrite is the reply to mem.write.
+type MemWrite struct {
+	StopSeq uint64 `json:"stopSeq"`
+	Addr    uint64 `json:"addr"`
+	Count   int    `json:"count"`
 }
 
 // MemSymbolsRequest asks which symbol each address falls in.

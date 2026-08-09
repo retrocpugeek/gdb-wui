@@ -13,6 +13,11 @@ const (
 
 	TypeRegsNames  = "regs.names"
 	TypeRegsValues = "regs.values"
+
+	// The writes. Separate types rather than one "set value", because the three
+	// go to gdb by three different commands and fail in three different ways.
+	TypeVarsAssign = "vars.assign"
+	TypeRegsWrite  = "regs.write"
 )
 
 // Events added in M4.
@@ -24,7 +29,33 @@ const (
 	EventVarsInvalidated = "varsInvalidated"
 	// EventWatchesChanged is emitted when the watch list changes.
 	EventWatchesChanged = "watchesChanged"
+	// EventValueWritten is emitted after a successful write to a variable, a
+	// register or memory. It is broadcast rather than returned, because a write
+	// invalidates what *every* connected client is showing: assigning a local
+	// changes the memory or the register it lives in, and a second browser
+	// looking at that address would otherwise show the old bytes until the next
+	// stop.
+	EventValueWritten = "valueWritten"
 )
+
+// ValueWritten is the payload of valueWritten.
+//
+// It carries no address and no new value on purpose. Assigning a local changes
+// the register or the stack slot behind it, and writing one byte can change a
+// variable a client is watching, so there is no useful subset to invalidate:
+// every value on screen is suspect and the panels re-read what they show. What
+// the event does carry is enough for a status line, so a second browser can say
+// why its numbers moved.
+type ValueWritten struct {
+	StopSeq uint64 `json:"stopSeq"`
+	// What is "variable", "register" or "memory".
+	What string `json:"what"`
+	// Detail names the target, "counter" or "$rax" or "0x404060".
+	Detail string `json:"detail"`
+	// Value is what the target holds afterwards, as gdb renders it. Empty for a
+	// memory write, where the bytes sent are the whole answer.
+	Value string `json:"value,omitempty"`
+}
 
 // OptimizedOut is the value gdb reports for a variable the compiler erased. It
 // is a value like any other on the wire. The UI renders it differently rather
@@ -67,6 +98,14 @@ type VarNode struct {
 	Arg bool `json:"arg,omitempty"`
 	// OptimizedOut is a convenience for the UI, derived from Value.
 	OptimizedOut bool `json:"optimizedOut,omitempty"`
+	// Editable reports that gdb will accept an assignment to this node, which
+	// is true of scalars and pointers and false of arrays, structs and unions.
+	//
+	// The server answers it because the UI must decide whether to offer an edit
+	// *before* one is attempted, and the only alternative — offering it on
+	// everything and reporting gdb's refusal afterwards — puts a dead
+	// affordance on every aggregate row in the tree.
+	Editable bool `json:"editable,omitempty"`
 }
 
 // VarsLocalsRequest asks for a frame's locals.
@@ -110,6 +149,37 @@ type VarsExpand struct {
 	HasMore  bool      `json:"hasMore,omitempty"`
 	// NumChild is the total gdb reports, so the UI can say "200 of 4096".
 	NumChild int `json:"numChild,omitempty"`
+}
+
+// VarsAssignRequest writes a new value to one node of the variables tree.
+//
+// It names the node the same three ways vars.expand does — path, id,
+// expression — because the row being edited may never have been expanded and
+// so may have no varobj yet. The server finds or creates one, exactly as it
+// does for an expansion.
+type VarsAssignRequest struct {
+	Path string `json:"path"`
+	ID   string `json:"id,omitempty"`
+	Expr string `json:"expr,omitempty"`
+	// Value is a gdb expression, not a literal: "42", "0x10", "x + 1" and
+	// "&counter" are all things a user may reasonably type into the cell, and
+	// gdb evaluates them in the frame the node belongs to.
+	Value   string `json:"value"`
+	Thread  int    `json:"thread,omitempty"`
+	Frame   int    `json:"frame,omitempty"`
+	StopSeq uint64 `json:"stopSeq,omitempty"`
+}
+
+// VarsAssign is the reply to vars.assign.
+//
+// Value is what gdb reports the node holds *after* the write, which is not
+// always what was typed: assigning 321 to a char gives 65, and showing the
+// echoed input instead would hide the truncation until the next stop.
+type VarsAssign struct {
+	Path    string `json:"path"`
+	ID      string `json:"id,omitempty"`
+	Value   string `json:"value"`
+	StopSeq uint64 `json:"stopSeq"`
 }
 
 // WatchAddRequest adds a watch expression.
@@ -161,4 +231,32 @@ type RegsValues struct {
 	ThreadID  int        `json:"threadId"`
 	Format    string     `json:"format"`
 	Registers []Register `json:"registers"`
+}
+
+// RegsWriteRequest writes one register.
+//
+// Number, not name, for the same reason the rest of the register protocol uses
+// it: gdb's name list has empty entries at stable indices, so position is the
+// only reliable identity. The server turns the number back into the $name gdb
+// needs in an expression, and refuses a register it cannot name.
+type RegsWriteRequest struct {
+	Number int `json:"number"`
+	// Value is a gdb expression. A user editing $pc types "main" or "0x401136"
+	// as readily as a decimal, and gdb resolves all three.
+	Value  string `json:"value"`
+	Thread int    `json:"thread,omitempty"`
+	// Format is the panel's display format, so the value read back is rendered
+	// the way the row that asked for it will show it.
+	Format  string `json:"format,omitempty"`
+	StopSeq uint64 `json:"stopSeq,omitempty"`
+}
+
+// RegsWrite is the reply to regs.write. It carries the register read back
+// after the write rather than the value that was sent, because a register
+// narrower than the value silently keeps the low bits.
+type RegsWrite struct {
+	StopSeq  uint64   `json:"stopSeq"`
+	ThreadID int      `json:"threadId"`
+	Format   string   `json:"format"`
+	Register Register `json:"register"`
 }

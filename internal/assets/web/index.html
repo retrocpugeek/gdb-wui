@@ -33,6 +33,7 @@
     <button id="btn-restart" class="btn btn-small is-hidden"
             title="gdb has died — start a fresh one and restore breakpoints">restart gdb</button>
     <button id="btn-theme" class="btn btn-small" title="Switch theme" aria-label="Switch theme">◑</button>
+    <button id="btn-about" class="btn btn-small" title="About gdb-wui" aria-label="About gdb-wui">?</button>
     <span id="run-state" class="pill" data-state="noProgram" role="status" aria-live="polite">no program</span>
   </header>
 
@@ -194,6 +195,36 @@
     <span class="toolbar-gap"></span>
     <span id="status-message" class="status-item"></span>
   </footer>
+</div>
+
+<!-- The avatar is served from the binary rather than fetched from GitHub, so
+     that opening this box works offline and tells nobody you opened it. -->
+<div id="about" class="modal-backdrop is-hidden" role="dialog" aria-modal="true"
+     aria-labelledby="about-title">
+  <div class="about">
+    <img class="about-avatar" src="/img/retrocpugeek.png" width="72" height="72"
+         alt="retrocpugeek">
+    <h2 id="about-title" class="about-name">gdb-wui</h2>
+    <p class="about-tagline">A fast and friendly interface to GDB.</p>
+    <dl class="about-facts">
+      <dt>Version</dt><dd id="about-version">dev</dd>
+      <dt>GDB</dt><dd id="about-gdb">—</dd>
+    </dl>
+    <p class="about-copy">
+      Copyright © 2026 retrocpugeek. Licensed under the
+      <a href="https://github.com/retrocpugeek/gdb-wui/blob/master/LICENSE"
+         target="_blank" rel="noopener noreferrer">Apache License, Version 2.0</a>.
+    </p>
+    <p class="about-links">
+      <a href="https://retrocpugeek.github.io/gdb-wui/"
+         target="_blank" rel="noopener noreferrer">Documentation</a>
+      <a href="https://github.com/retrocpugeek/gdb-wui"
+         target="_blank" rel="noopener noreferrer">Source</a>
+      <a href="https://github.com/retrocpugeek/gdb-wui/issues"
+         target="_blank" rel="noopener noreferrer">Issues</a>
+    </p>
+    <button id="about-close" class="btn btn-small">close</button>
+  </div>
 </div>
 
 <div id="ctxmenu" class="ctxmenu is-hidden" role="menu"></div>

@@ -148,3 +148,16 @@ The **Log** tab shows Ghidra's progress line by line, which is why that log is
 not behind a flag: without it, a slow start looks the same as a stuck one.
 
 If it never finishes, the log will say why in Ghidra's own words.
+
+## Which version am I running?
+
+Click **?** in the toolbar.
+
+![The About box](images/about.png)
+
+The box reports the gdb-wui build and the gdb behind it. Both are worth quoting
+in a bug report, because most of what gdb-wui shows comes from gdb and its
+answers differ between versions.
+
+The version comes from the server rather than the page, so a browser tab left
+open across a restart reports the server it is actually talking to.
