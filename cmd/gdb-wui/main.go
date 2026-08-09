@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/retrocpugeek/gdb-wui/internal/assets"
+	"github.com/retrocpugeek/gdb-wui/internal/config"
 	"github.com/retrocpugeek/gdb-wui/internal/debugger"
 	"github.com/retrocpugeek/gdb-wui/internal/ghidra"
 	"github.com/retrocpugeek/gdb-wui/internal/httpapi"
@@ -52,6 +53,11 @@ type options struct {
 	miLog    bool
 	printURL bool
 	idleExit time.Duration
+
+	// Where the settings came from. Not settable in a config file: a file that
+	// chose which file to read would be its own puzzle.
+	configPath string
+	noConfig   bool
 
 	// Decompilation. Optional throughout: Ghidra is a large dependency and
 	// most sessions never want one.
@@ -84,8 +90,27 @@ func main() {
 	flag.StringVar(&opt.decompDir, "decomp-dir", "", "where to cache Ghidra projects gdb-wui creates (default <project>/gdb-wui-decomp)")
 	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
 		"exit after this long with no browser connected (0 disables)")
+	flag.StringVar(&opt.configPath, "config", "",
+		"read settings from this file instead of searching for one")
+	flag.BoolVar(&opt.noConfig, "no-config", false,
+		"ignore any config file")
 	flag.Usage = usage
 	flag.Parse()
+
+	// After Parse, so that a flag given on the command line wins: config.Load
+	// asks the flag set which flags were actually set and leaves those alone.
+	//
+	// The file that was used is logged unconditionally rather than under -v.
+	// The support cost of config files is not knowing which one is in effect,
+	// and one line at startup answers it — including when the file chose a
+	// different gdb than the reader expects.
+	used, err := config.Load(flag.CommandLine, opt.configPath, opt.noConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if used != "" {
+		log.Printf("config: %s", used)
+	}
 
 	if opt.showVersion {
 		fmt.Println("gdb-wui", version)

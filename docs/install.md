@@ -87,4 +87,5 @@ To get a new link without disturbing your session, run:
 ./gdb-wui -print-url
 ```
 
-All arguments are listed on the [flags page](reference/flags.md).
+All arguments are listed on the [flags page](reference/flags.md). To avoid
+retyping the same ones, put them in a [config file](reference/config.md).

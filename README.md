@@ -15,6 +15,10 @@ gdb-wui prints a URL and opens a browser at it. To start debugging, pick an
 executable from the file tree, click a line number to set a breakpoint, and
 step.
 
+Arguments you use every time can go in a `gdb-wui.json` in the working
+directory or in `~/.config/gdb-wui/`; see
+[the config file page](https://retrocpugeek.github.io/gdb-wui/reference/config.html).
+
 [![The whole window, stopped at a breakpoint](docs/images/overview.png)](https://retrocpugeek.github.io/gdb-wui/)
 
 > ## ⚠ gdb-wui runs your programs with your privileges

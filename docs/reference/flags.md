@@ -7,7 +7,9 @@ nav_order: 1
 
 # Command-line flags
 
-`./gdb-wui -h` prints the same list.
+`./gdb-wui -h` prints the same list. Any of these except the four in
+[Choosing settings](#choosing-settings) can also be set in a
+[config file](config.md), using the flag's name without the dash.
 
 ## What to serve, and what to debug
 
@@ -44,6 +46,16 @@ These are all optional, and do nothing without Ghidra. See
 > `-decomp-dir` must not contain a path element beginning with a dot, because
 > Ghidra rejects those. See
 > [Troubleshooting](../troubleshooting.md#path-element-starting-with--is-not-permitted).
+
+## Choosing settings
+
+| Flag | What it does |
+|---|---|
+| `-config PATH` | Read settings from this file instead of searching for one. Fails if it does not exist. |
+| `-no-config` | Ignore any [config file](config.md). |
+
+`-version` and `-print-url` are also excluded from a config file, because they
+are actions rather than settings.
 
 ## Diagnostics
 
