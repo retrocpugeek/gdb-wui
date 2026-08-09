@@ -89,7 +89,13 @@ const (
 
 // Var is one local or parameter.
 type Var struct {
-	Name  string `json:"name"`
+	Name string `json:"name"`
+	// ID addresses this variable for an edit. A string rather than a number
+	// because a decompiler-only symbol's id is around 4.6e18, which does not
+	// survive a round trip through a JavaScript number; nothing does arithmetic
+	// on it. Empty from a sidecar written before edits existed, which is why
+	// the name is also a key. See Edit.
+	ID    string `json:"id"`
 	Type  string `json:"type"`
 	Size  int    `json:"size"`
 	Param bool   `json:"param"`
@@ -144,6 +150,57 @@ type FunctionName struct {
 // NameList is the reply to Names.
 type NameList struct {
 	Names []FunctionName `json:"names"`
+}
+
+// Edit kinds. What a user points at decides which Ghidra API can change it,
+// and the three are not interchangeable.
+const (
+	// EditFunction is the function itself: its name, or its whole prototype.
+	EditFunction = "function"
+	// EditVariable is a local or a parameter, addressed by Var.ID.
+	EditVariable = "variable"
+	// EditGlobal is a module-scope symbol, addressed by its address — which,
+	// unlike a symbol id, nothing renumbers.
+	EditGlobal = "global"
+)
+
+// Edit is one change to the decompiler's own database.
+//
+// Function is always set, even for a global: it is the function to decompile
+// again for the reply, which is what the caller is looking at.
+type Edit struct {
+	// Kind is one of the Edit* constants.
+	Kind string
+	// Function is the entry address of the function on screen, in Ghidra's
+	// coordinates.
+	Function string
+	// Symbol is Var.ID. Optional: an edit renumbers the ids of the symbols it
+	// did not touch, so a caller's id is routinely one edit stale and Name is
+	// the fallback.
+	Symbol string
+	// Name is the symbol's current name, both as a fallback key and so a
+	// mismatch can be reported instead of guessed at.
+	Name string
+	// Address locates an EditGlobal, in Ghidra's coordinates.
+	Address string
+	// Value is the new name for a rename, or the new type — a whole C
+	// prototype for EditFunction — for a retype.
+	Value string
+}
+
+// EditResult is what one edit produced.
+type EditResult struct {
+	// Function is the whole function decompiled again, not an acknowledgement.
+	Function *Function
+	// Warning is set when the edit succeeded and the user still has to be told
+	// something — a name that is now ambiguous, an edit that could not be
+	// saved. Neither is a reason to report failure.
+	Warning string
+	// Was is the value before the edit: the old name, or the old type, or the
+	// old prototype. Now is the name the symbol answers to afterwards, which a
+	// retype of a function changes. Between them, the inverse edit.
+	Was string
+	Now string
 }
 
 // FunctionList is the reply to Functions.

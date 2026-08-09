@@ -542,6 +542,12 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.decompFunction(r)
 	case wire.TypeDecompNames:
 		return s.decompNames(r)
+	case wire.TypeDecompRename:
+		return s.decompRename(r)
+	case wire.TypeDecompRetype:
+		return s.decompRetype(r)
+	case wire.TypeDecompUndo:
+		return s.decompUndoLast(r)
 
 	case wire.TypePathSubstitute:
 		return s.pathSubstitute(r)
@@ -601,7 +607,11 @@ func (s *Session) gate(typ string) *wire.Error {
 		// Naming frames is a question about the program's code rather than
 		// about the process, and the panel that asks has already drawn the
 		// stack it wants to correct.
-		wire.TypeDecompNames:
+		wire.TypeDecompNames,
+		// Naming things in the decompiler's own database changes nothing about
+		// the inferior, and reading a running program's disassembly is exactly
+		// when someone works out what a function is called.
+		wire.TypeDecompRename, wire.TypeDecompRetype, wire.TypeDecompUndo:
 		return nil
 	}
 

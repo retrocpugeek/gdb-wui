@@ -53,9 +53,52 @@ Names appear when analysis finishes, so the stack changes under you the first
 time you stop in a binary Ghidra has not seen before. Nothing needs to be open
 for this: the Decompiled tab can stay shut, and passing `-ghidra` is the opt-in.
 
-Renaming a function in Ghidra and re-running gdb-wui shows your name here, which
-is what makes working through unfamiliar firmware get easier rather than
-staying equally hard.
+Renaming a function shows your name here, which is what makes working through
+unfamiliar firmware get easier rather than staying equally hard — and you can
+rename it from the stack row itself, without leaving gdb-wui.
+
+## Renaming what the decompiler guessed
+
+`FUN_00401154`, `local_10` and `undefined8` are not wrong: they are what can be
+known without a symbol table. But a reader holds a program in their head by its
+names, and a page of invented ones is the single biggest obstacle to reading
+recovered C.
+
+![A decompiler-invented name being replaced](../images/decomp-rename.png)
+
+Right-click a name in the Decompiled tab:
+
+- **Rename `local_10`…** — the local or the global under the pointer. A
+  decompiler temporary can be renamed too, even though it has no value to show.
+- **Set the type of `local_10`…** — any C type Ghidra can parse. Getting a type
+  right often reshapes the whole function body, which is the point.
+- **Rename the function…** and **Edit the prototype…** — the prototype covers
+  the return type, the parameters and the name in one go.
+
+Right-clicking a recovered frame in the call stack offers the same rename, which
+is usually where an unhelpful name is first met.
+
+Type the new name and press Enter. `Ctrl+Shift+Z` undoes the last edit.
+
+The names go into the Ghidra project, not into anything gdb-wui invented, so
+everything that asks the decompiler gets the new answer at once — the pane, the
+call stack, the symbol list, and any other browser tab open on the same session.
+They are saved immediately and are there the next time you debug that binary.
+
+![The renamed function in the call stack](../images/decomp-rename-stack.png)
+
+That is the same stack as the one above, after the rename: `#1` was
+`FUN_00401154+0x4c()`.
+
+A renamed function still shows as *recovered* in the call stack. A name you
+typed is no more a symbol than `FUN_00401154` was; presenting it as one would be
+the same claim in better handwriting.
+
+The project is keyed on the binary's SHA-256, so **a rebuilt binary starts
+again** with a fresh analysis and none of your names. That is deliberate —
+reading one build's names against another build's addresses is a confidently
+wrong answer — but it does mean the naming is worth doing on a binary you are
+going to keep.
 
 ## Stepping in the decompiled view
 
@@ -111,9 +154,10 @@ the program within it:
   -ghidra-program firmware
 ```
 
-The project is opened read-only, so your names and types are used but nothing is
-written back. `-ghidra-program` is required, because a Ghidra project usually
-holds several programs.
+Your names and types are used and **nothing is written back**: renaming is
+disabled for a project you named, and the menu items say so. gdb-wui only edits
+the project it imported itself. `-ghidra-program` is required, because a Ghidra
+project usually holds several programs.
 
 ## Worked example
 
@@ -133,7 +177,10 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
 
 ## What decompilation does not do
 
-- **It does not edit Ghidra's names or types.** Rename in Ghidra and reload.
+- **It does not edit a project you named.** `-ghidra-project` is read-only:
+  renaming works only in the project gdb-wui imports for itself.
+- **It does not edit struct fields.** Names, variable types and function
+  prototypes, but not the members of a type.
 - **It does not name anything but the call stack.** The Threads pane shows a
   frame per thread and leaves gdb's `??` on it.
 - **It does not name a frame outside the program.** libc and the dynamic loader

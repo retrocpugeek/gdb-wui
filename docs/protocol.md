@@ -117,6 +117,9 @@ Everything below needs a debugger session except the `session.*` group; with
 | `decomp.status` | `{}` | [`DecompStatus`](#decompilation) | Answered even with no program loaded: it is how a client learns the feature exists. |
 | `decomp.function` | `{target?, thread?, frame?, stopSeq?}` | [`DecompFunction`](#decompilation) | `target` is a name or any address inside a function; empty follows the selected frame. |
 | `decomp.names` | `{addresses, stopSeq?}` | `{names, state}` | Which function each address falls in, without decompiling. Capped at 128. An empty list is an ordinary answer. |
+| `decomp.rename` | `{kind, function, symbol?, name?, address?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A new name for a function, a local or a global. Refused for a project the user named. |
+| `decomp.retype` | `{kind, function, symbol?, name?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A C type for a local, or a whole prototype for a function. |
+| `decomp.undo` | `{stopSeq?}` | [`DecompEdit`](#decompilation) | Reverses the last edit of this session. "nothing to undo" is an error. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is usually blocked in a gdb round-trip when a user presses
@@ -178,6 +181,7 @@ anything. Requesting one now returns `unsupported`.
 | `remoteChanged` | A remote target was connected or disconnected. | `{connected, address?}` |
 | `decompChanged` | The decompiler started, died, or now holds a different program. | `{}` |
 | `decompLog` | One line of decompiler activity, for the log pane. | `{text, level?, millis?}` |
+| `decompEdited` | A name or a type in the decompiler's database changed. Refetch whatever shows one. | `{}` |
 | `mi` | Raw MI traffic, only with `-mi-log`. | `{direction, text}` |
 | `gdbDead` | The gdb process exited unexpectedly. | `{reason, stderr}` |
 | `error` | An asynchronous failure with no request to attach it to. | [`Error`](#errors) |
@@ -637,6 +641,7 @@ linked and nothing is vendored. The feature is optional. With no `-ghidra` and n
 { "state": "ready",
   "ghidraVersion": "12.1.2",
   "functionCount": 1415,
+  "editable": true,
   "program": { "name": "vwfw-linux_64.symbols", "sha256": "27763cc2…",
                "languageId": "MIPS:BE:64:default", "imageBase": "0x120000000",
                "pointerSize": 8 } }
@@ -645,6 +650,9 @@ linked and nothing is vendored. The feature is optional. With no `-ghidra` and n
 `state` is `off`, `starting`, `ready` or `failed`. Clients do observe `starting`:
 opening an existing project takes seconds, and importing and analysing a binary
 takes minutes.
+
+`editable` says whether `decomp.rename` and `decomp.retype` will be answered. It
+is false for a project named with `-ghidra-project`.
 
 `mismatch` is set when the decompiler's program is not the binary gdb loaded,
 compared by sha256. This is a warning rather than a refusal, because a stripped
@@ -659,8 +667,8 @@ build while debugging another produces answers that look right.
   "text": "void process_packet(…)\n{\n…",
   "lines": [ {"n": 26, "addrs": ["0x1200068d5"]},
              {"n": 28, "addrs": ["0x1200068e2", "0x1200068e5"]} ],
-  "vars":  [ {"name": "local_70", "type": "undefined1 *", "storage": "stack",
-              "expr": "*(undefined1 * *)($sp + 0xf0)"} ],
+  "vars":  [ {"name": "local_70", "id": "57", "type": "undefined1 *",
+              "storage": "stack", "expr": "*(undefined1 * *)($sp + 0xf0)"} ],
   "bias": 0, "biasFrom": "main", "pcLine": 28 }
 ```
 
@@ -728,6 +736,53 @@ there is accurate but makes the marker disappear mid-step, so the nearest
 preceding line is used instead and flagged `pcLineApprox`. A client should draw
 that differently, because "the program is here" and "the program is somewhere
 after here" are different claims.
+
+`decomp.rename` and `decomp.retype` change the decompiler's own database. Both
+take the same payload and differ only in what `value` means:
+
+```json
+{ "kind": "variable", "function": "0x5555555551a0",
+  "symbol": "4611715705241337865", "name": "local_10", "value": "packet_len" }
+```
+
+`kind` is `function`, `variable` or `global`. `function` is the entry address of
+the function on screen, in runtime coordinates like everything else on the wire;
+`address` locates a global the same way. `symbol` is `DecompVar.id`, and it is a
+string because a decompiler-only symbol's id is around 4.6e18 and a JavaScript
+number cannot hold one exactly.
+
+Both reply with the whole function decompiled again:
+
+```json
+{ "function": { "name": "emit_report", … },
+  "did": "renamed local_10 to packet_len", "canUndo": true }
+```
+
+That is not politeness. An edit renumbers the ids of the symbols it did not
+touch, and a retype reshapes the body around it, so a client that patched its
+own copy would be holding keys that address nothing. `did` describes the change
+for a status line; `warning` is set when the edit succeeded and the user still
+has to be told something — a name that is now ambiguous, since Ghidra accepts
+two functions with one name without complaint, or an edit that could not be
+saved.
+
+`symbol` is matched first and `name` second, and an edit that matches neither is
+**refused** rather than applied to whatever now holds that id: renaming the
+wrong variable is worse than renaming nothing.
+
+Editing is refused entirely for a project named with `-ghidra-project`. That one
+holds the user's own names, types and comments, and gdb-wui writes only to the
+project it imported for itself. `decomp.status` reports `editable` so a client
+can say so before the attempt.
+
+`decomp.undo` reverses the last edit. It is gdb-wui's own journal of inverse
+edits rather than Ghidra's undo, because saving clears Ghidra's undo stack and
+every edit is saved — an unsaved rename lives only inside the sidecar process.
+
+A `decompEdited` event is broadcast on every successful edit. One server serves
+however many browser tabs are open on it, and they all show the old name until
+told; changing a prototype also changes how every *caller* decompiles, so the
+event means "refetch what you are showing" rather than "patch this function".
 
 `decompLog` is not behind a flag, unlike the raw MI stream, because its volume
 is one line per operation — start, import, ready, and one per decompile.

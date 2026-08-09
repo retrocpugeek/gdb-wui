@@ -240,3 +240,80 @@ implementing:
     wrong. And a line past the end of the file is `^done` with a console
     warning rather than an error, so "no address found" has to be an ordinary
     outcome rather than a failure.
+31. **A resident Ghidra script cannot save until it hands back the
+    framework's transaction.** `analyzeHeadless` opens a transaction named
+    after the script and holds it for the whole run, so every save inside one
+    fails with `IOException: Unable to lock due to active transaction`. For an
+    ordinary script that never matters — the framework commits when it returns
+    — but the decompilation sidecar never returns, so nothing it changed could
+    ever reach the disk.
+
+    `FlatProgramAPI.end(true)` releases it and `start()` opens another. The
+    sidecar calls `end(true)` before its serve loop and `start()` on the way
+    out, and only then does `Program.save` succeed. Measured at 6 ms for a
+    small program; the edit itself is 4–6 ms.
+
+32. **`-readOnly` does not protect a Ghidra project.** Under it,
+    `DomainFile.isReadOnly()` is still false, a script can rename a function,
+    and `save` succeeds — the new name is there on the next open. The flag only
+    stops `analyzeHeadless` itself saving when a script finishes.
+
+    So the comment that used to sit on the spawn arguments — "gdb-wui reads it
+    and must never write to it" — described an intention with no mechanism
+    behind it. What protects a project the user named with `-ghidra-project` is
+    that gdb-wui does not pass `writable` to the sidecar and the sidecar
+    refuses every edit without it.
+
+33. **Saving a program clears Ghidra's undo stack.** `canUndo` is true after a
+    committed transaction, with `getUndoName` reporting the transaction's own
+    description, and false immediately after `Program.save`. Since an unsaved
+    rename lives only inside the sidecar process, saving per edit is not
+    optional — so Ghidra's undo cannot be the undo a user sees. gdb-wui keeps a
+    journal of inverse edits instead, which also survives a restart of the
+    decompiler.
+
+34. **A `HighSymbol` id is stable until the function is edited, and then
+    everything in it renumbers.** Two consecutive decompilations of an
+    unchanged function give identical ids. After renaming one symbol, an
+    untouched neighbour moved from `4611734396939010063` to `…051`.
+
+    Two consequences. An edit has to answer with the whole function decompiled
+    again, because every id the client is holding has just gone stale; and a
+    stale id must be *refused* rather than applied to whatever now holds it,
+    since renaming the wrong variable is worse than renaming nothing. The
+    symbol's name is the fallback key, and it is the one that survives.
+
+    Ids are also large — a decompiler-only symbol's is around 4.6e18 — so they
+    cross the wire as strings. A JavaScript number cannot hold one exactly.
+
+35. **Ghidra accepts two functions with the same name.** `Function.setName` to
+    a name already in use throws nothing; the program ends up with two symbols
+    answering to it. Nothing may therefore look a function up by name — the
+    address is the key — and a UI that renames one is the only thing in a
+    position to mention that the name is now ambiguous.
+    `SymbolTable.getGlobalSymbols(name)` is the check.
+
+36. **`CParserUtils.parseSignature` answers a bad prototype with null**, even
+    through the overload that declares `ParseException`. `wibble *wobble(qux)`
+    parses to `null` rather than throwing, so an unchecked caller reports
+    success and changes nothing — the one outcome worse than failing.
+
+    Applying a signature is also *not* a rename by default:
+    `ApplyFunctionSignatureCmd` uses `RENAME_IF_DEFAULT`, which applies the
+    types and quietly drops the name unless the function is still called
+    `FUN_something`. gdb-wui passes `RENAME`, because the user typed a whole
+    prototype and obeying half of it is worse than refusing it.
+
+37. **`DataTypeParser` rejects an unknown type properly**, unlike the prototype
+    parser above: `struct not_a_type_at_all` raises
+    `InvalidDataTypeException: Unrecognized data type of "struct
+    not_a_type_at_all"`. That message is the most informative thing available
+    and is passed through to the user unchanged.
+
+38. **`HighFunctionDBUtil.updateDBVariable` creates the database variable a
+    decompiler local does not have.** Ghidra's local symbol map mixes symbols
+    that exist in the program database with ones the decompiler invented for
+    this decompilation — `getSymbol()` is null for the second kind — and only
+    this call can rename or retype either. It is what turns the second kind
+    into the first: after renaming one, it came back with a small database id
+    like the rest.

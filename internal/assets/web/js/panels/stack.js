@@ -122,6 +122,13 @@ export function createStack({ element, onSelect }) {
       }
       render();
     },
+    // recoveredAt is the decompiler's answer for one frame, for a caller
+    // offering to correct it. Null for a frame gdb named itself: that name
+    // came from a symbol table and is not the decompiler's to change.
+    recoveredAt(level) {
+      const frame = frames.find((f) => f.level === level);
+      return frame ? nameFor(frame) : null;
+    },
     select(level) {
       selected = level;
       render();

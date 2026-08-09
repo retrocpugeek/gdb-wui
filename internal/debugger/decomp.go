@@ -85,6 +85,20 @@ type decomp struct {
 	client *ghidra.Client
 	// starting guards against a second start while one is in flight.
 	starting bool
+	// writable is true only for a project gdb-wui imported itself, and it is
+	// what permits decomp.rename and decomp.retype. A project the user pointed
+	// at with -ghidra-project holds their own names, types and comments, and is
+	// never written to.
+	//
+	// Read on the actor and written by the start goroutine, so it lives under
+	// the same lock as the client it describes.
+	writable bool
+	// journal is the inverse of every edit made this session, most recent last,
+	// which is how undo works. Ghidra's own undo cannot be used: saving clears
+	// it (finding 33) and every edit is saved.
+	//
+	// Actor-only. Unlike the fields above, nothing off the actor touches it.
+	journal []decompUndo
 	// closed means the session is shutting down. A start already in flight
 	// will finish and hand back a live process afterwards; without this it
 	// would assign it to a client nobody is left to close, orphaning a JVM.
@@ -120,6 +134,7 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 
 	s.decomp.mu.Lock()
 	state, errText, client := s.decomp.state, s.decomp.err, s.decomp.client
+	writable := s.decomp.writable
 	s.decomp.mu.Unlock()
 
 	if state == "" {
@@ -129,6 +144,7 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 		State:         state,
 		Error:         errText,
 		GhidraVersion: cfg.Install.Version,
+		Editable:      writable,
 	}
 	if client == nil {
 		return out, nil
@@ -167,7 +183,12 @@ func (s *Session) maybeStartDecomp() {
 	// With no configured project, decompile whatever gdb has loaded. Resolved
 	// here rather than at startup because the executable is usually chosen
 	// after the session begins.
+	//
+	// This branch is also the only one that may be edited: the project below is
+	// one gdb-wui imported and owns, keyed on the binary's hash. A project the
+	// user named is theirs.
 	var importPath string
+	writable := cfg.ProjectDir == ""
 	if cfg.ProjectDir == "" {
 		if s.st.exePath == "" || s.st.exeSHA256 == "" || s.files == nil {
 			return
@@ -248,6 +269,7 @@ func (s *Session) maybeStartDecomp() {
 			ProjectDir:  cfg.ProjectDir,
 			ProjectName: cfg.ProjectName,
 			Program:     cfg.Program,
+			Writable:    writable,
 			Timeout:     decompStartTimeout,
 			Logf:        s.ghidraProcessLog,
 		})
@@ -266,6 +288,7 @@ func (s *Session) maybeStartDecomp() {
 			s.decomp.state = wire.DecompReady
 			s.decomp.err = ""
 			s.decomp.client = client
+			s.decomp.writable = writable
 		}
 		s.decomp.mu.Unlock()
 
@@ -440,6 +463,7 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 	for _, v := range fn.Variables {
 		out.Vars = append(out.Vars, wire.DecompVar{
 			Name:    v.Name,
+			ID:      v.ID,
 			Type:    v.Type,
 			Param:   v.Param,
 			Storage: storageKind(v.Storage.Kind),
@@ -459,6 +483,7 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 			Storage: wire.DecompStorageGlobal,
 			Expr:    fmt.Sprintf("*(%s *)%s", gdbCType(g.Type, g.Size), addr),
 			PC:      "",
+			Addr:    addr,
 		})
 	}
 	return out
