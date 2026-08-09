@@ -528,6 +528,9 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 	case wire.TypeMemWrite:
 		return s.memWrite(r)
 
+	case wire.TypeGotoLocate:
+		return s.gotoLocate(r)
+
 	case wire.TypeSymbolsList:
 		return s.symbolsList(r)
 	case wire.TypeSymbolsLoad:
@@ -629,7 +632,11 @@ func (s *Session) gate(typ string) *wire.Error {
 			return wire.NewError(wire.CodeNotReady, "no program is loaded")
 		}
 	case wire.TypeBpSetSource, wire.TypeBpSetAddress,
-		wire.TypeBpDelete, wire.TypeBpSetEnabled:
+		wire.TypeBpDelete, wire.TypeBpSetEnabled,
+		// Locating a name needs symbols, not a running process: opening the
+		// source at a function is a reasonable first thing to do, before
+		// deciding where to put a breakpoint.
+		wire.TypeGotoLocate:
 		if s.st.exePath == "" {
 			return wire.NewError(wire.CodeNotReady, "no program is loaded")
 		}

@@ -24,10 +24,14 @@ To change a byte, double-click it. See [changing values](editing.md).
 
 ## Entering an address
 
-The address box takes an expression, not only a number: `&head`, `$sp`,
-`cfg->items` and `0x404040` all work, as does anything else gdb can evaluate to
-an address. The bar beside the box shows what your expression resolved to, so a
-mistake is visible.
+The go-to box at the right of the tab strip takes an expression, not only a
+number: `&head`, `$sp`, `cfg->items` and `0x404040` all work, as does anything
+else gdb can evaluate to an address. The slot header shows what your expression
+resolved to, so a mistake is visible. `Ctrl+Shift+G` puts the cursor in the box.
+
+The box acts on whichever view is focused, so it reads memory when the memory
+view is the one you are looking at. See
+[going somewhere](source.md#going-somewhere).
 
 You can also reach the memory viewer without typing an address:
 [hover a variable](variables.md), right-click it, and choose **Show where it is

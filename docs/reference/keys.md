@@ -19,6 +19,7 @@ nav_order: 2
 | `Shift+F11` | Step out |
 | `Alt+F10` | Step over one instruction |
 | `Alt+F11` | Step one instruction |
+| `Ctrl+Shift+G` | Go to a symbol, address or line in the focused view |
 | `F7` | Split the centre view, or unsplit it |
 | `Shift+F7` | Switch between side by side and stacked |
 | `Escape` | Close a context menu, or the About box |

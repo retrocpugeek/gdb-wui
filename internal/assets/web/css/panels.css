@@ -625,6 +625,16 @@
 
 .addr-input::placeholder { color: var(--fg-2); }
 
+/* Wider than a bare address bar: the placeholder is the only thing that says
+ * what the box takes, and a clipped hint teaches nothing. Below .addr-input
+ * rather than above it — the two have equal specificity, so source order is
+ * what decides whose min-width applies, and above it this rule lost. */
+.goto-input {
+  flex: 0 0 auto;
+  width: 32ch;
+  min-width: 24ch;
+}
+
 /* --- locate-source bar ---------------------------------------------------- */
 
 /* Shown when a frame's source could not be resolved. It is an offer, not an

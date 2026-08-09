@@ -166,6 +166,8 @@ var RequestTypes = []string{
 	TypeMemSymbols,
 	TypeMemWrite,
 
+	TypeGotoLocate,
+
 	TypePathSubstitute,
 	TypePathAddDir,
 	TypePathList,

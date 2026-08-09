@@ -60,7 +60,7 @@ const ui = {
   disasm: el("disasm"),
   decomp: el("decomp"),
   memory: el("memory"),
-  memAddr: el("mem-addr"),
+  goto: el("goto"),
   ctxmenu: el("ctxmenu"),
   hovertip: el("hovertip"),
   about: el("about"),
@@ -347,8 +347,7 @@ function showAtAddress(addr, label) {
     .then((res) => {
       showCenter("memory");
       memory.show(res.addr, { expr: label, seq: store.get("session.stopSeq") });
-      ui.memAddr.value = "0x" + res.addr.toString(16);
-      ui.sourceMeta.textContent = memory.summary();
+      updateCenterMeta();
       setStatus(res.unreadable
         ? `0x${res.addr.toString(16)} is not readable — ${label} is not a valid pointer.`
         : `${label} — 0x${res.addr.toString(16)}`);
@@ -371,8 +370,7 @@ function showAddressOf(expr, label) {
     .then((res) => {
       showCenter("memory");
       memory.show(res.addr, { expr: label, seq: store.get("session.stopSeq") });
-      ui.memAddr.value = `&(${expr})`;
-      ui.sourceMeta.textContent = memory.summary();
+      updateCenterMeta();
       setStatus(res.unreadable
         ? `${label} is at 0x${res.addr.toString(16)}, which is not readable.`
         : `${label} — 0x${res.addr.toString(16)}`);
@@ -958,23 +956,190 @@ el("btn-run-entry").addEventListener("click", () => {
   showCenter("disasm");
 });
 
-// The address bar. Any gdb expression is accepted — "&cfg", "$sp", "buf+16" —
-// because that is what a user has in their head, not a hex number they would
-// have to look up first.
-ui.memAddr.addEventListener("keydown", (ev) => {
+// The go-to box.
+//
+// One box for four views, acting on the focused one. What a place *is* differs
+// per view — the source view wants a file and a line, the disassembly an
+// address — so the server resolves the target once and each view is given the
+// part of the answer it needs.
+//
+// Any gdb expression is accepted, because that is what a user has in their
+// head: "&cfg", "$sp", "buf+16", as well as "walk" and "globals.c:65".
+ui.goto.addEventListener("keydown", (ev) => {
   if (ev.key !== "Enter") return;
-  const expr = ui.memAddr.value.trim();
-  if (!expr) return;
-  send("mem.read", { address: expr, count: 16, stopSeq: store.get("session.stopSeq") })
-    .then((res) => {
-      if (res.unreadable) {
-        setStatus(`${expr} → 0x${res.addr.toString(16)} is not readable`);
-      }
-      memory.show(res.addr, { expr, seq: store.get("session.stopSeq") });
-      ui.sourceMeta.textContent = memory.summary();
-    })
-    .catch(reportError);
+  ev.preventDefault();
+  gotoTarget(ui.goto.value);
 });
+
+function gotoTarget(raw) {
+  const target = raw.trim();
+  if (!target) return;
+  const view = centre.focused();
+
+  // ":65" is a line in the file already on screen, and a plain FILE:LINE with
+  // the source view focused is a file and a line and nothing else. Both are
+  // answered here rather than by the server: they need no address, so they
+  // work before a program has been loaded at all.
+  const here = /^:(\d+)$/.exec(target);
+  if (here && view !== "source") {
+    // A bare line number is a line in the file on screen, and only one view
+    // has one. gdb would answer this with "No symbol \":65\"", which describes
+    // the wrong problem.
+    setStatus(`:${here[1]} is a line in a file, so it needs the source view.`, true);
+    return;
+  }
+  if (view === "source" && here) {
+    if (!source.path) {
+      setStatus(`No file is open, so there is no line ${here[1]} to go to.`, true);
+      return;
+    }
+    source.open(source.path, { line: Number(here[1]) })
+      .then(() => setStatus(`${source.path}:${here[1]}`))
+      .catch(reportError);
+    return;
+  }
+  const fileLine = /^(.*[^:]):(\d+)$/.exec(target);
+  if (view === "source" && fileLine) {
+    source.open(fileLine[1], { line: Number(fileLine[2]) })
+      .then(() => setStatus(`${fileLine[1]}:${fileLine[2]}`))
+      .catch(() => setStatus(`${fileLine[1]} is not a file in this project.`, true));
+    return;
+  }
+
+  send("goto.locate", {
+    target,
+    thread: store.get("selection.thread"),
+    frame: store.get("selection.frame"),
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((loc) => goToLocation(view, loc))
+    .catch((err) => setStatus(err?.message ?? String(err), true));
+}
+
+// goToLocation sends a resolved place to the view that asked for it.
+//
+// The focused view is honoured rather than second-guessed: a target it cannot
+// show says so and changes nothing, because silently switching views would
+// take the reader away from what they were reading. What was typed stays in
+// the box, so focusing another view and pressing Enter again is the fix.
+function goToLocation(view, loc) {
+  switch (view) {
+    case "source": {
+      if (loc.source?.available) {
+        source.open(loc.source.path, { line: loc.source.line })
+          .then(() => setStatus(describeLocation(loc)))
+          .catch(reportError);
+        return;
+      }
+      // A path gdb knows but this machine does not: offer the local files that
+      // share its basename, which is the same bar a stop with unresolved
+      // source puts up.
+      if (loc.source?.candidates?.length) {
+        showLocate(loc.source);
+        return;
+      }
+      setStatus(loc.address
+        ? `${loc.target} has no source line. The disassembly and the memory `
+          + `view can both show ${loc.address}.`
+        : `${loc.target} has no source line.`, true);
+      return;
+    }
+    case "disasm":
+      if (!hasCode(loc)) return;
+      // The pin holds what to re-fetch if the tab switch triggers one. An
+      // address is safe here where one from the symbol pane would not be: this
+      // one came from gdb a moment ago and is therefore the *runtime* address,
+      // and the pin is dropped at the next stop anyway.
+      disasmPin = gotoSpec(loc);
+      disasmPinExplicit = true;
+      fetchPinned().then((ok) => {
+        if (ok) setStatus(describeLocation(loc));
+      });
+      return;
+    case "decomp":
+      if (!hasCode(loc)) return;
+      showDecompAt(loc);
+      return;
+    case "memory":
+      showMemoryAt(loc);
+      return;
+  }
+}
+
+// gotoSpec is what to hand a view that wants an address.
+//
+// The resolved address where there is one, because the views that are not the
+// source view cannot take "globals.c:65" and gdb has already done the work.
+function gotoSpec(loc) {
+  return loc.address || loc.target;
+}
+
+// hasCode reports whether there is anything for an instruction-level view to
+// show, and says so when there is not. A line that generated no code is a real
+// place with no address, and the alternative is passing "globals.c:65" to gdb
+// and surfacing its parse error, which describes the wrong problem.
+function hasCode(loc) {
+  if (loc.address) return true;
+  setStatus(`${loc.target} generated no code, so there are no instructions `
+    + "to show. The source view can go there.", true);
+  return false;
+}
+
+// GOTO_HINT is the placeholder per focused view. Each says what that view
+// will do, because "0x401136" means a line to one of them and a byte to
+// another.
+const GOTO_HINT = {
+  source: "go to  walk · file.c:65",
+  disasm: "go to  walk · 0x401136",
+  decomp: "go to  walk · 0x401136",
+  memory: "go to  &head · 0x404040",
+};
+
+function describeLocation(loc) {
+  const parts = [loc.target];
+  const where = [];
+  if (loc.func && loc.func !== loc.target) where.push(loc.func);
+  if (loc.source?.path) where.push(`${loc.source.path}:${loc.source.line}`);
+  if (loc.address) where.push(loc.address);
+  if (where.length) parts.push(where.join(" · "));
+  return parts.join(" — ");
+}
+
+function showDecompAt(loc) {
+  send("decomp.function", {
+    target: gotoSpec(loc),
+    thread: store.get("selection.thread"),
+    frame: store.get("selection.frame"),
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((out) => {
+      decomp.set(out);
+      decomp.setBreakpoints(breakpoints.all());
+      updateCenterMeta();
+      setStatus(describeLocation(loc));
+    })
+    .catch((err) => {
+      decomp.message(decompMessage(err), "src-empty");
+      updateCenterMeta();
+      setStatus(err?.message ?? String(err), true);
+    });
+}
+
+function showMemoryAt(loc) {
+  send("mem.read", {
+    address: gotoSpec(loc),
+    count: 16,
+    stopSeq: store.get("session.stopSeq"),
+  })
+    .then((res) => {
+      memory.show(res.addr, { expr: loc.target, seq: store.get("session.stopSeq") });
+      updateCenterMeta();
+      setStatus(res.unreadable
+        ? `${loc.target} → 0x${res.addr.toString(16)} is not readable`
+        : describeLocation(loc));
+    })
+    .catch((err) => setStatus(err?.message ?? String(err), true));
+}
 
 // stepOver and stepInto choose their granularity from what is actually on
 // screen.
@@ -1431,6 +1596,13 @@ createKeymap({
     "Alt+F10": () => exec("exec.nexti"),
     F7: () => centre.toggleSplit(),
     "Shift+F7": () => centre.toggleOrientation(),
+    // Ctrl+Shift, because that and the function keys are the only chords the
+    // keymap takes out of a terminal, and the console is where the focus
+    // often is when you decide to go somewhere.
+    "Ctrl+Shift+G": () => {
+      ui.goto.focus();
+      ui.goto.select();
+    },
   },
 });
 
@@ -1641,8 +1813,7 @@ function jumpToSymbol(sym) {
     })
       .then((res) => {
         memory.show(res.addr, { expr: sym.name, seq: store.get("session.stopSeq") });
-        ui.memAddr.value = expr;
-        ui.sourceMeta.textContent = memory.summary();
+        updateCenterMeta();
         setStatus(res.unreadable
           ? `${sym.name} is at 0x${res.addr.toString(16)}, which is not readable.`
           : `${sym.name} — 0x${res.addr.toString(16)}`);
@@ -1754,7 +1925,9 @@ function onCentreChange({ visible, split }) {
   el("split-center-x").classList.toggle("is-hidden", split !== "x");
   el("split-center-y").classList.toggle("is-hidden", split !== "y");
 
-  ui.memAddr.classList.toggle("is-hidden", !centre.isVisible("memory"));
+  // The placeholder names what the focused view will do with what you type.
+  // Same box, four destinations, and no way to tell them apart otherwise.
+  ui.goto.placeholder = GOTO_HINT[focusedName] ?? GOTO_HINT.source;
   if (!centre.isVisible("source")) {
     // Somewhere harmless to write while the source view is off screen.
     // Without it, a file loading in the background would put its name in a
@@ -1769,7 +1942,9 @@ function onCentreChange({ visible, split }) {
     refreshDecomp(frame?.address);
   }
   updateCenterMeta();
-  if (focusedName === "memory") ui.memAddr.focus();
+  // The memory view is the only one that shows nothing at all until it is
+  // told where to look, so it is the only one worth taking focus for.
+  if (focusedName === "memory") ui.goto.focus();
 }
 
 // The bottom pane's tabs. xterm cannot measure a hidden element, so a terminal
