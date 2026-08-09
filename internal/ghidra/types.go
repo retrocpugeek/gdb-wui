@@ -45,6 +45,41 @@ type Function struct {
 	LineCount int      `json:"lineCount"`
 	Text      string   `json:"text"`
 	Lines     []Line   `json:"lines"`
+	// CommentLines are the lines of Text that are wholly comment, with the
+	// address each annotates. Taken from the markup rather than from the text:
+	// a decompiled `puts("/* x */")` defeats any prefix test, and a long
+	// comment is wrapped across lines of which only the first would match one.
+	CommentLines []CommentLine `json:"commentLines,omitempty"`
+	// Comments are the comments stored against this function, as typed. Not
+	// the same thing as CommentLines: those say where the decorated, wrapped
+	// rendering ended up, and this is the text an editor has to be given.
+	Comments []Comment `json:"comments,omitempty"`
+}
+
+// Comment kinds. Two, because the decompiler displays two.
+const (
+	// CommentPre is printed above the statement generated from its address.
+	CommentPre = "pre"
+	// CommentPlate is on the entry point and is printed as the function's
+	// header comment.
+	CommentPlate = "plate"
+)
+
+// CommentLine is one rendered line that is wholly comment.
+type CommentLine struct {
+	// N is 1-based into Text.
+	N int `json:"n"`
+	// Addr is the address the comment annotates, before any bias. Empty for a
+	// decompiler warning, which belongs to no address.
+	Addr string `json:"addr,omitempty"`
+}
+
+// Comment is one note stored in the program's listing.
+type Comment struct {
+	// Addr is Ghidra's link-time address, before any bias.
+	Addr string `json:"addr"`
+	Kind string `json:"kind"`
+	Text string `json:"text"`
 }
 
 // Line maps one line of Text to the addresses its tokens carry.
@@ -162,6 +197,9 @@ const (
 	// EditGlobal is a module-scope symbol, addressed by its address — which,
 	// unlike a symbol id, nothing renumbers.
 	EditGlobal = "global"
+	// EditLine is one line of the recovered C, addressed by the address it was
+	// generated from. Only Comment takes it: a line has no name and no type.
+	EditLine = "line"
 )
 
 // Edit is one change to the decompiler's own database.
@@ -183,8 +221,9 @@ type Edit struct {
 	Name string
 	// Address locates an EditGlobal, in Ghidra's coordinates.
 	Address string
-	// Value is the new name for a rename, or the new type — a whole C
-	// prototype for EditFunction — for a retype.
+	// Value is the new name for a rename, the new type — a whole C prototype
+	// for EditFunction — for a retype, or the text for a comment. Empty is a
+	// valid comment and means remove it; it is rejected for the other two.
 	Value string
 }
 

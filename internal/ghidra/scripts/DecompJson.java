@@ -17,7 +17,10 @@ import ghidra.app.decompiler.ClangToken;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.PrettyPrinter;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressIterator;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.StackFrame;
 import ghidra.program.model.listing.VariableStorage;
@@ -84,8 +87,110 @@ public class DecompJson {
 		b.append(",\"lineCount\":").append(lines.size());
 		b.append(",\"text\":").append(str(text.toString()));
 		b.append(",\"lines\":").append(lineMap(lines));
+		b.append(",\"commentLines\":").append(commentLines(lines));
+		b.append(",\"comments\":").append(comments(f));
 		b.append("}");
 		return b.toString();
+	}
+
+	// commentLines says which rendered lines are wholly comment, and which
+	// address each of them belongs to.
+	//
+	// Which, taken from the markup rather than from the text, because the text
+	// cannot be trusted to say: `puts("/* not a comment */")` decompiles to a
+	// line that any prefix test calls a comment, and a comment longer than the
+	// print width is wrapped across several lines of which only the first would
+	// match. A token either is a ClangCommentToken or it is not.
+	//
+	// The address, so that pointing at a comment is a way of editing it. A
+	// comment token carries the address of the statement it annotates — which
+	// is why lineMap above throws those addresses away, and why they are worth
+	// keeping here. A decompiler warning belongs to no address and reports
+	// none.
+	private static String commentLines(List<ClangLine> lines) {
+		StringBuilder b = new StringBuilder("[");
+		boolean first = true;
+		for (int i = 0; i < lines.size(); i++) {
+			boolean any = false;
+			boolean all = true;
+			Address at = null;
+			for (ClangToken tok : lines.get(i).getAllTokens()) {
+				// The indentation and the separators between comment tokens are
+				// syntax tokens holding nothing but spaces; a line of them is
+				// blank rather than commented.
+				if (tok.getText() == null || tok.getText().isBlank()) {
+					continue;
+				}
+				any = true;
+				if (!(tok instanceof ClangCommentToken)) {
+					all = false;
+					break;
+				}
+				Address a = tok.getMinAddress();
+				if (a != null && a.getAddressSpace().isMemorySpace()
+					&& (at == null || a.compareTo(at) < 0)) {
+					at = a;
+				}
+			}
+			if (!any || !all) {
+				continue;
+			}
+			if (!first) {
+				b.append(",");
+			}
+			first = false;
+			b.append("{\"n\":").append(i + 1);
+			if (at != null) {
+				b.append(",\"addr\":").append(str(hex(at)));
+			}
+			b.append("}");
+		}
+		return b.append("]").toString();
+	}
+
+	// comments is what is stored in the program, as opposed to how it was
+	// rendered above.
+	//
+	// Both are needed and they are different things. The rendering is wrapped
+	// to the print width and decorated with /* */, so reconstructing what
+	// someone typed from the lines they produced is guesswork; an editor has to
+	// be given the text itself. The listing is the only place it exists.
+	//
+	// PRE comments are the ones the decompiler prints in the body (its
+	// PLATE, POST and EOL display options are off by default), and the PLATE
+	// comment on the entry point is the one it prints as the function's header.
+	// Anything else stored against these addresses is deliberately not offered
+	// for editing here, because it would not appear in what the user is
+	// reading. Finding 39.
+	private static String comments(Function f) {
+		Listing listing = f.getProgram().getListing();
+		StringBuilder b = new StringBuilder("[");
+		boolean first = true;
+		String plate = listing.getComment(CommentType.PLATE, f.getEntryPoint());
+		if (plate != null) {
+			first = false;
+			b.append(comment(f.getEntryPoint(), "plate", plate));
+		}
+		AddressIterator it =
+			listing.getCommentAddressIterator(CommentType.PRE, f.getBody(), true);
+		while (it.hasNext()) {
+			Address a = it.next();
+			String text = listing.getComment(CommentType.PRE, a);
+			if (text == null) {
+				continue;
+			}
+			if (!first) {
+				b.append(",");
+			}
+			first = false;
+			b.append(comment(a, "pre", text));
+		}
+		return b.append("]").toString();
+	}
+
+	private static String comment(Address at, String kind, String text) {
+		return "{\"addr\":" + str(hex(at)) + ",\"kind\":" + str(kind) +
+			",\"text\":" + str(text) + "}";
 	}
 
 	// lineMap records, per line, every address its tokens carry — a set, not a

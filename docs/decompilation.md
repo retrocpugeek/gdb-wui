@@ -137,7 +137,10 @@ that also needs a system JDK 21 or later, and both have to remain optional.
         { "n": 10, "addrs": ["0x1011f9"] },
         { "n": 11, "addrs": ["0x10120c", "0x101212", "0x10121d", "0x101237"] },
         { "n": 12, "addrs": ["0x10123c", "0x101243"] }
-      ]
+      ],
+      "commentLines": [ { "n": 9, "addr": "0x1011f9" } ],
+      "comments": [ { "addr": "0x1011f9", "kind": "pre",
+                      "text": "cfg->count is a byte count, not an item count" } ]
     }
   ]
 }
@@ -174,6 +177,32 @@ stripped `for` loop:
 The loop's init, increment and test are at `0x117a`, `0x1190` and `0x1198`,
 with the body's `0x1188` and `0x118d` *between* them. A min/max range for line
 10 would swallow lines 11 and 12 whole.
+
+### `commentLines` and `comments`
+
+Two views of the same comments, and they are not interchangeable.
+
+`comments` is what is stored in the program's listing, as typed. Two kinds are
+exported, because two are what the decompiler displays with its default
+options: `pre`, printed above the statement its address generated, and `plate`
+on the entry point, printed as the function's header comment. A comment stored
+anywhere else would be an edit that appears to do nothing.
+
+`commentLines` is where those comments ended up in `text`: the lines that are
+wholly comment, with the address each annotates. It comes from the token markup
+rather than from the text, because the text cannot be trusted to say — a
+decompiled `puts("/* x */")` defeats any prefix test, and a comment longer than
+the print width is wrapped across several lines of which only the first would
+match. `addr` is absent on a decompiler warning, which belongs to no address.
+
+A comment line appears in `commentLines` and **not** in `lines`. A comment
+token carries the address of the statement it annotates rather than of code
+generated for it, so counting it in the line map would put the program counter
+on a comment.
+
+Both are needed by an editor: the rendering is wrapped and decorated, so what
+was typed cannot be recovered from it, and the stored text says nothing about
+where it appears on the page.
 
 ### `variables`
 

@@ -28,6 +28,12 @@ export function createDecomp({ element, onGutterClick }) {
   // addrsByLine and lineByAddr are the two directions the pane needs: one to
   // put a breakpoint on a line, the other to mark the line a pc is on.
   let addrsByLine = new Map();
+  // commentByLine is the other direction of the same idea, for the lines that
+  // are comment rather than code: they claim no addresses — the server leaves
+  // them out of the map so the program counter is never put on one — but they
+  // do belong to an address, and that is how pointing at a comment can edit it.
+  let commentByLine = new Map();
+  let comments = new Map();
   let vars = new Map();
   // bpLines is derived from the whole breakpoint mirror rather than filtered on
   // arrival, because the order of "which function is shown" and "which
@@ -71,6 +77,7 @@ export function createDecomp({ element, onGutterClick }) {
           // cannot hold a breakpoint, so it must not look as though it can.
           const mapped = addrsByLine.has(n);
           row.classList.toggle("is-mapped", mapped);
+          row.classList.toggle("is-comment", commentByLine.has(n));
           row.classList.toggle("has-bp", bpLines.has(n));
           row.classList.toggle("is-pc", n === fn?.pcLine);
           row.classList.toggle("is-pc-ambiguous",
@@ -174,6 +181,38 @@ export function createDecomp({ element, onGutterClick }) {
     return hit?.expr ? hit : null;
   }
 
+  // commentTarget answers "what would a comment written here hang on".
+  //
+  // A comment goes on an address, so a line that came from none — a brace, a
+  // declaration, a blank — cannot hold one. Those are exactly the lines that
+  // cannot hold a breakpoint either, and for the same reason.
+  //
+  // Pointing at an existing comment names the address it already annotates, so
+  // the obvious gesture for editing a comment is to right-click it. text is
+  // what is stored, undecorated and unwrapped, so the editor opens on what was
+  // typed rather than on how it was printed.
+  function commentTarget(ev) {
+    const row = ev.target?.closest?.(".dec-row");
+    if (!row) return null;
+    const n = Number(row.dataset.line);
+    const addr = commentByLine.get(n) ?? addrsByLine.get(n)?.[0] ?? "";
+    if (!addr) return null;
+    const code = row.querySelector(".dec-code");
+    return {
+      line: n,
+      addr,
+      text: comments.get(normalise(addr))?.text ?? "",
+      rect: (code ?? row).getBoundingClientRect(),
+    };
+  }
+
+  // functionComment is the header comment, which hangs on the entry point
+  // rather than on any line and is reachable whatever is scrolled into view.
+  function functionComment() {
+    if (!fn) return "";
+    return comments.get(normalise(fn.entry))?.text ?? "";
+  }
+
   // shown is the function on screen, for the menu items that are about the
   // function rather than about a word under the pointer — renaming
   // FUN_0010d2b0 does not require finding its name in the text.
@@ -202,6 +241,8 @@ export function createDecomp({ element, onGutterClick }) {
     fn = null;
     lines = [];
     addrsByLine = new Map();
+    commentByLine = new Map();
+    comments = new Map();
     vars = new Map();
     const div = document.createElement("div");
     div.className = className;
@@ -212,6 +253,8 @@ export function createDecomp({ element, onGutterClick }) {
   return {
     expressionAt,
     symbolAt,
+    commentTarget,
+    functionComment,
     shown,
 
     set(out) {
@@ -223,6 +266,10 @@ export function createDecomp({ element, onGutterClick }) {
       for (const l of out.lines ?? []) {
         if (l.addrs?.length) addrsByLine.set(l.n, l.addrs);
       }
+      commentByLine = new Map();
+      for (const c of out.commentLines ?? []) commentByLine.set(c.n, c.addr ?? "");
+      comments = new Map();
+      for (const c of out.comments ?? []) comments.set(normalise(c.addr), c);
       vars = new Map();
       for (const v of out.vars ?? []) vars.set(v.name, v);
       refilterBreakpoints();

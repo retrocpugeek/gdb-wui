@@ -119,6 +119,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `decomp.names` | `{addresses, stopSeq?}` | `{names, state}` | Which function each address falls in, without decompiling. Capped at 128. An empty list is an ordinary answer. |
 | `decomp.rename` | `{kind, function, symbol?, name?, address?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A new name for a function, a local or a global. Refused for a project the user named. |
 | `decomp.retype` | `{kind, function, symbol?, name?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A C type for a local, or a whole prototype for a function. |
+| `decomp.comment` | `{kind, function, address?, name?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A note against a line or a function. An empty `value` removes it. |
 | `decomp.undo` | `{stopSeq?}` | [`DecompEdit`](#decompilation) | Reverses the last edit of this session. "nothing to undo" is an error. |
 
 `exec.pause` is the one request that does not queue behind the others. The
@@ -651,8 +652,8 @@ linked and nothing is vendored. The feature is optional. With no `-ghidra` and n
 opening an existing project takes seconds, and importing and analysing a binary
 takes minutes.
 
-`editable` says whether `decomp.rename` and `decomp.retype` will be answered. It
-is false for a project named with `-ghidra-project`.
+`editable` says whether `decomp.rename`, `decomp.retype` and `decomp.comment`
+will be answered. It is false for a project named with `-ghidra-project`.
 
 `mismatch` is set when the decompiler's program is not the binary gdb loaded,
 compared by sha256. This is a warning rather than a refusal, because a stripped
@@ -774,6 +775,48 @@ Editing is refused entirely for a project named with `-ghidra-project`. That one
 holds the user's own names, types and comments, and gdb-wui writes only to the
 project it imported for itself. `decomp.status` reports `editable` so a client
 can say so before the attempt.
+
+`decomp.comment` writes a note into the program's listing, where the decompiler
+prints it in the C:
+
+```json
+{ "kind": "line", "function": "0x5555555551a0", "address": "0x5555555551d4",
+  "name": "walk", "value": "retry count, not a length" }
+```
+
+`kind` is `line` — a PRE comment on the address the line was generated from,
+printed above the statement — or `function`, the PLATE comment on the entry
+point, which the decompiler prints as the function's header. Those two are what
+it displays with its default options; a comment of any other kind would be
+stored and shown nowhere, which is an edit that appears to do nothing.
+
+An empty `value` removes the comment rather than storing an empty one, which
+would print as a bare `/* */`. `name` carries the function's name here, because
+a comment hangs on an address rather than on a symbol, and it is used only to
+describe the edit.
+
+The reply is the same `DecompEdit` as a rename, and for the same reason: adding
+a comment adds lines to the text, so every line number a client is holding has
+moved.
+
+`decomp.function` reports comments in two forms, which are not interchangeable.
+`commentLines` says which rendered lines are wholly comment and which address
+each belongs to — that is what a client draws as comment, and what lets a
+right-click on a comment edit it. `comments` is what is stored, as typed:
+
+```json
+{ "commentLines": [ {"n": 4, "addr": "0x5555555551d4"} ],
+  "comments": [ {"addr": "0x5555555551d4", "kind": "pre",
+                 "text": "retry count, not a length"} ] }
+```
+
+Both are needed. The rendering is wrapped to the decompiler's print width and
+decorated with `/* */`, so an editor cannot be prefilled from it; and the stored
+text says nothing about where it ended up on the page. `commentLines` comes from
+the decompiler's markup rather than from the text, so a decompiled
+`puts("/* x */")` is not mistaken for a comment. A comment line claims no
+addresses in `lines`, deliberately: the program counter must never be put on
+one.
 
 `decomp.undo` reverses the last edit. It is gdb-wui's own journal of inverse
 edits rather than Ghidra's undo, because saving clears Ghidra's undo stack and

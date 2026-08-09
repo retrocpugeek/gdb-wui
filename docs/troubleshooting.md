@@ -164,8 +164,9 @@ so. Frames in libc keep gdb's own names. Right-clicking one offers to
 
 You started gdb-wui with `-ghidra-project`, so the decompilation is coming from
 a project of yours. That one holds your own names, types and comments, and
-gdb-wui only ever reads it — the menu item stays visible and says so on hover
-rather than disappearing.
+gdb-wui only ever reads it — the menu items stay visible and say so on hover
+rather than disappearing. Commenting is greyed out for the same reason and can
+be read the same way.
 
 Drop `-ghidra-project` and pass `-ghidra` alone to work in the project gdb-wui
 imports for itself, which it may write to. Names made there are keyed on the

@@ -104,9 +104,13 @@ const (
 
 // RequestTypes is every type the server answers today.
 //
-// Two tests read it: one asserts each appears in docs/protocol.md, and one
-// asserts the hub answers each rather than returning "unsupported". Together
-// they mean the docs cannot drift from the dispatch table in either direction.
+// Three tests read it: one asserts each appears in docs/protocol.md, one
+// asserts the hub answers each rather than returning "unsupported", and one
+// asserts this list names every Type constant in the package. Together they
+// mean the docs cannot drift from the dispatch table in either direction —
+// and the third is there because four decompiler edit types were routed,
+// documented and shipped without ever reaching this list, which quietly
+// exempted them from the other two.
 var RequestTypes = []string{
 	TypeSessionHello,
 	TypeSessionInfo,
@@ -178,6 +182,10 @@ var RequestTypes = []string{
 	TypeDecompStatus,
 	TypeDecompFunction,
 	TypeDecompNames,
+	TypeDecompRename,
+	TypeDecompRetype,
+	TypeDecompComment,
+	TypeDecompUndo,
 }
 
 // SessionRequestTypes is the subset the hub answers with no debugger attached.

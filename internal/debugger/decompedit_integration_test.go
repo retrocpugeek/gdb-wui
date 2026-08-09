@@ -268,6 +268,173 @@ func TestNamesAreChecked(t *testing.T) {
 	}
 }
 
+// TestCommentAndUndoThroughTheSession. A comment is the one edit whose inverse
+// is often "no value at all": undoing a comment that was added means removing
+// it, and the journal's guard against an empty inverse — right for a name — is
+// wrong here. This is the test that says so.
+func TestCommentAndUndoThroughTheSession(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+	waitReady(t, do)
+
+	fn := do(wire.TypeDecompFunction,
+		wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
+	line := firstWireMappedLine(t, fn)
+
+	out := do(wire.TypeDecompComment, wire.DecompEditRequest{
+		Kind:     wire.DecompEditLine,
+		Function: fn.Entry,
+		Address:  line.Addrs[0],
+		Name:     fn.Name,
+		Value:    "this is where the total is kept",
+	}).(wire.DecompEdit)
+
+	if !strings.Contains(out.Function.Text, "this is where the total is kept") {
+		t.Fatalf("the comment is not in the text:\n%s", out.Function.Text)
+	}
+	if !strings.Contains(out.Did, "commented") {
+		t.Errorf("did = %q, which does not describe the change", out.Did)
+	}
+	// Reported at the runtime address the client asked about, not at Ghidra's.
+	if findWireComment(out.Function.Comments, line.Addrs[0]) == nil {
+		t.Errorf("comments = %+v, none at %s", out.Function.Comments, line.Addrs[0])
+	}
+	if !out.CanUndo {
+		t.Fatal("canUndo is false after a comment; there is nothing to go back to")
+	}
+
+	back := do(wire.TypeDecompUndo, wire.DecompUndoRequest{}).(wire.DecompEdit)
+	if strings.Contains(back.Function.Text, "this is where the total is kept") {
+		t.Errorf("the comment survived the undo:\n%s", back.Function.Text)
+	}
+	if len(back.Function.Comments) != 0 {
+		t.Errorf("comments = %+v after undoing the only one", back.Function.Comments)
+	}
+}
+
+// TestCommentsAreAddressedInRuntimeCoordinates. The address of a line is the
+// client's, and on a PIE it differs from Ghidra's by however far the loader
+// moved the program. An untranslated one lands somewhere else in the binary —
+// or, since a comment is refused outside the function, nowhere at all.
+func TestCommentsAreAddressedInRuntimeCoordinates(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+	waitReady(t, do)
+
+	do(wire.TypeBpSetAddress, wire.BreakpointAddressRequest{Location: "accumulate"})
+	do(wire.TypeExecRun, wire.ExecRequest{})
+	waitStopped(t, do, 30*time.Second)
+
+	stack := do(wire.TypeStackList, wire.StackListRequest{}).(wire.StackList)
+	fn := do(wire.TypeDecompFunction,
+		wire.DecompFunctionRequest{Target: stack.Frames[0].Address}).(wire.DecompFunction)
+	if fn.Bias == 0 {
+		t.Skip("no relocation happened, so there is no translation to test")
+	}
+	line := firstWireMappedLine(t, fn)
+
+	out := do(wire.TypeDecompComment, wire.DecompEditRequest{
+		Kind:     wire.DecompEditLine,
+		Function: fn.Entry,
+		Address:  line.Addrs[0],
+		Name:     fn.Name,
+		Value:    "written at a runtime address",
+	}).(wire.DecompEdit)
+
+	marked := findWireCommentLine(out.Function.CommentLines, line.Addrs[0])
+	if marked == nil {
+		t.Fatalf("no comment line at %s: %+v", line.Addrs[0], out.Function.CommentLines)
+	}
+	if !strings.Contains(out.Function.Text, "written at a runtime address") {
+		t.Error("the comment is not in the text")
+	}
+}
+
+// TestCommentsAreRefusedForTheUsersOwnProject is covered for renames by
+// TestTheUsersOwnProjectIsNotWritten; this is the same guard reached by the
+// other path, because a comment takes a different branch through the edit code
+// — it is the one edit with no value to validate.
+func TestCommentsAreRefusedForTheUsersOwnProject(t *testing.T) {
+	install, err := ghidra.Locate("")
+	if err != nil {
+		t.Skipf("no Ghidra installation: %v", err)
+	}
+	scratch := t.TempDir()
+	projectDir := filepath.Join(scratch, "theirs")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	k := decompHarnessWith(t, func(cfg *debugger.DecompConfig) {
+		cfg.ProjectDir = projectDir
+		cfg.ProjectName = "theirs"
+		cfg.Program = "nodebug"
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	if err := ghidra.Import(ctx, install, projectDir, "theirs",
+		filepath.Join(k.dir, "nodebug"),
+		func(f string, a ...any) { t.Logf(f, a...) }); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+	waitReady(t, do)
+	fn := do(wire.TypeDecompFunction,
+		wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
+
+	_, werr := k.try(wire.TypeDecompComment, wire.DecompEditRequest{
+		Kind:     wire.DecompEditFunction,
+		Function: fn.Entry,
+		Name:     fn.Name,
+		Value:    "not allowed here either",
+	})
+	if werr == nil {
+		t.Fatal("a comment on the user's own project was accepted")
+	}
+	if !strings.Contains(werr.Message, "yours") {
+		t.Errorf("message = %q. Either this layer's guard is gone and the "+
+			"sidecar refused instead, or the wording no longer says whose "+
+			"project it is.", werr.Message)
+	}
+	after := do(wire.TypeDecompFunction,
+		wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
+	if strings.Contains(after.Text, "not allowed here either") {
+		t.Error("the refused comment was written anyway")
+	}
+}
+
+func firstWireMappedLine(t *testing.T, fn wire.DecompFunction) wire.DecompLine {
+	t.Helper()
+	for _, l := range fn.Lines {
+		if len(l.Addrs) > 0 {
+			return l
+		}
+	}
+	t.Fatalf("%s has no line with an address", fn.Name)
+	return wire.DecompLine{}
+}
+
+func findWireComment(comments []wire.DecompComment, addr string) *wire.DecompComment {
+	for i := range comments {
+		if comments[i].Addr == addr {
+			return &comments[i]
+		}
+	}
+	return nil
+}
+
+func findWireCommentLine(lines []wire.DecompCommentLine, addr string) *wire.DecompCommentLine {
+	for i := range lines {
+		if lines[i].Addr == addr {
+			return &lines[i]
+		}
+	}
+	return nil
+}
+
 func hasWireVar(vars []wire.DecompVar, name string) bool {
 	for _, v := range vars {
 		if v.Name == name {

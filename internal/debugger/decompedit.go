@@ -53,6 +53,10 @@ func (s *Session) decompRetype(r *request) (any, *wire.Error) {
 	return s.decompEdit(r, wire.TypeDecompRetype)
 }
 
+func (s *Session) decompComment(r *request) (any, *wire.Error) {
+	return s.decompEdit(r, wire.TypeDecompComment)
+}
+
 func (s *Session) decompEdit(r *request, op string) (any, *wire.Error) {
 	req, werr := decode[wire.DecompEditRequest](r.req.Payload)
 	if werr != nil {
@@ -64,7 +68,8 @@ func (s *Session) decompEdit(r *request, op string) (any, *wire.Error) {
 	}
 
 	value := strings.TrimSpace(req.Value)
-	if value == "" {
+	// Empty is a comment being removed, and is the only edit with no value.
+	if value == "" && op != wire.TypeDecompComment {
 		what := "a name"
 		if op == wire.TypeDecompRetype {
 			what = "a type"
@@ -135,9 +140,12 @@ func (s *Session) applyDecompEdit(r *request, client *ghidra.Client, op string,
 
 	var res *ghidra.EditResult
 	var err error
-	if op == wire.TypeDecompRetype {
+	switch op {
+	case wire.TypeDecompRetype:
 		res, err = client.Retype(r.ctx, edit)
-	} else {
+	case wire.TypeDecompComment:
+		res, err = client.Comment(r.ctx, edit)
+	default:
 		res, err = client.Rename(r.ctx, edit)
 	}
 	if err != nil {
@@ -179,24 +187,41 @@ func (s *Session) applyDecompEdit(r *request, client *ghidra.Client, op string,
 // because the edit has renumbered the ids of everything around it (finding 34)
 // and the name is the key that survived.
 func (s *Session) pushUndo(op string, edit ghidra.Edit, res *ghidra.EditResult) {
-	if res.Was == "" {
-		// Nothing to go back to. A rename of something the sidecar could not
-		// describe is better left un-undoable than undone to an empty name.
-		return
-	}
-	inverse := edit
-	inverse.Symbol = ""
-	inverse.Name = res.Now
-	inverse.Value = res.Was
+	var inverse ghidra.Edit
+	var did string
+	if op == wire.TypeDecompComment {
+		// A comment is addressed by where it hangs, and nothing about that
+		// moved, so the inverse is this edit with the old text — including no
+		// text at all, which removes a comment that was just added. That case
+		// is the common one and is exactly the one the guard below would drop.
+		inverse = edit
+		inverse.Value = res.Was
+		did = "put the previous comment back"
+		if res.Was == "" {
+			did = "removed the comment again"
+		}
+	} else {
+		if res.Was == "" {
+			// Nothing to go back to. A rename of something the sidecar could
+			// not describe is better left un-undoable than undone to an empty
+			// name.
+			return
+		}
+		inverse = edit
+		inverse.Symbol = ""
+		inverse.Name = res.Now
+		inverse.Value = res.Was
 
-	back := res.Was
-	if op == wire.TypeDecompRetype && edit.Kind == ghidra.EditFunction {
-		back = "its previous prototype"
+		back := res.Was
+		if op == wire.TypeDecompRetype && edit.Kind == ghidra.EditFunction {
+			back = "its previous prototype"
+		}
+		did = fmt.Sprintf("put %s back to %s", nameOf(res.Now, edit), back)
 	}
 	s.decomp.journal = append(s.decomp.journal, decompUndo{
 		op:   op,
 		edit: inverse,
-		did:  fmt.Sprintf("put %s back to %s", nameOf(res.Now, edit), back),
+		did:  did,
 	})
 	if len(s.decomp.journal) > maxUndo {
 		s.decomp.journal = s.decomp.journal[len(s.decomp.journal)-maxUndo:]
@@ -205,6 +230,22 @@ func (s *Session) pushUndo(op string, edit ghidra.Edit, res *ghidra.EditResult) 
 
 func describeEdit(op string, edit ghidra.Edit, res *ghidra.EditResult) string {
 	subject := nameOf(res.Was, edit)
+	if op == wire.TypeDecompComment {
+		// Where, not which address: the addresses in this layer are Ghidra's,
+		// and quoting one at a user reading a running program would name a
+		// place they cannot find.
+		where := "a line of " + nameOf("", edit)
+		if edit.Kind == ghidra.EditFunction {
+			where = "the function " + nameOf("", edit)
+		}
+		if edit.Value == "" {
+			return "removed the comment on " + where
+		}
+		if res.Was != "" {
+			return "changed the comment on " + where
+		}
+		return "commented " + where
+	}
 	if op == wire.TypeDecompRetype {
 		if edit.Kind == ghidra.EditFunction {
 			return fmt.Sprintf("gave %s the prototype %s", res.Now, edit.Value)

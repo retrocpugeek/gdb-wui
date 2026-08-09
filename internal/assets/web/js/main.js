@@ -346,6 +346,9 @@ function decompEditTarget(ev) {
   return {
     fn,
     sym,
+    // The line, for commenting it. Null on a line that came from no address —
+    // a brace, a declaration — which has nothing to hang a comment on.
+    line: decomp.commentTarget(ev),
     label: sym?.name ?? fn.name,
     // Where to put the editor for an edit that is about the function rather
     // than about a word: under the pointer, which is where the user was
@@ -397,6 +400,49 @@ function decompEditItems(target) {
     disabled: Boolean(why),
     run: () => retypeDecompFunction(fn, target.at),
   });
+
+  // Comments last, because they are the note-taking rather than the correcting,
+  // and because the two that matter — this line, this function — are the ones a
+  // reader reaches for after they have understood something.
+  const line = target.line;
+  if (line) {
+    items.push({
+      label: line.text ? "Edit the comment on this line…" : "Comment this line…",
+      title: why || line.text || "a note above this line, kept in the decompiler",
+      disabled: Boolean(why),
+      run: () => commentDecompLine(fn, line),
+    });
+    if (line.text) {
+      items.push({
+        label: "Remove the comment on this line",
+        title: why || line.text,
+        disabled: Boolean(why),
+        // Not "empty the box": the editor treats an empty entry as a cancel, so
+        // that a value is never written because a key was leant on. Removing is
+        // therefore its own item rather than a thing you can do by deleting.
+        run: () => sendDecompEdit("decomp.comment", {
+          kind: "line", function: fn.entry, address: line.addr, name: fn.name, value: "",
+        }).catch(reportError),
+      });
+    }
+  }
+  const onFunction = decomp.functionComment();
+  items.push({
+    label: onFunction ? `Edit the comment on ${fn.name}…` : `Comment the function ${fn.name}…`,
+    title: why || onFunction || "a note above the function, kept in the decompiler",
+    disabled: Boolean(why),
+    run: () => commentDecompFunction(fn, onFunction, target.at),
+  });
+  if (onFunction) {
+    items.push({
+      label: `Remove the comment on ${fn.name}`,
+      title: why || onFunction,
+      disabled: Boolean(why),
+      run: () => sendDecompEdit("decomp.comment", {
+        kind: "function", function: fn.entry, name: fn.name, value: "",
+      }).catch(reportError),
+    });
+  }
   return items;
 }
 
@@ -491,19 +537,47 @@ function retypeDecompFunction(fn, at) {
   });
 }
 
+// Commenting. Not a correction of what the decompiler guessed but a note about
+// what it means, which is the other half of reading a binary — and the half
+// that has nowhere else to go: there is no source file to write it in.
+
+function commentDecompLine(fn, line) {
+  editDecomp({
+    type: "decomp.comment",
+    over: line.rect,
+    value: line.text,
+    title: "a note above this line — what it does, or what you have worked out",
+    payload: { kind: "line", function: fn.entry, address: line.addr, name: fn.name },
+  });
+}
+
+function commentDecompFunction(fn, current, at) {
+  editDecomp({
+    type: "decomp.comment",
+    over: at,
+    value: current,
+    title: `a note above ${fn.name}`,
+    payload: { kind: "function", function: fn.entry, name: fn.name },
+  });
+}
+
 function editDecomp({ type, cell = ui.decomp, over, value, title, payload }) {
   editCell({
     cell,
     over,
     value,
     title,
-    commit: (typed) => send(type, {
-      ...payload,
-      value: typed,
-      stopSeq: store.get("session.stopSeq"),
-    }).then(applyDecompEdit),
+    commit: (typed) => sendDecompEdit(type, { ...payload, value: typed }),
     onError: (err) => setStatus(err.message ?? String(err), true),
   });
+}
+
+// sendDecompEdit is the one request every decompiler edit makes. The rejection
+// is left to the caller: an editor keeps the box open with the text in it,
+// while a menu item has nothing to keep and only reports.
+function sendDecompEdit(type, payload) {
+  return send(type, { ...payload, stopSeq: store.get("session.stopSeq") })
+    .then(applyDecompEdit);
 }
 
 // applyDecompEdit repaints from the server's answer.
@@ -2233,12 +2307,27 @@ for (const tab of document.querySelectorAll(".tab[data-bottom]")) {
   });
 }
 
+// A watch is typed into the same in-place editor as every other value in the
+// window, rather than into window.prompt. The dialog was the odd one out in
+// more than looks: it takes the keyboard away from the page, so nothing else
+// answers while it is up, and a rejected expression closed it and lost what
+// had been typed. Here a bad expression keeps the box open with the text in
+// it, which is where it can be corrected.
 el("btn-add-watch").addEventListener("click", () => {
-  const expr = window.prompt("Watch expression:");
-  if (!expr) return;
-  send("watch.add", { expr })
-    .then((out) => variables.setWatches(out.watches, out.stopSeq))
-    .catch(reportError);
+  const button = el("btn-add-watch");
+  const box = button.getBoundingClientRect();
+  // Across the panel head rather than over the button. `head.next->value` is a
+  // normal watch and the button is a few characters wide; the tabs it covers
+  // are not wanted mid-expression anyway.
+  const head = button.parentElement.getBoundingClientRect();
+  editCell({
+    cell: button,
+    over: { left: head.left + 3, top: box.top, width: head.width - 6, height: box.height },
+    title: "an expression to watch, Enter to add",
+    commit: (expr) => send("watch.add", { expr })
+      .then((out) => variables.setWatches(out.watches, out.stopSeq)),
+    onError: reportError,
+  });
 });
 
 // --- rendering -------------------------------------------------------------
