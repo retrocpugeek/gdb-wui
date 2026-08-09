@@ -71,16 +71,26 @@ function panelFor(tab) {
 }
 
 /**
- * memoryAt types an address into the memory view's box and reads it.
+ * memoryAt points the memory view at an address through the go-to box.
  *
  * The box takes an expression, not just a number, which is the point: `&head`
  * is the thing a reader has in their head, and gdb resolves it.
  */
 export async function memoryAt(page, expression) {
   await centre(page, "memory");
-  await page.type("#mem-addr", expression);
-  await page.key("Enter");
+  await goTo(page, expression);
   await page.waitFor(".mem-row", { what: `memory at ${expression}` });
+}
+
+/**
+ * goTo types a target into the go-to box and presses Enter.
+ *
+ * fill rather than type, because the box keeps what was last typed into it —
+ * appending would send "walkmain" on the second use.
+ */
+export async function goTo(page, target) {
+  await page.fill("#goto", target);
+  await page.key("Enter");
 }
 
 /**

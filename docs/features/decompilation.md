@@ -21,6 +21,10 @@ every function is named after its address, such as `FUN_00401156`.
 This tab needs the `-ghidra` argument. See
 [Install](../install.md#installing-ghidra-optional).
 
+To decompile a particular function rather than the one being executed, type its
+name or an address into the go-to box at the right of the tab strip. See
+[going somewhere](source.md#going-somewhere).
+
 ## Stepping in the decompiled view
 
 gdb's own stepping needs a line table. Without one its step range is the whole

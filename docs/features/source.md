@@ -74,6 +74,38 @@ focused, `F10` steps by instruction, and with the decompiled view focused it
 [steps by decompiled line](decompilation.md#stepping-in-the-decompiled-view).
 Both views follow the program counter either way.
 
+## Going somewhere
+
+The box at the right of the tab strip takes a place and sends the focused view
+there. `Ctrl+Shift+G` puts the cursor in it.
+
+![Going to walk with the disassembly focused](../images/goto.png)
+
+It takes any of these:
+
+| What you type | Example |
+|---|---|
+| A symbol | `walk`, `counter` |
+| An address | `0x401136` |
+| Any gdb expression | `&head`, `$pc`, `buf+16` |
+| A file and a line | `globals.c:65` |
+| A line in the file already open | `:65` |
+
+**It acts on the focused view, and only that one.** In the screenshot the
+disassembly is focused, so `walk` sent it to that function and left the source
+pane beside it where it was. The same word typed with the source focused opens
+`globals.c` at line 42 instead.
+
+That is one target resolved once, by gdb, and then handed to whichever view
+asked — which is what makes `walk` mean the same place in all four. gdb has to
+be the one to answer, because the symbol table records link-time addresses and
+every one of them is wrong once a position-independent executable is running.
+
+A view that cannot show what you asked for says so and changes nothing rather
+than switching to a view that can. An address in a stripped binary has no source
+line; a variable has no instructions. What you typed stays in the box, so
+clicking another view and pressing Enter again is the whole fix.
+
 ## When the source is not where gdb expects
 
 A binary built on another machine records that machine's source paths. When gdb
