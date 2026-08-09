@@ -13,6 +13,26 @@ url: https://retrocpugeek.github.io
 baseurl: /gdb-wui
 
 remote_theme: just-the-docs/just-the-docs
+
+# The theme's stylesheets use `@import`, `darken()` and the other global Sass
+# built-ins, all of which Dart Sass deprecated ahead of 3.0. That is around a
+# hundred warnings per build about files this repository does not own and
+# cannot fix, and a build whose output is all noise is a build nobody reads —
+# the one warning that is ours would be lost in it.
+#
+# quiet_deps silences warnings from the loaded theme. `@import` is silenced
+# outright on top of that, because it is raised against the entry stylesheet —
+# which the theme also provides, and which Jekyll treats as ours rather than as
+# a dependency. Nothing else is silenced: a `darken()` written in
+# docs/_sass/custom/custom.scss, which is genuinely ours, still warns.
+#
+# GitHub Pages builds the published site with an older Jekyll that ignores
+# unknown `sass` keys, so this changes nothing there.
+sass:
+  quiet_deps: true
+  silence_deprecations:
+    - import
+
 plugins:
   - jekyll-remote-theme
   # Rewrites `[Install](install.md)` to the built page's URL. Without it those
