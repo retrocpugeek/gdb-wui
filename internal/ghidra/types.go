@@ -126,6 +126,26 @@ type FunctionRef struct {
 	Thunk bool   `json:"thunk"`
 }
 
+// FunctionName is one address and the function Ghidra says it falls in.
+//
+// Addr echoes what was asked, so a caller can match answers to questions
+// without arithmetic: an address in no function is omitted, so the reply is
+// shorter than the request whenever a stack has frames outside the program.
+type FunctionName struct {
+	Addr string `json:"addr"`
+	Name string `json:"name"`
+	// Entry is the function's first address, so a caller can render the offset
+	// into it rather than a bare name that is true of a hundred instructions.
+	Entry     string `json:"entry"`
+	Signature string `json:"signature,omitempty"`
+	Thunk     bool   `json:"thunk,omitempty"`
+}
+
+// NameList is the reply to Names.
+type NameList struct {
+	Names []FunctionName `json:"names"`
+}
+
 // FunctionList is the reply to Functions.
 type FunctionList struct {
 	Total     int           `json:"total"`

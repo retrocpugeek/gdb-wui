@@ -491,6 +491,30 @@ func (c *Client) Functions(ctx context.Context, offset, limit int, filter string
 	return &out, nil
 }
 
+// Names says which function each address falls in.
+//
+// One round trip for a whole call stack, and no decompilation: the sidecar
+// answers from the function manager. That is what makes it usable on the path
+// where a UI has just been handed a stack of "?? ()" and wants it filled in.
+//
+// The addresses go over as one comma-separated string. The sidecar's JSON
+// parser is deliberately hand-rolled and has no array reader; a list of hex
+// numbers needs neither.
+func (c *Client) Names(ctx context.Context, addrs []string) ([]FunctionName, error) {
+	if len(addrs) == 0 {
+		return nil, nil
+	}
+	rep, err := c.call(ctx, "names", map[string]any{"addresses": strings.Join(addrs, ",")})
+	if err != nil {
+		return nil, err
+	}
+	var out NameList
+	if err := json.Unmarshal(rep.Raw, &out); err != nil {
+		return nil, fmt.Errorf("ghidra: decoding names: %w", err)
+	}
+	return out.Names, nil
+}
+
 // Dead returns a channel closed when the process goes away, and the reason.
 func (c *Client) Dead() (<-chan struct{}, func() error) {
 	return c.dead, func() error { return c.deadErr }

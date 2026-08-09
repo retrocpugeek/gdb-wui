@@ -115,6 +115,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `symbols.load` | `{path, mode?, offset?}` | `{path, mode, available}` | Symbols without an exec file. `mode` is `replace` or `add`. |
 | `decomp.status` | `{}` | [`DecompStatus`](#decompilation) | Answered even with no program loaded: it is how a client learns the feature exists. |
 | `decomp.function` | `{target?, thread?, frame?, stopSeq?}` | [`DecompFunction`](#decompilation) | `target` is a name or any address inside a function; empty follows the selected frame. |
+| `decomp.names` | `{addresses, stopSeq?}` | `{names, state}` | Which function each address falls in, without decompiling. Capped at 128. An empty list is an ordinary answer. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is usually blocked in a gdb round-trip when a user presses
@@ -619,6 +620,39 @@ build while debugging another produces answers that look right.
               "expr": "*(undefined1 * *)($sp + 0xf0)"} ],
   "bias": 0, "biasFrom": "main", "pcLine": 28 }
 ```
+
+`decomp.names` answers "which function is each of these addresses in", for the
+call stack of a stripped binary — which gdb renders as a column of `?? ()`
+because it has no symbol for any of it.
+
+```json
+{ "state": "ready",
+  "names": [ {"addr": "0x5555555551b3", "name": "FUN_00101154", "offset": 76,
+              "entry": "0x555555555167",
+              "signature": "undefined8 FUN_00101154(void)"} ] }
+```
+
+It does not decompile: the sidecar answers from Ghidra's function manager, so a
+whole stack is one round trip. That is what makes it usable on the path where a
+client has just been handed a stack and wants it filled in — a per-frame
+`decomp.function` would be a decompilation per frame.
+
+Addresses go in as runtime addresses and `entry` comes back as one, biased the
+same way [`DecompFunction`](#decompilation) is.
+
+Three things are deliberately not errors, because all three are ordinary and a
+client's response to each is the same — leave gdb's `??` alone:
+
+- The decompiler is `off`, `starting` or `failed`. `state` says which.
+- The address is in no function: padding, a PLT stub, data.
+- The address is in code the decompiler does not have. A stack runs out through
+  libc and the dynamic loader, and Ghidra was given neither. Nothing filters
+  those out first — Ghidra's own containment answers "no function" for them,
+  and a second opinion computed here would be one no test could distinguish.
+
+A name from here is **not a symbol** and a client must not present it as one.
+`FUN_0010d2b0` is obviously a guess, but a function renamed in Ghidra is not,
+and a stack that showed the two alike would claim knowledge it does not have.
 
 `addrs` is a set rather than a range. A decompiled line's addresses are often
 disjoint, and consecutive lines interleave — a loop's init, increment and test

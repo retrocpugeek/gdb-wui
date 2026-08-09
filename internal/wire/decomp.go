@@ -13,6 +13,7 @@ import "strings"
 const (
 	TypeDecompStatus   = "decomp.status"
 	TypeDecompFunction = "decomp.function"
+	TypeDecompNames    = "decomp.names"
 )
 
 // Events.
@@ -147,6 +148,52 @@ type DecompFunction struct {
 	// expression, and stepping lands on them constantly; a client shows this
 	// differently rather than asserting the program is on that line.
 	PCLineApprox bool `json:"pcLineApprox,omitempty"`
+}
+
+// DecompNamesRequest asks which function each address falls in.
+//
+// The call stack of a stripped binary is a column of "?? ()": gdb has no
+// symbol for any of it, and the decompiler is the only thing here that knows
+// otherwise. The request takes the addresses a client is showing rather than a
+// range, for the same reason mem.symbols does — a stack is a handful of
+// addresses and asking about the whole program to name six frames would be
+// work nobody sees.
+type DecompNamesRequest struct {
+	// Addresses are runtime addresses, hex. Capped server-side.
+	Addresses []string `json:"addresses"`
+	StopSeq   uint64   `json:"stopSeq,omitempty"`
+}
+
+// DecompName is one address and the function the decompiler puts it in.
+type DecompName struct {
+	// Addr echoes the address asked about.
+	Addr string `json:"addr"`
+	// Name is the decompiler's name for the function: FUN_0010d2b0 for one it
+	// recovered, or whatever it has been renamed to in Ghidra. It is *not* a
+	// symbol — a client must not present it as one.
+	Name string `json:"name"`
+	// Signature is the recovered prototype, "undefined8 FUN_0010d2b0(long *)".
+	// Types in it are the decompiler's guesses.
+	Signature string `json:"signature,omitempty"`
+	// Entry is the function's first address, translated back to runtime.
+	Entry string `json:"entry,omitempty"`
+	// Offset is Addr - Entry, so a client can render "FUN_0010d2b0+0x1c"
+	// rather than a name that is equally true of a hundred instructions.
+	Offset int  `json:"offset,omitempty"`
+	Thunk  bool `json:"thunk,omitempty"`
+}
+
+// DecompNames is the reply to decomp.names.
+//
+// An empty list is an ordinary answer, not a failure: the decompiler may be
+// off, still analysing, or simply not have the code — a libc frame is not in
+// the program it was given. The client leaves gdb's "??" alone in every one of
+// those cases, so it needs no distinction between them here.
+type DecompNames struct {
+	Names []DecompName `json:"names"`
+	// State is the decompiler's state, so a client that has not asked for the
+	// status can still say why an empty answer is empty.
+	State string `json:"state,omitempty"`
 }
 
 // ExecStepLineRequest steps until the program counter leaves a set of
