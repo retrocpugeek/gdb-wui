@@ -47,6 +47,26 @@ These are all optional, and do nothing without Ghidra. See
 > Ghidra rejects those. See
 > [Troubleshooting](../troubleshooting.md#path-element-starting-with--is-not-permitted).
 
+## Agents
+
+`-mcp` joins an already-running server rather than starting one, and serves
+[MCP](../features/agent.md) on stdio. Three flags, because reading a binary,
+writing into your Ghidra project and running your program are three different
+things to agree to.
+
+| Flag | What it does |
+|---|---|
+| `-mcp` | Serve MCP on stdio for a running gdb-wui. Read-only: decompile, disassemble, read the stack, memory, registers and expressions. |
+| `-mcp-annotate` | With `-mcp`: also rename, retype and comment in the decompiler. Marked as an agent's, and undoable a run at a time. |
+| `-mcp-run` | With `-mcp`: also set breakpoints and run, step and pause the program. |
+
+{: .warning }
+> `-mcp-run` lets an agent run your program with your privileges, on its own
+> initiative. That is what a debugger does, and it is why it is separate from
+> reading.
+
+With several servers running, `-addr` chooses which one to join.
+
 ## Choosing settings
 
 | Flag | What it does |
@@ -55,8 +75,8 @@ These are all optional, and do nothing without Ghidra. See
 | `-no-config` | Ignore any [config file](config.md). |
 | `-save-config` | Write the current settings to `./gdb-wui.json` and exit. `-save-config=PATH` writes somewhere else. |
 
-`-version`, `-print-url` and `-save-config` are also excluded from a config
-file, because they are actions rather than settings.
+`-version`, `-print-url`, `-mcp` and `-save-config` are also excluded from a
+config file, because they are actions rather than settings.
 
 ## Diagnostics
 

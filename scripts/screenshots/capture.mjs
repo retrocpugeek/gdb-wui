@@ -100,14 +100,23 @@ async function runScene(scene) {
       project: project.dir,
       repoRoot,
       capabilities,
+      // The server this scene is photographing, for a scene that has to reach
+      // it as something other than a browser — the MCP bridge, which joins the
+      // same session an agent would.
+      server: { bin: server.bin, url: running.url, addr: new URL(running.url).host },
       /**
        * spawn starts a process for the scene's own use — a gdbserver to
        * connect to, say. Killed when the scene ends, however it ends, because
        * a scene that fails halfway must not leave a stub holding a port that
        * the next run needs.
        */
-      spawn(cmd, args) {
-        const proc = nodeSpawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+      spawn(cmd, args, { stdin = false } = {}) {
+        // stdin is closed unless asked for. A gdbserver wants nothing typed at
+        // it; the MCP bridge is spoken to that way, and giving every helper a
+        // pipe nobody drains is how a scene deadlocks.
+        const proc = nodeSpawn(cmd, args, {
+          stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
+        });
         helpers.push(proc);
         return proc;
       },

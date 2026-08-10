@@ -82,7 +82,8 @@ breakpoints are kept.
 | Hover a variable or register for its value | Hovering a call — it would run the function |
 | Decompiled C from Ghidra, with the PC marked | Reproducing the source — recovered C is a model |
 | A stripped binary's call stack, named by Ghidra | Naming the Threads pane's frames the same way |
-| Renaming and retyping what the decompiler guessed | Editing a Ghidra project of your own — that stays read-only |
+| Renaming, retyping and commenting what the decompiler guessed | Editing a Ghidra project of your own — that stays read-only |
+| An MCP bridge, so an agent can drive the debugger and annotate | Bringing a model: gdb-wui makes no network requests of its own |
 | Double-click to edit a variable, register or byte | Editing an array, struct or union — gdb refuses |
 | Go to a symbol, address or `file.c:65` in the focused view | Back and forward through places you have been |
 | Registers, disassembly, and a hex memory view | Reverse debugging, `rr` |
@@ -128,6 +129,9 @@ Six layers, each of which knows nothing about the ones above it:
   Optional.
 - `internal/debugger` — all session state, behind a single actor goroutine.
 - `internal/hub` + `internal/httpapi` — the WebSocket protocol and HTTP surface.
+- `internal/mcp` — the `-mcp` bridge. A *client* of the protocol above, not a
+  part of the server: an agent joins the same WebSocket a browser does, so
+  every guard already there applies to it.
 - `internal/srcfs` — the project directory, browsed through `os.Root` so that
   nothing escapes it.
 - `internal/assets/web` — zero-build ES modules. The only vendored code is

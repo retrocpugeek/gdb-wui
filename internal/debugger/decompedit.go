@@ -347,9 +347,18 @@ func describeEdit(op string, edit ghidra.Edit, res *ghidra.EditResult) string {
 		// Where, not which address: the addresses in this layer are Ghidra's,
 		// and quoting one at a user reading a running program would name a
 		// place they cannot find.
-		where := "a line of " + nameOf("", edit)
+		//
+		// The name comes from the re-decompiled function rather than from the
+		// request, because a comment is addressed by where it hangs and a
+		// caller has no reason to send a name at all — an agent that did not
+		// left every line of the log saying "a line of it".
+		of := edit.Name
+		if res.Function != nil && res.Function.Name != "" {
+			of = res.Function.Name
+		}
+		where := "a line of " + nameOf(of, ghidra.Edit{})
 		if edit.Kind == ghidra.EditFunction {
-			where = "the function " + nameOf("", edit)
+			where = "the function " + nameOf(of, ghidra.Edit{})
 		}
 		if edit.Value == "" {
 			return "removed the comment on " + where
