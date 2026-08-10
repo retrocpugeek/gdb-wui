@@ -101,7 +101,14 @@ func (a args) seconds(key string, dflt, max time.Duration) time.Duration {
 }
 
 // object builds a JSON Schema for a tool's arguments.
+//
+// A tool with no arguments still needs "properties": {} rather than null: the
+// schema is a JSON Schema object, and clients that validate it reject a null
+// where a record belongs — one such tool makes the whole tools/list unusable.
 func object(props map[string]any, required ...string) map[string]any {
+	if props == nil {
+		props = map[string]any{}
+	}
 	out := map[string]any{"type": "object", "properties": props}
 	if len(required) > 0 {
 		out["required"] = required
