@@ -198,12 +198,7 @@ func (s *Session) watchRemove(r *request) (any, *wire.Error) {
 	for _, w := range s.st.watches {
 		if w.path == req.Path {
 			removed = true
-			if v, ok := s.vars.get(w.path); ok {
-				if _, werr := s.send(r.ctx, "-var-delete "+v.root); werr != nil {
-					s.logf("deleting watch %s: %s", v.name, werr.Message)
-				}
-				s.vars.evictRoot(v.root)
-			}
+			s.dropWatchVarobj(r.ctx, w.path)
 			continue
 		}
 		kept = append(kept, w)
@@ -215,6 +210,71 @@ func (s *Session) watchRemove(r *request) (any, *wire.Error) {
 	out := s.watchList()
 	s.emit(wire.EventWatchesChanged, out)
 	return out, nil
+}
+
+// watchSetExpr replaces one watch's expression where it stands.
+//
+// The motivating case is a cast. A decompiled global comes through as
+// `*(undefined8 *)0x555555619250`, which is the value that is there and not the
+// value it means; wrapping it in `(char **)` is the whole act of reading a
+// stripped binary, and having to delete the row and retype it from scratch to
+// do so is the sort of thing that stops people doing it.
+//
+// The new expression is created *before* the old varobj is deleted, so a
+// refusal — a typo, a type gdb does not know — leaves the watch working. The
+// path is reused, which keeps the row where it was and keeps the panel's
+// expansion state pointed at the same thing.
+func (s *Session) watchSetExpr(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.WatchSetExprRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+	expr := strings.TrimSpace(req.Expr)
+	if expr == "" {
+		return nil, wire.NewError(wire.CodeBadRequest, "expr is required")
+	}
+	at := -1
+	for i, w := range s.st.watches {
+		if w.path == req.Path {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return nil, wire.NewError(wire.CodeNotFound, "no such watch")
+	}
+	if s.st.watches[at].expr == expr {
+		return s.watchList(), nil
+	}
+
+	// The old varobj has to go before a new one can take its path, and the new
+	// one has to be proved first. So: build it under a scratch path, and only
+	// once gdb has accepted it move it across.
+	scratch := fmt.Sprintf("%s:pending", req.Path)
+	if _, werr := s.createRoot(r.ctx, scratch, expr, s.thread(0), s.st.selFrame, true); werr != nil {
+		return nil, werr
+	}
+	s.dropWatchVarobj(r.ctx, req.Path)
+	s.vars.rename(scratch, req.Path)
+
+	s.st.watches[at].expr = expr
+	out := s.watchList()
+	s.emit(wire.EventWatchesChanged, out)
+	return out, nil
+}
+
+// dropWatchVarobj deletes the varobj behind a watch, leaving the watch itself
+// alone. gdb keeps its own object per expression and forgetting to delete one
+// leaks it for the life of the session.
+func (s *Session) dropWatchVarobj(ctx context.Context, path string) {
+	v, ok := s.vars.get(path)
+	if !ok {
+		return
+	}
+	if _, werr := s.send(ctx, "-var-delete "+v.root); werr != nil {
+		s.logf("deleting watch %s: %s", v.name, werr.Message)
+	}
+	s.vars.evictRoot(v.root)
 }
 
 func (s *Session) watchListRequest(r *request) (any, *wire.Error) {

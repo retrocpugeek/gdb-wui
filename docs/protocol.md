@@ -90,6 +90,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `vars.expand` | `{path, id?, expr?, thread?, frame?, from?, to?, stopSeq?}` | `{path, id, children, hasMore, numChild}` | Creates a varobj on first expansion. Pages 200 children at a time. |
 | `watch.add` | `{expr}` | [`WatchList`](#watches) | Floating varobj; a gdb error is returned as `gdb_error`. |
 | `watch.remove` | `{path}` | [`WatchList`](#watches) | Allowed while running. |
+| `watch.setExpr` | `{path, expr}` | [`WatchList`](#watches) | Replaces a watch's expression in place. A refusal leaves the old one working. |
 | `watch.list` | — | [`WatchList`](#watches) | Allowed while running. |
 | `vars.assign` | `{path, id?, expr?, value, thread?, frame?, stopSeq?}` | `{path, id, value, stopSeq}` | Writes a variable. `value` is a gdb expression. The reply carries the value read back, not the one sent. |
 | `regs.names` | — | `{names}` | Cached per program. **Empty entries are preserved.** |
@@ -349,6 +350,19 @@ Watches are floating varobjs, created with `@`, so they follow the current frame
 rather than staying pinned to the frame that was selected when the expression
 was typed. The expressions are stored independently of the varobjs behind them:
 a re-run deletes every varobj, and the watches are recreated at the next stop.
+
+`watch.setExpr` replaces one expression where it stands, rather than by removing
+and re-adding. The user-visible difference is that the row keeps its place in
+the list and keeps its `path`, which is what a client's expansion state is keyed
+on — a watch being corrected is the same watch. The motivating case is a cast:
+a decompiled global reaches the panel as `*(undefined8 *)0x555555619250`, which
+is what is at the address rather than what it means, and `(char **)` is the
+correction.
+
+The new varobj is created under a scratch path and moved onto the real one only
+once gdb has accepted it, so an expression gdb refuses leaves the existing watch
+untouched and working. Replacing a working expression with an error would be a
+worse answer than saying no.
 
 ### Registers
 

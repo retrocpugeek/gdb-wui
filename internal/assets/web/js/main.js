@@ -178,6 +178,10 @@ const variables = createVariables({
   element: ui.variables,
   onExpand: (req) => send("vars.expand", req),
   onRemoveWatch: (path) => send("watch.remove", { path }).catch(reportError),
+  // The reply is the whole list, and the server broadcasts it too, so nothing
+  // is repainted here: setWatches arrives through watchesChanged either way.
+  onSetWatchExpr: (path, expr) => send("watch.setExpr", { path, expr })
+    .then(() => setStatus(`watching ${expr}`)),
   onAssign: (req) => send("vars.assign", {
     ...req,
     thread: store.get("selection.thread"),
@@ -319,6 +323,24 @@ for (const [pane, resolve] of [
             run: () => showAtAddress(res.addr, `*${label}`),
           });
         }
+        // Watching it. The decompiler's globals are the ones this is really
+        // for: `*(undefined8 *)0x555555619250` is a fixed address, valid at
+        // every pc and needing no frame, so a watch on one keeps reading
+        // correctly while you step through anything. It is offered for the
+        // others too — the expression is already the test of whether a value
+        // can be formed at all, and a stack slot's floats with the frame.
+        items.push({
+          label: `Watch ${label}`,
+          title: hit.storage === "register"
+            ? "the expression is only valid near this pc, because the register is reused"
+            : `add ${hit.expr} to the Variables panel`,
+          run: () => send("watch.add", { expr: hit.expr })
+            .then((out) => {
+              variables.setWatches(out.watches, out.stopSeq);
+              setStatus(`watching ${hit.expr}`);
+            })
+            .catch(reportError),
+        });
       }
       items.push(...decompEditItems(editable));
 
@@ -2387,6 +2409,25 @@ el("btn-add-watch").addEventListener("click", () => {
       .then((out) => variables.setWatches(out.watches, out.stopSeq)),
     onError: reportError,
   });
+});
+
+// Right-clicking a watch. The × on the row is the quick way out and this is the
+// discoverable one — a menu is where you find out that casting is possible at
+// all, which a double-click on the type cell never tells anybody.
+ui.variables.addEventListener("contextmenu", (ev) => {
+  const node = variables.watchAt(ev.target);
+  if (!node) return;
+  ev.preventDefault();
+  showContextMenu(ev.clientX, ev.clientY, node.name, [{
+    label: "Cast to…",
+    title: "read the same address as a different type — undefined8 is what is " +
+      "there, not what it means",
+    run: () => variables.castWatch(node.path),
+  }, {
+    label: "Remove watch",
+    title: "stop watching this expression",
+    run: () => send("watch.remove", { path: node.path }).catch(reportError),
+  }]);
 });
 
 // --- rendering -------------------------------------------------------------

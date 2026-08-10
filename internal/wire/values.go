@@ -7,9 +7,10 @@ const (
 	TypeVarsLocals = "vars.locals"
 	TypeVarsExpand = "vars.expand"
 
-	TypeWatchAdd    = "watch.add"
-	TypeWatchRemove = "watch.remove"
-	TypeWatchList   = "watch.list"
+	TypeWatchAdd     = "watch.add"
+	TypeWatchRemove  = "watch.remove"
+	TypeWatchSetExpr = "watch.setExpr"
+	TypeWatchList    = "watch.list"
 
 	TypeRegsNames  = "regs.names"
 	TypeRegsValues = "regs.values"
@@ -190,6 +191,21 @@ type WatchAddRequest struct {
 // WatchRemoveRequest removes one by its path.
 type WatchRemoveRequest struct {
 	Path string `json:"path"`
+}
+
+// WatchSetExprRequest replaces the expression of a watch already in the list.
+//
+// Remove-then-add would do the same arithmetic and lose the two things a user
+// notices: the row's place in the list, and its path, which is what the panel
+// keys expansion state on. A watch being corrected is the same watch — most
+// often a cast, because a decompiled `undefined8` is the value you have and
+// `(char *)` is the value you meant — so it keeps its identity.
+//
+// A refused expression leaves the watch exactly as it was. The expression is
+// the user's, and replacing a working one with an error is worse than saying no.
+type WatchSetExprRequest struct {
+	Path string `json:"path"`
+	Expr string `json:"expr"`
 }
 
 // WatchList is the reply to the watch group and the payload of

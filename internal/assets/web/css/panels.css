@@ -450,6 +450,35 @@
   max-width: 40%;
 }
 
+/* The way out of a watch. Present on every watch row rather than on hover
+ * only: a control that appears when you are already pointing at it cannot be
+ * found by someone wondering whether removal is possible, and this list is
+ * the one place in the panel holding things the user put there by hand.
+ *
+ * Dim until pointed at, because a column of red crosses down the panel would
+ * be the loudest thing in a pane whose job is to show values. */
+.var-remove {
+  flex: 0 0 auto;
+  width: 12px;
+  text-align: center;
+  color: var(--fg-2);
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.var-remove:hover {
+  color: var(--danger);
+  opacity: 1;
+}
+
+/* The type of a watch is a control, not a label: it is where a cast is typed.
+ * Nothing marks it until the pointer is over it, for the same reason the value
+ * cell does not shout about being editable. */
+.var-row.is-watch-root .var-type:hover {
+  color: var(--fg-0);
+  cursor: text;
+}
+
 /* A value that just changed is the thing the user is watching for, so it is
  * the loudest thing in the panel. */
 .var-row.is-changed .var-value {

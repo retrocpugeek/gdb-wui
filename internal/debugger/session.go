@@ -484,6 +484,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.watchAdd(r)
 	case wire.TypeWatchRemove:
 		return s.watchRemove(r)
+	case wire.TypeWatchSetExpr:
+		return s.watchSetExpr(r)
 	case wire.TypeWatchList:
 		return s.watchListRequest(r)
 
