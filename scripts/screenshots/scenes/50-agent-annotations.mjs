@@ -109,9 +109,16 @@ export default {
       (n) => n.addr === f.address && !n.name.startsWith("printf")));
     if (!inside) throw new Error("no frame inside the program to annotate");
 
+    // Stopping in printf raises the bar offering to locate printf.c, which
+    // this machine has no copy of.
+    await page.waitFor("#locate:not(.is-hidden)",
+      { what: "the offer to locate libc's source" });
+
     // Select that frame in the browser as well, the way a person watching
-    // would. It also keeps the source view from asking after printf.c, which
-    // it has no copy of and would say so about across the top of the pane.
+    // would — and the offer goes with it. It was about frame 0's file, and
+    // this frame is from a stripped binary with no file of any kind; leaving
+    // it up would name printf.c across the top of a function nothing on screen
+    // is about.
     await page.evaluate((level) => {
       document.querySelector(`#stack .list-row[data-level="${level}"] .list-main`).click();
     }, inside.level);
@@ -120,6 +127,8 @@ export default {
         ?.getAttribute("aria-selected") === "true",
       { what: "the browser to follow the frame", args: [inside.level] },
     );
+    await page.waitFor("#locate.is-hidden",
+      { what: "the offer to be dropped with the frame it was about" });
 
     const fn = await agent.tool("decompile_function", { target: inside.address });
     await agent.tool("select_frame", { frame: inside.level });
@@ -223,12 +232,7 @@ export default {
       { what: "the pane to show the agent's name for the function", timeout: 60_000 },
     );
 
-    // The pane's width, but starting at its own header rather than at the tab
-    // strip: the program is stopped in libc, so the strip is followed by a bar
-    // about printf.c that this picture is not about.
-    const panel = await page.rect(".panel-source");
-    const header = await page.rect("#source-meta");
-    const pane = { x: panel.x, width: panel.width, y: header.y - 4 };
+    const pane = await page.rect(".panel-source");
     const last = await page.evaluate(() => {
       const rows = [...document.querySelectorAll(".dec-row")];
       const r = rows[rows.length - 1].getBoundingClientRect();

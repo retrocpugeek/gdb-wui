@@ -1202,6 +1202,14 @@ function applySelection(sel) {
   if (sel.threadId) threads.select(sel.threadId);
 
   const frame = stack.frameAt(sel.frame);
+  // The offer to find a source file follows the selection, because the file it
+  // is about does. A stack routinely mixes all three cases: a frame whose
+  // source is here, one whose file exists somewhere this machine has not got,
+  // and one from a stripped binary with no file at all. Raised only on a stop,
+  // the bar went on naming frame 0's file — "No local source for
+  // ./stdio-common/printf.c" across the top of a stripped function you had
+  // clicked on purpose, offering to locate a file nothing on screen is about.
+  showLocate(frame?.source);
   if (frame?.source?.available) {
     // Frame 0 is where the program counter is; anything above it is a caller
     // being inspected, and gets its own marker so the execution point stays

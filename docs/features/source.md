@@ -113,6 +113,12 @@ names a file that is not present, gdb-wui shows a bar offering the files in your
 project whose names match. Choosing one tells gdb about the substitution for
 every file under that directory, not only the one you chose.
 
+The offer follows the selected frame, because the file it is about does. A stack
+routinely mixes all three cases — a frame whose source is here, one whose file
+is on a machine you do not have, and one from a stripped binary with no file at
+all — and clicking between them changes which, if any, there is anything to
+offer.
+
 ## What the source view does not do
 
 - **It does not edit.** There is no save.
