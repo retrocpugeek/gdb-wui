@@ -372,7 +372,10 @@ func describeEdit(op string, edit ghidra.Edit, res *ghidra.EditResult) string {
 		if edit.Kind == ghidra.EditFunction {
 			return fmt.Sprintf("gave %s the prototype %s", res.Now, edit.Value)
 		}
-		return fmt.Sprintf("made %s a %s", subject, edit.Value)
+		// Now, not Was: for a retype the sidecar reports the previous *type* in
+		// Was, so using it as the subject described the edit as "made
+		// undefined8 a int" — the old type where the name belongs.
+		return fmt.Sprintf("made %s a %s", nameOf(res.Now, edit), edit.Value)
 	}
 	return fmt.Sprintf("renamed %s to %s", subject, edit.Value)
 }
