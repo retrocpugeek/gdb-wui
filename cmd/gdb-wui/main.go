@@ -159,7 +159,7 @@ func main() {
 			logf = func(string, ...any) {}
 		}
 		if err := mcp.Run(context.Background(), mcp.Options{
-			Addr:     opt.addr,
+			Addr:     addrForLookup(opt.addr),
 			Annotate: opt.mcpAnnotate,
 			Run:      opt.mcpRun,
 			Version:  version,
