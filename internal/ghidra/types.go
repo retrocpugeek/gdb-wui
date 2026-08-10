@@ -197,6 +197,25 @@ type FunctionRef struct {
 	Thunk bool   `json:"thunk"`
 }
 
+// DataList is the reply to Data.
+type DataList struct {
+	Total  int       `json:"total"`
+	Offset int       `json:"offset"`
+	Data   []DataRef `json:"data"`
+}
+
+// DataRef is one module-scope label: a name, where it is, and what shape it has
+// been given. Address is in Ghidra's coordinates like every other address the
+// sidecar reports.
+type DataRef struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	// Type is the data type defined at the address, empty when the bytes are
+	// still undefined — which is the ordinary state of a global nobody has
+	// looked at yet, and not a failure.
+	Type string `json:"type,omitempty"`
+}
+
 // FunctionName is one address and the function Ghidra says it falls in.
 //
 // Addr echoes what was asked, so a caller can match answers to questions

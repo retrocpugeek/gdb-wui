@@ -372,3 +372,25 @@ implementing:
     `HighSymbol.getName()` still answers with the *old* name after
     `updateDBVariable` — the object is stale, and only the re-decompilation is
     the truth, which the edit path already returns.
+
+41. **A `DAT_` label is not in the symbol table.** `SymbolTable.getDefinedSymbols()`
+    returns nothing for a global whose name Ghidra generated. Those names are
+    *dynamic*: Ghidra composes `DAT_001a08de` on demand for an address something
+    references, and stores nothing until somebody renames it. Enumerating the
+    symbol table therefore finds every global that has already been named and
+    none that has not — precisely backwards for a stripped binary, where the
+    generated names are the only names there are. Measured: a fixture with one
+    global answered with an empty list.
+
+    What creates the name is a reference, so references are what to walk.
+    `ReferenceManager.getReferenceDestinationIterator` gives the addresses, and
+    `SymbolTable.getPrimarySymbol(addr)` composes the label for each — the same
+    name that appears in the decompiled text, which is the one a reader will try
+    to look up. The symbol table is still worth a second pass afterwards, for
+    data nothing points at directly.
+
+    Two filters are needed and both matter. An address inside a function body is
+    a `LAB_` jump target, and there are far more of those than there are
+    globals; letting them through buries the twenty names somebody wants under
+    two thousand nobody does. And a `FUNCTION` symbol is not data — it has its
+    own list, and a merged pane would show every function twice.

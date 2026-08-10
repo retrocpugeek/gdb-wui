@@ -516,6 +516,27 @@ func (c *Client) Functions(ctx context.Context, offset, limit int, filter string
 	return &out, nil
 }
 
+// Data lists the module-scope labels: the DAT_001a08de a stripped binary is
+// full of, and anything somebody has renamed since.
+//
+// Separate from Functions because they answer different questions and one of
+// them is much more expensive to build — a label has to be checked for being
+// inside a function body before it counts as a global — and because a caller
+// establishing the load bias wants functions and nothing else.
+func (c *Client) Data(ctx context.Context, offset, limit int, filter string) (*DataList, error) {
+	rep, err := c.call(ctx, "data", map[string]any{
+		"offset": offset, "limit": limit, "filter": filter,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out DataList
+	if err := json.Unmarshal(rep.Raw, &out); err != nil {
+		return nil, fmt.Errorf("ghidra: decoding data list: %w", err)
+	}
+	return &out, nil
+}
+
 // Names says which function each address falls in.
 //
 // One round trip for a whole call stack, and no decompilation: the sidecar

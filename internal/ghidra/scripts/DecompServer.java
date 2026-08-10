@@ -34,6 +34,8 @@
 //   <- {"id":2,"ok":true,"function":{...}}
 //   -> {"id":3,"op":"functions","offset":0,"limit":500}
 //   <- {"id":3,"ok":true,"functions":[{...}],"total":1415}
+//   -> {"id":3,"op":"data","offset":0,"limit":500}
+//   <- {"id":3,"ok":true,"data":[{"name":"DAT_001a08de",...}],"total":812}
 //   -> {"id":4,"op":"names","addresses":"0x10d2b0,0x101040"}
 //   <- {"id":4,"ok":true,"names":[{"addr":"0x10d2b0","name":"FUN_0010d2b0",...}]}
 //   -> {"id":5,"op":"rename","kind":"variable","function":"0x10d2b0",
@@ -67,8 +69,10 @@ import java.nio.channels.Channels;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
 import ghidra.app.cmd.function.FunctionRenameOption;
@@ -78,6 +82,7 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.script.GhidraScript;
 import ghidra.app.util.cparser.C.CParserUtils;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.DataUtilities;
@@ -94,6 +99,7 @@ import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
+import ghidra.program.model.symbol.SymbolType;
 import ghidra.util.data.DataTypeParser;
 import ghidra.util.data.DataTypeParser.AllowedDataTypes;
 
@@ -199,6 +205,9 @@ public class DecompServer extends GhidraScript {
 					return true;
 				case "functions":
 					return listFunctions(id, (int) num(req, "offset", 0),
+						(int) num(req, "limit", 500), field(req, "filter"));
+				case "data":
+					return listData(id, (int) num(req, "offset", 0),
 						(int) num(req, "limit", 500), field(req, "filter"));
 				case "decompile":
 					return decompileOne(id, field(req, "function"));
@@ -964,6 +973,105 @@ public class DecompServer extends GhidraScript {
 		}
 		b.append("]}");
 		return send(b.toString());
+	}
+
+	// listData is the other half of the index, and the half a stripped binary
+	// needs most.
+	//
+	// Ghidra invents DAT_001a08de for a byte something referenced, and that
+	// label is the only handle anyone has on it: there is no ELF symbol to look
+	// up, and nothing to type into gdb. A counter or a table found while reading
+	// the recovered C is unfindable otherwise — you can see the name and have no
+	// way to ask where it is.
+	//
+	// A label inside a function body is left out. Those are LAB_ jump targets,
+	// there are far more of them than there are globals, and none of them is
+	// what anybody means by a name for a piece of data. Non-primary labels go
+	// too, so one address listed under two names appears once.
+	private boolean listData(long id, int offset, int limit, String filter) {
+		if (limit <= 0 || limit > 5000) {
+			limit = 500;
+		}
+		String needle = filter == null ? "" : filter.toLowerCase();
+		List<Symbol> all = new ArrayList<>();
+		Set<Address> seen = new HashSet<>();
+
+		// Referenced addresses first, and this is the load-bearing half.
+		//
+		// A DAT_ label is not in the symbol table. Ghidra generates it on
+		// demand for an address something points at, and getDefinedSymbols()
+		// deliberately leaves those out — so enumerating the symbol table finds
+		// every global that has been renamed and none that has not, which is
+		// exactly backwards for a stripped binary. Measured: a fixture with one
+		// global answered with an empty list. What creates the name is a
+		// reference, so references are what to walk.
+		AddressIterator refs = currentProgram.getReferenceManager()
+			.getReferenceDestinationIterator(currentProgram.getMemory(), true);
+		while (refs.hasNext()) {
+			collectData(all, seen, refs.next(), needle);
+		}
+		// And then the symbol table, for data nothing points at: an ELF symbol
+		// for a global the code reaches through a computed address, and any
+		// label somebody made by hand.
+		for (Symbol sym : currentProgram.getSymbolTable().getDefinedSymbols()) {
+			if (!sym.isExternal() && sym.getSymbolType() == SymbolType.LABEL) {
+				collectData(all, seen, sym.getAddress(), needle);
+			}
+		}
+		// Address order, because the table is an index into a program and
+		// neither of those two walks is in one a reader could predict.
+		all.sort((a, b) -> a.getAddress().compareTo(b.getAddress()));
+
+		Listing listing = currentProgram.getListing();
+		StringBuilder b = new StringBuilder();
+		b.append("{\"id\":").append(id).append(",\"ok\":true,\"total\":").append(all.size());
+		b.append(",\"offset\":").append(offset).append(",\"data\":[");
+		for (int i = offset; i < Math.min(all.size(), offset + limit); i++) {
+			Symbol sym = all.get(i);
+			if (i > offset) {
+				b.append(",");
+			}
+			b.append("{\"name\":").append(DecompJson.str(sym.getName()));
+			b.append(",\"address\":").append(
+				DecompJson.str(DecompJson.hex(sym.getAddress())));
+			// The type only for the page being sent, since it costs a listing
+			// lookup each: a table typed char *[5] is worth showing, and asking
+			// for it across the whole program to render twenty rows is not.
+			Data at = listing.getDataAt(sym.getAddress());
+			b.append(",\"type\":").append(DecompJson.str(
+				at != null && at.isDefined() && at.getDataType() != null
+					? at.getDataType().getDisplayName()
+					: ""));
+			b.append("}");
+		}
+		b.append("]}");
+		return send(b.toString());
+	}
+
+	// collectData takes one address if it is a global with a name.
+	//
+	// getPrimarySymbol answers with the generated DAT_ for an address that has
+	// no stored symbol, which is the whole reason this goes through the symbol
+	// table rather than reading labels: the name a reader sees in the
+	// decompiled text is the one that has to be findable here.
+	private void collectData(List<Symbol> into, Set<Address> seen, Address at, String needle) {
+		if (at == null || !at.isMemoryAddress() || !seen.add(at)) {
+			return;
+		}
+		if (currentProgram.getFunctionManager().getFunctionContaining(at) != null) {
+			// Code. A label inside a function body is a LAB_ jump target, there
+			// are far more of them than there are globals, and none of them is
+			// what anybody means by a name for a piece of data.
+			return;
+		}
+		Symbol sym = currentProgram.getSymbolTable().getPrimarySymbol(at);
+		if (sym == null || sym.isExternal() || sym.getSymbolType() == SymbolType.FUNCTION) {
+			return;
+		}
+		if (!needle.isEmpty() && !sym.getName().toLowerCase().contains(needle)) {
+			return;
+		}
+		into.add(sym);
 	}
 
 	private int countFunctions() {
