@@ -38,6 +38,10 @@ func fixture(t *testing.T) string {
 	}
 	dir := t.TempDir()
 	src := filepath.Join(dir, "demo.c")
+	// names is a table of pointers with no debug info to describe it, which is
+	// what a global retype is for: Ghidra leaves the bytes undefined and
+	// renders pick() as a hand-computed offset until something says what shape
+	// they are.
 	const body = `
 #include <stdio.h>
 static int accumulate(int n) {
@@ -45,7 +49,10 @@ static int accumulate(int n) {
 	for (int i = 0; i < n; i++) total += i * 3;
 	return total;
 }
-int main(void) { printf("%d\n", accumulate(7)); return 0; }
+const char *names[] = { "one", "two", "three" };
+const char *tail[] = { "four" };
+const char *pick(int i) { return i ? names[i] : tail[0]; }
+int main(void) { printf("%d %s\n", accumulate(7), pick(1)); return 0; }
 `
 	if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
 		t.Fatal(err)

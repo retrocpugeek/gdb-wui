@@ -5,6 +5,7 @@ package ghidra_test
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +166,155 @@ func TestRenameAndRetypeALocal(t *testing.T) {
 	if res2.Was != renamed.Type {
 		t.Errorf("was = %q, want the previous type %q", res2.Was, renamed.Type)
 	}
+}
+
+// TestRetypeAGlobal covers the kind that has no HighSymbol behind it.
+//
+// A global's type is the data defined at its address, not an entry in the
+// decompiler's symbol table, so it goes through a different Ghidra API than a
+// local — and getting an array type onto one is the whole point: it is what
+// turns an open-coded *(char **)(&names + i * 8) back into names[i].
+func TestRetypeAGlobal(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "pick")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	g := globalNamed(t, fn, "names")
+
+	res, err := c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  g.Address,
+		Name:     g.Name,
+		Value:    "char *[3]",
+	})
+	if err != nil {
+		t.Fatalf("Retype: %v", err)
+	}
+	if res.Now != "names" {
+		t.Errorf("now = %q, want names — a retype must not rename", res.Now)
+	}
+	var after *ghidra.Global
+	for i := range res.Function.Globals {
+		if res.Function.Globals[i].Name == "names" {
+			after = &res.Function.Globals[i]
+			break
+		}
+	}
+	if after == nil {
+		t.Fatalf("names vanished from the re-decompiled function")
+	}
+	if !strings.Contains(after.Type, "[3]") {
+		t.Errorf("type = %q, want the array type", after.Type)
+	}
+}
+
+// TestRetypingAGlobalReportsWhatItReplaced covers the case that has to be told
+// rather than refused: a type one element too long eats the next global, and
+// silence there looks exactly like success.
+func TestRetypingAGlobalReportsWhatItReplaced(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "pick")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	names := globalNamed(t, fn, "names")
+	tail := globalNamed(t, fn, "tail")
+
+	// Give tail a type of its own, so what follows names is defined data and
+	// not the undefined bytes any clear mode would take without comment.
+	if _, err := c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  tail.Address,
+		Name:     tail.Name,
+		Value:    "char *[1]",
+	}); err != nil {
+		t.Fatalf("typing tail: %v", err)
+	}
+
+	// names is three pointers, so a fourth element reaches 8 bytes past it.
+	// That only lands on tail if the linker put them next to each other, which
+	// it is not obliged to do.
+	if !adjacent(t, names.Address, 24, tail.Address) {
+		t.Skipf("tail is at %s, not just past names at %s; nothing to overrun",
+			tail.Address, names.Address)
+	}
+	res, err := c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  names.Address,
+		Name:     names.Name,
+		Value:    "char *[4]",
+	})
+	if err != nil {
+		t.Fatalf("a type that overruns a neighbour should apply, not fail: %v", err)
+	}
+	if res.Warning == "" {
+		t.Error("no warning: the edit deleted tail and said nothing")
+	} else if !strings.Contains(res.Warning, "replaced") {
+		t.Errorf("warning = %q, which does not say what was replaced", res.Warning)
+	}
+}
+
+// TestRetypingAGlobalOffTheEndIsRefused is the limit that survives whatever the
+// clear mode is: data cannot be created past the end of the memory block, and
+// an edit that cannot be made must not report that it was.
+func TestRetypingAGlobalOffTheEndIsRefused(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "pick")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	g := globalNamed(t, fn, "names")
+
+	_, err = c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  g.Address,
+		Name:     g.Name,
+		Value:    "char *[100000]",
+	})
+	if err == nil {
+		t.Error("a type that runs off the end of the block was accepted")
+	}
+}
+
+// globalNamed finds one of the module-scope symbols a function touches.
+func globalNamed(t *testing.T, fn *ghidra.Function, name string) *ghidra.Global {
+	t.Helper()
+	for i := range fn.Globals {
+		if fn.Globals[i].Name == name {
+			return &fn.Globals[i]
+		}
+	}
+	var had []string
+	for _, g := range fn.Globals {
+		had = append(had, g.Name)
+	}
+	t.Fatalf("no global named %s among %v", name, had)
+	return nil
+}
+
+// adjacent reports whether after starts exactly size bytes past first.
+func adjacent(t *testing.T, first string, size int64, after string) bool {
+	t.Helper()
+	a, err := strconv.ParseInt(strings.TrimPrefix(first, "0x"), 16, 64)
+	if err != nil {
+		t.Fatalf("address %q: %v", first, err)
+	}
+	b, err := strconv.ParseInt(strings.TrimPrefix(after, "0x"), 16, 64)
+	if err != nil {
+		t.Fatalf("address %q: %v", after, err)
+	}
+	return a+size == b
 }
 
 // TestRetypeAFunctionRenamesIt pins finding 36: applying a prototype in Ghidra

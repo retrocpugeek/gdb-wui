@@ -445,15 +445,18 @@ func tools() []tool {
 	}, {
 		name: "set_type",
 		tier: tierAnnotate,
-		desc: "Set a local's C type, or a whole function prototype when kind is " +
-			"\"function\" — a prototype carries the name too, so applying one " +
-			"renames the function. Getting a type right often reshapes the " +
-			"decompiled body, which is the point.",
+		desc: "Set a local's C type, a global's when kind is \"global\" " +
+			"(addressed by its address, like rename), or a whole function " +
+			"prototype when kind is \"function\" — a prototype carries the name " +
+			"too, so applying one renames the function. Getting a type right " +
+			"often reshapes the decompiled body, which is the point: typing a " +
+			"global as an array turns *(char **)(&tbl + i * 8) into tbl[i].",
 		schema: object(map[string]any{
-			"kind":     prop("string", `"variable" or "function"`),
+			"kind":     prop("string", `"variable", "global" or "function"`),
 			"function": prop("string", "entry address of the function, runtime hex"),
 			"symbol":   prop("string", "the variable's id from decompile_function"),
 			"name":     prop("string", "its current name"),
+			"address":  prop("string", "a global's address, runtime hex"),
 			"type":     prop("string", `a C type, or a whole prototype: "long parse(char *, int)"`),
 		}, "kind", "function", "type"),
 		call: pass(wire.TypeDecompRetype, func(a args) any {

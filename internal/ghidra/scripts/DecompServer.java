@@ -80,10 +80,12 @@ import ghidra.app.util.cparser.C.CParserUtils;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.DataUtilities;
 import ghidra.program.model.data.FunctionDefinitionDataType;
 import ghidra.program.model.listing.Bookmark;
 import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.CommentType;
+import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.pcode.HighFunctionDBUtil;
@@ -399,6 +401,7 @@ public class DecompServer extends GhidraScript {
 		boolean ok = false;
 		String was = null;
 		String now = null;
+		String warning = null;
 		int tx = currentProgram.startTransaction("retype to " + text);
 		try {
 			if ("function".equals(kind)) {
@@ -443,8 +446,39 @@ public class DecompServer extends GhidraScript {
 						source);
 				}
 			}
+			else if ("global".equals(kind)) {
+				// A global has no HighSymbol to update: its type is the data
+				// defined at its address, so this applies a data type to the
+				// listing and the decompiler picks it up. Typing one as an
+				// array is what turns *(char **)(&tbl + i * 8) back into
+				// tbl[i], which is the point of doing it at all.
+				Symbol sym = globalAt(field(req, "address"), field(req, "name"));
+				if (sym == null) {
+					err = "no symbol named " + field(req, "name") + " at "
+						+ field(req, "address");
+				}
+				else {
+					Address at = sym.getAddress();
+					Listing listing = currentProgram.getListing();
+					Data existing = listing.getDataAt(at);
+					// Only a type that is really there is worth an undo. Undefined
+					// bytes are not a type to go back to: "restoring" them would
+					// clear the address rather than put anything back, so this
+					// reports no previous value and the edit is left un-undoable.
+					was = existing != null && existing.isDefined()
+						&& existing.getDataType() != null
+							? existing.getDataType().getDisplayName()
+							: "";
+					now = sym.getName();
+					DataType dt = parseType(text);
+					warning = replacedNeighbours(listing, at, dt);
+					// -1 lets a fixed-size type size itself.
+					DataUtilities.createData(currentProgram, at, dt, -1,
+						DataUtilities.ClearDataMode.CLEAR_ALL_CONFLICT_DATA);
+				}
+			}
 			else {
-				err = "cannot retype a " + kind + " yet";
+				err = "cannot retype a " + kind;
 			}
 			ok = err == null;
 		}
@@ -461,8 +495,51 @@ public class DecompServer extends GhidraScript {
 			return fail(id, err);
 		}
 		// A signature carries a name, so applying one renames the function too.
-		return edited(id, f, duplicateWarning(kind, f.getName()), was,
-			now == null ? f.getName() : now);
+		if (warning == null) {
+			warning = duplicateWarning(kind, f.getName());
+		}
+		return edited(id, f, warning, was, now == null ? f.getName() : now);
+	}
+
+	// replacedNeighbours describes the defined data a new global type will
+	// consume, so the caller hears about it.
+	//
+	// A neighbour does not refuse the edit: applying a type is the one thing
+	// this op is for, Ghidra's own UI asks and proceeds, and a caller that
+	// named an address explicitly meant that address. What would be wrong is
+	// doing it silently — a type one element too long deletes the next global
+	// and then looks like it worked. Instructions are never at risk whatever
+	// the clear mode says; createData refuses to run over those.
+	private String replacedNeighbours(Listing listing, Address at, DataType dt) {
+		int len = dt.getLength();
+		if (len <= 0) {
+			// A dynamic type sizes itself against the bytes at the address, so
+			// there is no range to measure until it has been applied.
+			return null;
+		}
+		Address end;
+		try {
+			end = at.add(len - 1);
+		}
+		catch (Exception offTheEnd) {
+			// Past the end of the space; createData is about to refuse it.
+			return null;
+		}
+		List<String> hit = new ArrayList<>();
+		Data d = listing.getDefinedDataAfter(at);
+		while (d != null && d.getMinAddress().compareTo(end) <= 0) {
+			if (hit.size() == 4) {
+				hit.add("...");
+				break;
+			}
+			DataType had = d.getDataType();
+			hit.add((had == null ? "data" : had.getDisplayName()) + " at " + d.getMinAddress());
+			d = listing.getDefinedDataAfter(d.getMaxAddress());
+		}
+		if (hit.isEmpty()) {
+			return null;
+		}
+		return "replaced defined data: " + String.join(", ", hit);
 	}
 
 	// comment writes a note into the program's listing, where the decompiler

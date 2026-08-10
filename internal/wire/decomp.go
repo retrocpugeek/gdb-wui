@@ -240,8 +240,10 @@ const (
 	DecompEditFunction = "function"
 	// DecompEditVariable is a local or a parameter.
 	DecompEditVariable = "variable"
-	// DecompEditGlobal is a module-scope symbol. Renaming one is supported;
-	// retyping one is not yet.
+	// DecompEditGlobal is a module-scope symbol, addressed by Address. A global
+	// has no HighSymbol behind it, so decomp.retype applies the type as data in
+	// the listing at that address rather than through the decompiler's own
+	// symbol table; the effect on the recovered C is the same.
 	DecompEditGlobal = "global"
 	// DecompEditLine is one line of the recovered C, addressed by the address
 	// it was generated from. Only decomp.comment takes it: a line has no name
