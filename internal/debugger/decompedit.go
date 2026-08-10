@@ -228,6 +228,11 @@ func (s *Session) applyDecompEdit(r *request, client *ghidra.Client, op string,
 	if record {
 		s.pushUndo(op, edit, res)
 	}
+	// A rename changes a name the index is keyed on, so the index has to go.
+	// Dropped for every edit rather than only for a rename: applying a
+	// prototype renames the function too, and a type on a global can define
+	// data where there was none and give a label a shape the pane shows.
+	s.forgetDecompIndex()
 	s.decompLog(wire.DecompLogInfo, "%s", did)
 
 	out := wire.DecompEdit{

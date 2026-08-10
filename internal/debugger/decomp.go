@@ -114,6 +114,16 @@ type decomp struct {
 	// stable; its address has to be asked for again.
 	biasFrom string
 	biasAddr uint64
+	// index is every name the decompiler knows — its functions and its
+	// module-scope labels — in Ghidra's coordinates, with indexBy mapping a
+	// name to its position. indexFor is the client it was read from, which is
+	// what makes a restarted decompiler rebuild rather than answer from a
+	// previous program's names. See decompindex.go.
+	//
+	// Actor-only, like the journal: built and read on the request path.
+	index    []decompEntry
+	indexBy  map[string]int
+	indexFor *ghidra.Client
 }
 
 // decompStatus answers what the pane can offer right now, and starts the

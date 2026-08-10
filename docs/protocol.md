@@ -505,7 +505,17 @@ whichever centre view has focus.
 }
 ```
 
-`target` is a symbol, an address, any gdb expression, or `FILE:LINE`.
+`target` is a symbol, an address, any gdb expression, `FILE:LINE`, or a name
+from the decompiler.
+
+That last one is asked second and only after gdb has refused, so a real symbol
+always wins and gdb stays in charge of what it knows. `FUN_0010e2dc` and
+`DAT_001a08de` are the only names a stripped binary has, and they are resolved
+through Ghidra's index and biased into runtime addresses — *not* by reading the
+digits back out of the name. Those digits are the link-time address, which is
+where the code is until the moment a PIE is loaded and never afterwards. `func`
+comes back as the name that was typed, since gdb has no symbol there to name it
+with.
 
 One resolver rather than one per view, because the views want different facts
 about the same place: the source view needs a file and a line, the disassembly
@@ -1078,14 +1088,18 @@ case-insensitive substring match on the name, `kind` is `function` or
     {"name": "main", "kind": "function", "type": "int (int, char **)",
      "file": "src/hello.c", "gdbPath": "/build/src/hello.c", "line": 9,
      "debug": true},
-    {"name": "_start", "kind": "function", "address": "0x1060"}
+    {"name": "_start", "kind": "function", "address": "0x1060"},
+    {"name": "FUN_0010e2dc", "kind": "function", "address": "0x5555555612dc",
+     "from": "decompiler"},
+    {"name": "DAT_001a08de", "kind": "variable", "address": "0x5555555f38de",
+     "type": "byte", "from": "decompiler"}
   ],
-  "matched": 2,
+  "matched": 4,
   "available": 148
 }
 ```
 
-The list holds two kinds of symbol, which behave differently:
+The list holds three kinds of entry, which behave differently:
 
 - **`debug: true`** — from DWARF. Carries `gdbPath` and `line`, and also `file`
   when the source resolves inside the project. Only these can be jumped to in
@@ -1095,6 +1109,20 @@ The list holds two kinds of symbol, which behave differently:
   evaluated. A function goes to the disassembly, and a variable goes to the
   memory viewer, because disassembling data produces output that looks like
   code.
+- **`from: "decompiler"`** — not a symbol at all. `FUN_0010e2dc` is what Ghidra
+  called a function it recovered and `DAT_001a08de` is what it called a global
+  something referenced; a name written over one in the Ghidra project appears
+  here too, and is no more a symbol for having been chosen by a person. These
+  exist only for a session with a decompiler, and only for names the binary does
+  not already carry — where both know a name, the binary's is the one listed,
+  because that one is recorded rather than recovered. A client must show them
+  differently. `address` is a runtime address like every other on this protocol,
+  biased from Ghidra's link-time one, so it is *not* the number spelled out in
+  the name.
+
+`analysing: true` on the reply means the decompiler is still importing or
+analysing and more names are coming. It is the difference between "this program
+has no symbols" and "not yet", which on firmware is minutes apart.
 
 `mem.read` and `disasm.function` both accept a symbol name where they accept
 an address. Resolution tries the expression, then `&(expression)` — a typeless

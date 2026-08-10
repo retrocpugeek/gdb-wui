@@ -55,7 +55,12 @@ func (s *Session) symbolsList(r *request) (any, *wire.Error) {
 	needle := strings.ToLower(strings.TrimSpace(req.Filter))
 	out := make([]wire.Symbol, 0, limit)
 	matched := 0
+	// have is what the binary itself carries, so the decompiler's list can drop
+	// the names that would only repeat it. Every name, not only the matching
+	// ones: a filter decides what is shown, not what the program contains.
+	have := make(map[string]bool, len(s.st.symbols))
 	for _, sym := range s.st.symbols {
+		have[sym.Name] = true
 		if req.Kind != "" && sym.Kind != req.Kind {
 			continue
 		}
@@ -67,6 +72,19 @@ func (s *Session) symbolsList(r *request) (any, *wire.Error) {
 			out = append(out, sym)
 		}
 	}
+
+	// And then what only the decompiler knows. This is the whole list for a
+	// stripped binary, which is the program that needs a symbol pane most and
+	// has never had one.
+	fromDecomp := s.decompSymbols(r, req.Filter, req.Kind, have)
+	matched += len(fromDecomp)
+	for _, sym := range fromDecomp {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, sym)
+	}
+
 	// Rank within the page rather than over the whole table: the user is
 	// looking for something they can half-remember the name of, and an exact
 	// or leading match is nearly always it. Sorting the page keeps this O(page).
@@ -75,9 +93,31 @@ func (s *Session) symbolsList(r *request) (any, *wire.Error) {
 	return wire.SymbolsList{
 		Symbols:   out,
 		Matched:   matched,
-		Available: len(s.st.symbols),
+		Available: len(s.st.symbols) + s.decompIndexSize(),
 		Truncated: matched > len(out),
+		Analysing: s.decompAnalysing(),
 	}, nil
+}
+
+// gdbKnowsSymbol reports whether the program's own symbol table has this name.
+//
+// Against the cached table rather than gdb, so it costs nothing per call. It
+// decides precedence and nothing else: a name the binary carries is gdb's to
+// resolve, and for a named function gdb skips the prologue — which is where the
+// interesting state has been set up. Only a name gdb does not have is looked
+// for among the decompiler's.
+func (s *Session) gdbKnowsSymbol(r *request, name string) bool {
+	if werr := s.ensureSymbols(r.ctx); werr != nil {
+		// No table to consult, which is the stripped binary this path exists
+		// for. Letting the decompiler answer is the useful reading.
+		return false
+	}
+	for _, sym := range s.st.symbols {
+		if sym.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // rankSymbols puts the likeliest hit first: exact name, then prefix, then

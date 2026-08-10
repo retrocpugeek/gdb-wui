@@ -890,6 +890,10 @@ function handleEvent(msg) {
       // again now it has: this is the moment a column of "?? ()" can stop
       // being one, and nothing else would trigger it until the next stop.
       nameUnknownFrames();
+      // And the same moment a stripped binary's symbol pane can stop being
+      // empty. Analysis takes minutes on firmware, so nobody is going to be
+      // looking when it finishes; the pane fills itself instead.
+      symbols.refresh();
       refreshDecompStatus().then((st) => {
         if (st?.state === "ready" && centre.isVisible("decomp")) {
           refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address);
@@ -1751,7 +1755,13 @@ ui.symbols.addEventListener("contextmenu", (ev) => {
   if (sym.kind === "function") {
     items.push({
       label: "Set breakpoint",
-      title: "break by name — gdb skips the prologue, which is where you mean to stop",
+      title: sym.from === "decompiler"
+        // No prologue skip for this one: gdb does not know the name, so the
+        // server resolves it and breaks on the entry address. Which is arguably
+        // the better place on a stripped binary — the arguments are still in
+        // the registers the ABI put them in, before anything spills them.
+        ? "break at the entry address the decompiler gives this function"
+        : "break by name — gdb skips the prologue, which is where you mean to stop",
       run: () => setFunctionBreakpoint(sym.name),
     });
   }
@@ -2188,7 +2198,11 @@ function jumpToSymbol(sym) {
   if (sym.kind === "variable") {
     disasmPin = null;
     showCenter("memory");
-    const expr = `&(${sym.name})`;
+    // A decompiler name goes by address instead. gdb has never heard of
+    // DAT_001a08de, so &(DAT_001a08de) is not an expression it can evaluate —
+    // the server resolved the name to an address to build this row, and that
+    // address is the thing to ask about.
+    const expr = sym.from === "decompiler" ? sym.address : `&(${sym.name})`;
     send("mem.read", {
       address: expr,
       count: 64,
@@ -2209,8 +2223,9 @@ function jumpToSymbol(sym) {
     return;
   }
   if (sym.address) {
-    // Pin the name, not the address, for the reason in showDisasmAt.
-    disasmPin = sym.name;
+    // Pin the name, not the address, for the reason in showDisasmAt — unless
+    // the name is the decompiler's, which gdb cannot resolve at all.
+    disasmPin = sym.from === "decompiler" ? sym.address : sym.name;
     disasmPinExplicit = true;
     const alreadyShowing = centre.isVisible("disasm");
     showCenter("disasm");

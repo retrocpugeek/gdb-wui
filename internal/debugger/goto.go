@@ -46,7 +46,30 @@ func (s *Session) gotoLocate(r *request) (any, *wire.Error) {
 	// which is what makes the two boxes accept the same things.
 	addr, werr := s.resolveAddress(r, target)
 	if werr != nil {
-		return nil, werr
+		// gdb has never heard of FUN_0010e2dc or DAT_001a08de: they are the
+		// decompiler's names for a program that has none of its own, and they
+		// are the only names a stripped binary offers. Asked second, so that a
+		// real symbol always wins and gdb stays in charge of what it knows.
+		//
+		// Resolved by name and not by reading the address out of the name. The
+		// digits in FUN_0010e2dc are Ghidra's link-time address, and the
+		// program is somewhere else entirely once a PIE has been relocated.
+		if !plausibleDecompName(target) {
+			return nil, werr
+		}
+		found, ok := s.decompAddressOf(r, target)
+		if !ok {
+			return nil, werr
+		}
+		out.Addr = found
+		out.Address = fmt.Sprintf("0x%x", found)
+		s.describeAddress(r.ctx, &out)
+		if out.Func == "" {
+			// The ordinary case: gdb has no symbol covering this address, so it
+			// named nothing. The name that was typed is the best there is.
+			out.Func = target
+		}
+		return out, nil
 	}
 	out.Addr = addr
 	out.Address = fmt.Sprintf("0x%x", addr)

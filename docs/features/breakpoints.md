@@ -49,6 +49,15 @@ function.
 | Inspect arguments and locals | The name; let gdb skip the prologue. |
 | See the prologue, or catch a jump into a function | The address. |
 
+A [decompiler](decompilation.md) name — `FUN_0010e2dc`, or whatever you have
+renamed it to — works here too, and behaves like the address rather than like
+the name: gdb has never heard of it, so the server resolves it through Ghidra
+and breaks on the entry instruction. On a stripped binary that is often where
+you want to be anyway. There is no prologue to skip past *to* — no line table
+and no locals to wait for — and the arguments are still in the registers the
+calling convention put them in, which on that binary is the only place you were
+going to read them.
+
 ## Pending breakpoints
 
 A breakpoint on a file or symbol that gdb does not yet know about is accepted

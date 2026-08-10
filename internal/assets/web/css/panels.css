@@ -726,6 +726,23 @@
 .sym-row.is-nondebug .list-main { color: var(--fg-1); }
 .sym-row.is-nondebug .sym-kind { opacity: 0.55; }
 
+/* A name from the Ghidra project rather than from the program. The same
+ * treatment the call stack gives a recovered frame, deliberately: FUN_0010e2dc
+ * and DAT_001a08de are guesses, a name someone wrote over one is still not a
+ * symbol, and a list that showed them like the binary's own would be claiming
+ * something the binary does not say. After the is-nondebug rule, which they
+ * also match — a decompiler name never has debug info. */
+.sym-row.is-decomp .list-main {
+  color: var(--tok-func);
+  font-style: italic;
+}
+.sym-row.is-decomp .sym-kind {
+  opacity: 1;
+  background: transparent;
+  color: var(--tok-func);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
 .sym-row .list-sub {
   flex: 0 0 auto;
   max-width: 45%;

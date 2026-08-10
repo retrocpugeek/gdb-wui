@@ -29,6 +29,41 @@ Double-clicking a symbol jumps to it:
 
 Right-clicking a symbol offers **Set breakpoint** and **Go to**.
 
+## A stripped binary
+
+Strip the symbol table and this pane has nothing to show, which is the program
+you most needed it for. With [the decompiler](decompilation.md) configured it
+fills up anyway, from Ghidra's names:
+
+- **`FUN_0010e2dc`** for every function Ghidra recovered, listed as `fn`.
+- **`DAT_001a08de`** for every global something references, listed as `var`,
+  with its type when one has been applied.
+- Whatever you have **renamed** either of those to, since that is the name you
+  will go looking for.
+
+These rows are drawn differently — the same italic the [call
+stack](../tour.md) uses for a recovered frame — because they are not symbols.
+`FUN_0010e2dc` is a guess about where a function starts, and a name you typed
+over one is a guess you agreed with; neither is recorded anywhere in the
+program, and a list that showed them like the binary's own would be claiming
+something the binary does not say. Where the binary *does* have a name, the
+binary's wins and appears once.
+
+Everything else works the same. Double-clicking goes to the disassembly or the
+memory viewer, right-clicking sets a breakpoint, and the name can be typed into
+the go-to box. gdb has never heard of any of them, so the server resolves the
+name through Ghidra and translates the address — which is not the number spelled
+out in the name, since a position-independent executable is somewhere else
+entirely by the time it is running.
+
+One difference worth knowing: a breakpoint on a decompiler name stops at the
+function's first instruction, where a named function would have had its prologue
+skipped. On a stripped binary that is arguably the better place — the arguments
+are still in the registers the ABI put them in, before anything spills them.
+
+Until Ghidra has finished analysing, the pane says so rather than saying the
+program has no symbols. On firmware that wait is minutes.
+
 ## Loading more symbols
 
 To load a symbol file for the program already running, click **+ load**.

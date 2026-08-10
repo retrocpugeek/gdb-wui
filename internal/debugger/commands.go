@@ -547,6 +547,17 @@ func (s *Session) bpSetAddress(r *request) (any, *wire.Error) {
 	spec := loc
 	if _, err := parseAddress(loc); err == nil {
 		spec = "*" + loc
+	} else if plausibleDecompName(loc) && !s.gdbKnowsSymbol(r, loc) {
+		// A decompiler name — FUN_0010e2dc, or whatever it has been renamed to
+		// — reaches gdb as an unresolvable location, and -f turns that into a
+		// *pending* breakpoint rather than an error. Pending is right for a
+		// shared library that has not loaded yet and wrong here: nothing will
+		// ever define this name, so the breakpoint sits there looking set and
+		// never fires. Resolving it to an address is the difference between
+		// working and quietly not.
+		if addr, ok := s.decompAddressOf(r, loc); ok {
+			spec = fmt.Sprintf("*0x%x", addr)
+		}
 	}
 
 	// -f for the same reason as bpSetSource: a location that cannot be
