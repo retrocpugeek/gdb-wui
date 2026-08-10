@@ -818,9 +818,49 @@ the decompiler's markup rather than from the text, so a decompiled
 addresses in `lines`, deliberately: the program counter must never be put on
 one.
 
+### Who wrote it
+
+Every decompiler edit carries an optional `author`. The browser never sets it;
+the [MCP bridge](features/agent.md) always does, as `"agent"`. It changes how
+the edit is recorded and nothing else — an agent passes the same guards, the
+same transaction and the same journal as a person.
+
+- A **name or a type** is written with Ghidra's `ANALYSIS` source type rather
+  than `USER_DEFINED`, and comes back on `decomp.function` as
+  `source: "inferred"`. The other values are `user`, `symbol` (out of the
+  binary), `ghidra` (`local_10`, `FUN_00401154`) and absent, which means the
+  decompiler invented the name for this decompilation and there is no symbol
+  behind it at all. `inferred` deliberately does not say *which* inference:
+  Ghidra's own analysers produce `ANALYSIS` names too, and claiming otherwise
+  would credit a demangler's work to a model.
+- A **comment** has no source type, so authorship is kept beside it as a Ghidra
+  bookmark and reported as `author` on each entry of `comments`. Rewriting an
+  agent's comment as a person clears the mark: what is on the page afterwards is
+  yours.
+
+`author` is a claim by the client, not a fact the server can check. Anything
+that can reach this protocol could lie about it, and anything that can reach
+this protocol can already rename whatever it likes.
+
+### Undoing a run
+
 `decomp.undo` reverses the last edit. It is gdb-wui's own journal of inverse
 edits rather than Ghidra's undo, because saving clears Ghidra's undo stack and
 every edit is saved — an unsaved rename lives only inside the sidecar process.
+
+An agent writes forty annotations in a burst, and forty undos is not an undo,
+so the server groups consecutive edits by the same author into a **run** — a
+person's edit between two of an agent's starts a new one. `decomp.status` and
+every edit reply carry the run at the top of the journal:
+
+```json
+{ "undo": { "id": "r3", "author": "agent", "count": 23 } }
+```
+
+Sending that `id` as `decomp.undo`'s `run` reverses the whole group, newest
+first, one edit at a time through the same path a single undo takes — each
+inverse was computed against the state its edit left behind. Only the topmost
+run may be undone; an older one is refused rather than applied out of order.
 
 A `decompEdited` event is broadcast on every successful edit. One server serves
 however many browser tabs are open on it, and they all show the old name until

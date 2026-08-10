@@ -40,7 +40,7 @@
 //       "symbol":"57","name":"local_10","newName":"count"}
 //   <- {"id":5,"ok":true,"function":{...}}
 //   -> {"id":6,"op":"comment","kind":"line","function":"0x10d2b0",
-//       "address":"0x10d2c4","text":"retry count, not a length"}
+//       "address":"0x10d2c4","text":"retry count, not a length","author":"agent"}
 //   <- {"id":6,"ok":true,"function":{...},"was":"","now":"retry count, ..."}
 //
 // An edit replies with the whole re-decompiled function rather than an
@@ -81,6 +81,8 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Listing;
@@ -279,6 +281,32 @@ public class DecompServer extends GhidraScript {
 	// Without the save the new name lives only in this process and any crash
 	// loses an afternoon's work.
 
+	// AGENT is the author string that means "not the person at the keyboard".
+	// It changes two things: names are written as inferred rather than as
+	// stated, and comments are bookmarked so their author survives the session.
+	private static final String AGENT = "agent";
+
+	// The bookmark that records who wrote a comment. A comment has no source
+	// type — the listing stores text and nothing else — so the authorship has
+	// to sit beside it. A bookmark is Ghidra's own mechanism for that, it
+	// survives the save and a later re-analysis (finding 40), and it leaves the
+	// comment text exactly as it was typed. The alternative, a marker inside
+	// the text, would have to be parsed off on the way back and would be
+	// visible to anyone reading the project in Ghidra as noise.
+	private static final String BOOKMARK_TYPE = "Note";
+	private static final String BOOKMARK_CATEGORY = "gdb-wui/agent";
+
+	// sourceOf decides how a name is recorded.
+	//
+	// ANALYSIS rather than USER_DEFINED for an agent, which is Ghidra's own
+	// vocabulary for "inferred" and is what the Ghidra UI shows afterwards.
+	// The reverse mapping is deliberately not exact and the consumer is told
+	// so: Ghidra's own analysers also produce ANALYSIS names, so "analysis"
+	// means "not typed by a person" rather than "written by an agent".
+	private static SourceType sourceOf(String author) {
+		return AGENT.equals(author) ? SourceType.ANALYSIS : SourceType.USER_DEFINED;
+	}
+
 	private static final String READ_ONLY =
 		"this project is opened read-only: gdb-wui edits only the project it " +
 			"imported itself, never one you named with -ghidra-project";
@@ -298,6 +326,7 @@ public class DecompServer extends GhidraScript {
 		if (want.isEmpty()) {
 			return fail(id, "a new name is required");
 		}
+		SourceType source = sourceOf(field(req, "author"));
 
 		String err = null;
 		boolean ok = false;
@@ -309,7 +338,7 @@ public class DecompServer extends GhidraScript {
 		try {
 			if ("function".equals(kind)) {
 				was = f.getName();
-				f.setName(want, SourceType.USER_DEFINED);
+				f.setName(want, source);
 			}
 			else if ("variable".equals(kind)) {
 				HighSymbol sym = symbolFor(f, field(req, "symbol"), field(req, "name"));
@@ -318,7 +347,7 @@ public class DecompServer extends GhidraScript {
 				}
 				else {
 					was = sym.getName();
-					HighFunctionDBUtil.updateDBVariable(sym, want, null, SourceType.USER_DEFINED);
+					HighFunctionDBUtil.updateDBVariable(sym, want, null, source);
 				}
 			}
 			else if ("global".equals(kind)) {
@@ -329,7 +358,7 @@ public class DecompServer extends GhidraScript {
 				}
 				else {
 					was = sym.getName();
-					sym.setName(want, SourceType.USER_DEFINED);
+					sym.setName(want, source);
 				}
 			}
 			else {
@@ -364,6 +393,7 @@ public class DecompServer extends GhidraScript {
 		if (text.isEmpty()) {
 			return fail(id, "a type is required");
 		}
+		SourceType source = sourceOf(field(req, "author"));
 
 		String err = null;
 		boolean ok = false;
@@ -393,7 +423,7 @@ public class DecompServer extends GhidraScript {
 				// prototype does not carry one and Ghidra's guess is better
 				// than the default.
 				else if (!new ApplyFunctionSignatureCmd(f.getEntryPoint(), def,
-					SourceType.USER_DEFINED, true, false,
+					source, true, false,
 					DataTypeConflictHandler.DEFAULT_HANDLER, FunctionRenameOption.RENAME)
 						.applyTo(currentProgram, monitor)) {
 					err = "the prototype parsed but could not be applied";
@@ -410,7 +440,7 @@ public class DecompServer extends GhidraScript {
 					// The name is passed back unchanged rather than left null,
 					// so a retype is only ever a retype.
 					HighFunctionDBUtil.updateDBVariable(sym, sym.getName(), parseType(text),
-						SourceType.USER_DEFINED);
+						source);
 				}
 			}
 			else {
@@ -499,9 +529,22 @@ public class DecompServer extends GhidraScript {
 		String was = listing.getComment(type, at);
 		String err = null;
 		boolean ok = false;
+		boolean agent = AGENT.equals(field(req, "author"));
 		int tx = currentProgram.startTransaction(text.isEmpty() ? "remove a comment" : "comment");
 		try {
 			listing.setComment(at, type, text.isEmpty() ? null : text);
+			// The mark goes on and comes off with the comment, and a person
+			// editing an agent's note takes it over: what is on the page after
+			// this call is theirs, and marking it otherwise would credit the
+			// agent with a sentence it did not write.
+			BookmarkManager marks = currentProgram.getBookmarkManager();
+			Bookmark had = marks.getBookmark(at, BOOKMARK_TYPE, BOOKMARK_CATEGORY);
+			if (had != null) {
+				marks.removeBookmark(had);
+			}
+			if (agent && !text.isEmpty()) {
+				marks.setBookmark(at, BOOKMARK_TYPE, BOOKMARK_CATEGORY, kind);
+			}
 			ok = true;
 		}
 		catch (Exception e) {

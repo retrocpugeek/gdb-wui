@@ -574,6 +574,212 @@ func TestReadOnlyClientRefusesComments(t *testing.T) {
 	}
 }
 
+// TestAnAgentsNameIsRecordedAsInferred pins finding 40's first half. A name a
+// person typed and a name something guessed must not come back alike, and
+// Ghidra's own source types are the record: ANALYSIS for the guess,
+// USER_DEFINED for the person.
+func TestAnAgentsNameIsRecordedAsInferred(t *testing.T) {
+	c, opts := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	agent, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Name:     fn.Name,
+		Value:    "guessed_name",
+		Author:   ghidra.AuthorAgent,
+	})
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if agent.Function.Source != ghidra.SourceAnalysis {
+		t.Errorf("source = %q, want %s — an agent's name is inferred, not stated",
+			agent.Function.Source, ghidra.SourceAnalysis)
+	}
+
+	// The same edit from a person is recorded differently, which is the whole
+	// point: one field, two claims.
+	person, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Name:     "guessed_name",
+		Value:    "chosen_name",
+	})
+	if err != nil {
+		t.Fatalf("second Rename: %v", err)
+	}
+	if person.Function.Source != ghidra.SourceUser {
+		t.Errorf("source = %q, want %s", person.Function.Source, ghidra.SourceUser)
+	}
+
+	// And a local, which goes through a different Ghidra API — the one that
+	// creates the database variable a decompiler local does not have.
+	var local *ghidra.Var
+	for i := range person.Function.Variables {
+		if person.Function.Variables[i].ID != "" {
+			local = &person.Function.Variables[i]
+			break
+		}
+	}
+	if local == nil {
+		t.Fatal("no variable carried a symbol id")
+	}
+	withLocal, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   local.ID,
+		Name:     local.Name,
+		Value:    "guessed_local",
+		Author:   ghidra.AuthorAgent,
+	})
+	if err != nil {
+		t.Fatalf("renaming a local: %v", err)
+	}
+	got := findVar(withLocal.Function.Variables, "guessed_local")
+	if got == nil {
+		t.Fatalf("guessed_local is not there: %v", names(withLocal.Function.Variables))
+	}
+	if got.Source != ghidra.SourceAnalysis {
+		t.Errorf("local source = %q, want %s", got.Source, ghidra.SourceAnalysis)
+	}
+
+	// All of it has to survive the project being closed and opened again,
+	// because that is when a user next sees it — in gdb-wui or in Ghidra.
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	again, err := ghidra.Start(ctx, opts)
+	if err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	defer again.Close()
+	back, err := again.Decompile(ctx, "chosen_name")
+	if err != nil {
+		t.Fatalf("Decompile after restart: %v", err)
+	}
+	if back.Source != ghidra.SourceUser {
+		t.Errorf("after a restart the function's source is %q, want %s",
+			back.Source, ghidra.SourceUser)
+	}
+	if v := findVar(back.Variables, "guessed_local"); v == nil ||
+		v.Source != ghidra.SourceAnalysis {
+		t.Errorf("after a restart the local is %+v, want one marked %s",
+			v, ghidra.SourceAnalysis)
+	}
+}
+
+// TestAnAgentsCommentIsMarked pins the other half. A comment has no source type
+// — the listing stores text and nothing else — so authorship rides beside it as
+// a bookmark, and the interesting cases are the transitions.
+func TestAnAgentsCommentIsMarked(t *testing.T) {
+	c, opts := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	line := firstMappedLine(t, fn)
+	at := line.Addrs[0]
+
+	res, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  at,
+		Value:    "the agent thinks this is a length",
+		Author:   ghidra.AuthorAgent,
+	})
+	if err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+	if got := findComment(res.Function.Comments, at); got == nil ||
+		got.Author != ghidra.AuthorAgent {
+		t.Fatalf("comment = %+v, want one marked as the agent's", got)
+	}
+
+	// A person editing an agent's note takes it over. What is on the page
+	// afterwards is theirs, and leaving the mark would credit the agent with a
+	// sentence it did not write.
+	res, err = c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  at,
+		Value:    "no: it is a count",
+	})
+	if err != nil {
+		t.Fatalf("second Comment: %v", err)
+	}
+	if got := findComment(res.Function.Comments, at); got == nil || got.Author != "" {
+		t.Fatalf("after a person rewrote it the comment is %+v, want no author", got)
+	}
+
+	// And the mark survives a restart when it is the agent's.
+	if _, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Value:    "written by the agent, before the restart",
+		Author:   ghidra.AuthorAgent,
+	}); err != nil {
+		t.Fatalf("commenting the function: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	again, err := ghidra.Start(ctx, opts)
+	if err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	defer again.Close()
+	back, err := again.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile after restart: %v", err)
+	}
+	if got := findComment(back.Comments, back.Entry); got == nil ||
+		got.Author != ghidra.AuthorAgent {
+		t.Errorf("after a restart the function comment is %+v, want the agent's mark", got)
+	}
+}
+
+// TestRemovingACommentRemovesItsMark. A bookmark left behind would put the
+// agent's name on whatever a person writes there next.
+func TestRemovingACommentRemovesItsMark(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	line := firstMappedLine(t, fn)
+	at := line.Addrs[0]
+
+	for _, e := range []ghidra.Edit{
+		{Kind: ghidra.EditLine, Function: fn.Entry, Address: at,
+			Value: "the agent's", Author: ghidra.AuthorAgent},
+		{Kind: ghidra.EditLine, Function: fn.Entry, Address: at, Value: ""},
+	} {
+		if _, err := c.Comment(ctx, e); err != nil {
+			t.Fatalf("Comment %+v: %v", e, err)
+		}
+	}
+	res, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  at,
+		Value:    "mine now",
+	})
+	if err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+	if got := findComment(res.Function.Comments, at); got == nil || got.Author != "" {
+		t.Errorf("comment = %+v; the agent's mark outlived the comment it was on", got)
+	}
+}
+
 // firstMappedLine is a line that came from an address, which is the only kind
 // that can hold a comment.
 func firstMappedLine(t *testing.T, fn *ghidra.Function) ghidra.Line {

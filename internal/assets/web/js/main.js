@@ -375,7 +375,8 @@ function decompEditItems(target) {
     const kind = sym.storage === "global" ? "global" : "variable";
     items.push({
       label: `Rename ${sym.name}…`,
-      title: why || `give ${sym.name} a name of your own, in the decompiler`,
+      title: why || `give ${sym.name} a name of your own, in the decompiler`
+        + sourceNote(sym.source),
       disabled: Boolean(why),
       run: () => renameDecompSymbol(sym, fn, kind),
     });
@@ -390,7 +391,8 @@ function decompEditItems(target) {
   }
   items.push({
     label: `Rename the function ${fn.name}…`,
-    title: why || "the name shown here, in the call stack and in the symbol list",
+    title: why || "the name shown here, in the call stack and in the symbol list"
+      + sourceNote(fn.source),
     disabled: Boolean(why),
     run: () => renameDecompFunction(fn, target.at),
   });
@@ -443,7 +445,33 @@ function decompEditItems(target) {
       }).catch(reportError),
     });
   }
+
+  // Undoing a whole run, offered only when there is one worth undoing. An agent
+  // writes forty annotations in a burst, and forty presses of Ctrl+Shift+Z is
+  // not an undo.
+  const run = st?.undo;
+  if (run && run.count > 1) {
+    items.push({
+      label: run.author === "agent"
+        ? `Undo the agent's last ${run.count} edits`
+        : `Undo the last ${run.count} edits`,
+      title: "reverses them one at a time, newest first, in the decompiler",
+      disabled: Boolean(why),
+      run: () => send("decomp.undo", {
+        run: run.id, stopSeq: store.get("session.stopSeq"),
+      }).then(applyDecompEdit).catch(reportError),
+    });
+  }
   return items;
+}
+
+// sourceNote says where a name came from, when that is worth saying. "Inferred"
+// covers an agent and Ghidra's own analysers alike, because the decompiler does
+// not distinguish them and this must not claim to.
+function sourceNote(source) {
+  if (source === "inferred") return " — the current name was inferred, not typed by you";
+  if (source === "symbol") return " — the current name came from the binary's symbol table";
+  return "";
 }
 
 // Renaming a recovered frame, from the call stack.
@@ -587,6 +615,10 @@ function sendDecompEdit(type, payload) {
 // callers decompile, so the only safe assumption is that anything showing a
 // decompiler name is now out of date.
 function applyDecompEdit(out) {
+  // The reply already says what one undo would reverse, so the tab that made
+  // the edit needs no round trip to know.
+  const status = store.get("session.decomp");
+  if (status) store.set("session.decomp", { ...status, undo: out?.run ?? null });
   // Only if the pane is showing the function that was edited. Renaming a frame
   // from the call stack edits a function the pane may not be on, and painting
   // it there would navigate somebody away from what they were reading.
@@ -833,6 +865,10 @@ function handleEvent(msg) {
       // changes how its callers decompile too.
       nameUnknownFrames();
       symbols.refresh();
+      // What one undo would now reverse. Cheap next to the decompile below, and
+      // it is how a tab that did not make the edit learns that an agent has
+      // just written twenty annotations it could offer to take back.
+      refreshDecompStatus();
       // The function this pane is showing, not the one the program counter is
       // in: someone renaming a symbol has usually navigated somewhere on
       // purpose, and refetching around the pc would take them back. In the tab

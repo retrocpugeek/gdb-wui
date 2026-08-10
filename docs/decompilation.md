@@ -121,10 +121,12 @@ that also needs a system JDK 21 or later, and both have to remain optional.
       "bodyStart": "0x1011e9",
       "bodyEnd": "0x10125e",
       "signature": "void inspect(config * cfg)",
+      "source": "IMPORTED",
       "frame": { "size": 96, "localSize": 96, "paramOffset": 0,
                  "returnAddressOffset": 0, "growsNegative": true },
       "variables": [
-        { "name": "buf", "id": "57", "type": "char[64]", "size": 64, "param": false,
+        { "name": "buf", "id": "57", "source": "DEFAULT",
+          "type": "char[64]", "size": 64, "param": false,
           "pc": null, "storage": { "kind": "stack", "offset": -88 } },
         { "name": "cfg", "id": "58", "type": "config *", "size": 8, "param": true,
           "pc": "0x1011e8", "storage": { "kind": "register", "register": "RDI" } },
@@ -139,7 +141,7 @@ that also needs a system JDK 21 or later, and both have to remain optional.
         { "n": 12, "addrs": ["0x10123c", "0x101243"] }
       ],
       "commentLines": [ { "n": 9, "addr": "0x1011f9" } ],
-      "comments": [ { "addr": "0x1011f9", "kind": "pre",
+      "comments": [ { "addr": "0x1011f9", "kind": "pre", "author": "",
                       "text": "cfg->count is a byte count, not an item count" } ]
     }
   ]
@@ -182,6 +184,11 @@ with the body's `0x1188` and `0x118d` *between* them. A min/max range for line
 
 Two views of the same comments, and they are not interchangeable.
 
+`author` on a comment is `agent` when a Ghidra bookmark at that address marks it
+as one, and empty when a person wrote it. A comment has no source type of its
+own — the listing stores text and nothing else — so the bookmark is the only
+record there is, and it goes on and comes off with the comment it marks.
+
 `comments` is what is stored in the program's listing, as typed. Two kinds are
 exported, because two are what the decompiler displays with its default
 options: `pre`, printed above the statement its address generated, and `plate`
@@ -219,6 +226,17 @@ Three storage kinds come out of the decompiler and they are not equally useful:
 In `inspect`, `lVar1` and `local_58` look alike in the C text; one of them has
 a location and the other never will. A UI that shows blanks for some variables
 is honest. One that quietly omits them is not.
+
+`source` is where the name came from, in Ghidra's own vocabulary:
+`USER_DEFINED`, `ANALYSIS`, `IMPORTED` or `DEFAULT`. Empty on a variable means
+there is no database symbol at all — the decompiler invented that one for this
+decompilation — which is a different thing from a name nobody has touched, and
+the two must not be shown alike.
+
+It is exported rather than reduced here because the reduction is lossy and
+belongs to the consumer: `ANALYSIS` covers an agent's guess and Ghidra's own
+demangler alike, and this document should not decide which of those a reader is
+told about. See finding 40.
 
 `id` is Ghidra's symbol id, and it is what addresses a variable for a rename or
 a retype. It is a string rather than a number because a symbol the decompiler

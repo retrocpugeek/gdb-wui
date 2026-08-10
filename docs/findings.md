@@ -337,3 +337,31 @@ implementing:
     and why the same address is worth reporting separately: it is the only way
     back from a comment on the page to the thing it is about, and so the only
     way a right-click on one can edit it.
+
+40. **Ghidra can say who named something, and it survives.** A name carries a
+    `SourceType` — `USER_DEFINED`, `ANALYSIS`, `IMPORTED` or `DEFAULT` — and
+    writing one as `ANALYSIS` records "something worked this out" rather than
+    "somebody said so". Probed on 12.1.2: a function renamed that way, and a
+    local renamed through `HighFunctionDBUtil.updateDBVariable` with the same
+    source type, both read back as `ANALYSIS` in a fresh process, and **a
+    re-run of full analysis over the project changed neither**. That last part
+    was the risk worth measuring: analysis-sourced names are lower priority
+    than user ones, and a name that quietly evaporated on the user's next
+    Ghidra session would be worse than one never marked.
+
+    The reverse mapping is not exact and must not be presented as one. Ghidra's
+    own analysers also produce `ANALYSIS` names — a demangler's, for one — so
+    the protocol calls it `inferred` rather than "an agent named this".
+
+    A comment has no source type at all; the listing stores text and nothing
+    else. Authorship therefore rides beside it as a bookmark — type `Note`,
+    category `gdb-wui/agent` — which survives the save, the reopen and the
+    re-analysis alongside the comment, and leaves the comment text exactly as
+    it was typed. A marker inside the text would have to be parsed off on the
+    way back and would be noise to anyone reading the project in Ghidra.
+
+    Two consequences for the code. The bookmark goes on and comes off with the
+    comment, so a person who rewrites an agent's note takes it over. And
+    `HighSymbol.getName()` still answers with the *old* name after
+    `updateDBVariable` — the object is stale, and only the re-decompilation is
+    the truth, which the edit path already returns.

@@ -22,7 +22,9 @@ package debugger
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/retrocpugeek/gdb-wui/internal/ghidra"
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
@@ -43,6 +45,32 @@ type decompUndo struct {
 	edit ghidra.Edit
 	// did describes what undoing it will do, for the status line.
 	did string
+	// run groups edits that were made together, so that forty annotations
+	// written by an agent in one burst come back off in one step. author is
+	// what does the grouping — a person's edit between two of an agent's
+	// starts a new run, which is exactly where a user would want the boundary.
+	run    string
+	author string
+	// at is when the edit was made, and only the gap between consecutive edits
+	// by one author is read from it.
+	at time.Time
+}
+
+// runGap ends a run. Long enough that an agent thinking between two tool calls
+// stays in one run; short enough that a burst an hour later is a different one.
+const runGap = 2 * time.Minute
+
+// author narrows what a client may claim to the one value that means anything.
+//
+// Unrecognised is a person, not an error: the field exists so an agent can say
+// it is one, and a client that sends nonsense gets the safer reading — its
+// edits are recorded as stated rather than inferred, which understates the
+// machine's involvement rather than overstating a person's.
+func author(claimed string) string {
+	if claimed == wire.DecompAuthorAgent {
+		return ghidra.AuthorAgent
+	}
+	return ""
 }
 
 func (s *Session) decompRename(r *request) (any, *wire.Error) {
@@ -88,6 +116,7 @@ func (s *Session) decompEdit(r *request, op string) (any, *wire.Error) {
 		Symbol: req.Symbol,
 		Name:   req.Name,
 		Value:  value,
+		Author: author(req.Author),
 	}
 	if edit.Function, werr = toGhidraAddr(req.Function, bias, "function"); werr != nil {
 		return nil, werr
@@ -108,7 +137,8 @@ func (s *Session) decompEdit(r *request, op string) (any, *wire.Error) {
 // succeeds: an inverse that fails will fail again, and leaving it on the
 // journal makes undo a wall rather than a step back.
 func (s *Session) decompUndoLast(r *request) (any, *wire.Error) {
-	if _, werr := decode[wire.DecompUndoRequest](r.req.Payload); werr != nil {
+	req, werr := decode[wire.DecompUndoRequest](r.req.Payload)
+	if werr != nil {
 		return nil, werr
 	}
 	client, werr := s.writableDecomp()
@@ -118,17 +148,50 @@ func (s *Session) decompUndoLast(r *request) (any, *wire.Error) {
 	if len(s.decomp.journal) == 0 {
 		return nil, wire.NewError(wire.CodeBadRequest, "nothing to undo")
 	}
-	last := s.decomp.journal[len(s.decomp.journal)-1]
-	s.decomp.journal = s.decomp.journal[:len(s.decomp.journal)-1]
+	// A run is reversed newest-first, one edit at a time, through the same path
+	// a single undo takes. Not because it is tidy: each inverse was computed
+	// against the state the edit left behind, so applying them out of order
+	// would put a name back that something later had already renamed.
+	want := 1
+	if req.Run != "" {
+		top := s.topRun()
+		if top == nil || top.ID != req.Run {
+			return nil, wire.NewError(wire.CodeBadRequest,
+				"that run is not at the top of the journal; only the most "+
+					"recent one can be undone")
+		}
+		want = top.Count
+	}
 
 	bias, biasFrom := s.decompBias(r, client)
-	out, werr := s.applyDecompEdit(r, client, last.op, last.edit, bias, biasFrom, false)
-	if werr != nil {
-		return nil, werr
+	var out wire.DecompEdit
+	undone := 0
+	for ; undone < want && len(s.decomp.journal) > 0; undone++ {
+		last := s.decomp.journal[len(s.decomp.journal)-1]
+		s.decomp.journal = s.decomp.journal[:len(s.decomp.journal)-1]
+
+		res, werr := s.applyDecompEdit(r, client, last.op, last.edit, bias, biasFrom, false)
+		if werr != nil {
+			if undone == 0 {
+				return nil, werr
+			}
+			// Part way through a run. What has been reversed stays reversed —
+			// re-applying it would need an inverse of an inverse, and the
+			// journal holds no such thing — so this reports how far it got
+			// rather than pretending either outcome.
+			out.Warning = fmt.Sprintf("undid %d of %d, then: %s",
+				undone, want, werr.Message)
+			break
+		}
+		out = res.(wire.DecompEdit)
+		out.Did = last.did
 	}
-	edit := out.(wire.DecompEdit)
-	edit.Did = last.did
-	return edit, nil
+	if undone > 1 {
+		out.Did = fmt.Sprintf("undid %d edits", undone)
+	}
+	out.CanUndo = len(s.decomp.journal) > 0
+	out.Run = s.topRun()
+	return out, nil
 }
 
 // applyDecompEdit is the one path an edit takes, undo included.
@@ -172,6 +235,7 @@ func (s *Session) applyDecompEdit(r *request, client *ghidra.Client, op string,
 		Did:      did,
 		Warning:  res.Warning,
 		CanUndo:  len(s.decomp.journal) > 0,
+		Run:      s.topRun(),
 	}
 	// Broadcast as well as reply. One server serves however many browser tabs
 	// are open on it, and an edit changes more than the pane it was made in:
@@ -219,13 +283,62 @@ func (s *Session) pushUndo(op string, edit ghidra.Edit, res *ghidra.EditResult) 
 		did = fmt.Sprintf("put %s back to %s", nameOf(res.Now, edit), back)
 	}
 	s.decomp.journal = append(s.decomp.journal, decompUndo{
-		op:   op,
-		edit: inverse,
-		did:  did,
+		op:     op,
+		edit:   inverse,
+		did:    did,
+		run:    s.runFor(edit.Author),
+		author: edit.Author,
+		at:     time.Now(),
 	})
 	if len(s.decomp.journal) > maxUndo {
 		s.decomp.journal = s.decomp.journal[len(s.decomp.journal)-maxUndo:]
 	}
+}
+
+// runFor puts this edit in the run above it, or starts a new one.
+//
+// Same author and close enough in time is the same run. The alternative — the
+// client naming its own run — was rejected because a client cannot see the
+// boundary either: an agent does not know when it has finished thinking, and
+// a person never says.
+func (s *Session) runFor(author string) string {
+	if n := len(s.decomp.journal); n > 0 {
+		last := s.decomp.journal[n-1]
+		if last.author == author && time.Since(last.at) < runGap {
+			return last.run
+		}
+	}
+	s.decomp.runSeq++
+	return "r" + strconv.FormatUint(s.decomp.runSeq, 10)
+}
+
+// topRun describes the run at the head of the journal, which is the only one a
+// client is offered: undoing out of order would apply an inverse to a state it
+// was not computed against.
+func (s *Session) topRun() *wire.DecompRun {
+	n := len(s.decomp.journal)
+	if n == 0 {
+		return nil
+	}
+	run := s.decomp.journal[n-1].run
+	count := 0
+	for i := n - 1; i >= 0 && s.decomp.journal[i].run == run; i-- {
+		count++
+	}
+	return &wire.DecompRun{
+		ID:     run,
+		Author: authorOut(s.decomp.journal[n-1].author),
+		Count:  count,
+	}
+}
+
+// authorOut is the wire's spelling of an author, so that the sidecar's word for
+// it is not the one on the protocol.
+func authorOut(a string) string {
+	if a == ghidra.AuthorAgent {
+		return wire.DecompAuthorAgent
+	}
+	return ""
 }
 
 func describeEdit(op string, edit ghidra.Edit, res *ghidra.EditResult) string {

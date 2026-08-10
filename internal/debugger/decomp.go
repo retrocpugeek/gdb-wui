@@ -99,6 +99,8 @@ type decomp struct {
 	//
 	// Actor-only. Unlike the fields above, nothing off the actor touches it.
 	journal []decompUndo
+	// runSeq names the groups the journal is undone in. Actor-only as well.
+	runSeq uint64
 	// closed means the session is shutting down. A start already in flight
 	// will finish and hand back a live process afterwards; without this it
 	// would assign it to a client nobody is left to close, orphaning a JVM.
@@ -145,6 +147,12 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 		Error:         errText,
 		GhidraVersion: cfg.Install.Version,
 		Editable:      writable,
+		// What one undo would reverse. Sent unasked because the client has to
+		// offer it before anything goes wrong: an agent that has just written
+		// forty annotations is exactly when "undo all of that" is wanted, and
+		// asking for the journal's shape first would be a round trip nobody
+		// makes until they already regret something.
+		Undo: s.topRun(),
 	}
 	if client == nil {
 		return out, nil
@@ -442,6 +450,7 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 	out := wire.DecompFunction{
 		Name:      fn.Name,
 		Signature: fn.Signature,
+		Source:    decompSource(fn.Source),
 		Entry:     shiftAddr(fn.Entry, bias),
 		BodyStart: shiftAddr(fn.BodyStart, bias),
 		BodyEnd:   shiftAddr(fn.BodyEnd, bias),
@@ -464,9 +473,10 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 	}
 	for _, c := range fn.Comments {
 		out.Comments = append(out.Comments, wire.DecompComment{
-			Addr: shiftAddr(c.Addr, bias),
-			Kind: c.Kind,
-			Text: c.Text,
+			Addr:   shiftAddr(c.Addr, bias),
+			Kind:   c.Kind,
+			Text:   c.Text,
+			Author: c.Author,
 		})
 	}
 	out.PCLine, out.PCLineAmbiguous, out.PCLineApprox =
@@ -477,6 +487,7 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 			Name:    v.Name,
 			ID:      v.ID,
 			Type:    v.Type,
+			Source:  decompSource(v.Source),
 			Param:   v.Param,
 			Storage: storageKind(v.Storage.Kind),
 			Expr:    varExpr(v, fn.Frame, s.decompLanguage(), s.decompPointerSize()),
@@ -499,6 +510,27 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 		})
 	}
 	return out
+}
+
+// decompSource turns Ghidra's vocabulary into the protocol's.
+//
+// Not one-to-one, and deliberately: Ghidra's ANALYSIS covers an agent's guess
+// and its own demangler alike, so it becomes "inferred" rather than "an agent
+// named this". Claiming the stronger reading would credit one guess to whoever
+// last ran the other.
+func decompSource(source string) string {
+	switch source {
+	case ghidra.SourceUser:
+		return wire.DecompSourceUser
+	case ghidra.SourceAnalysis:
+		return wire.DecompSourceInferred
+	case ghidra.SourceImported:
+		return wire.DecompSourceSymbol
+	case ghidra.SourceDefault:
+		return wire.DecompSourceGhidra
+	}
+	// No symbol behind the name at all: the decompiler invented it.
+	return wire.DecompSourceNone
 }
 
 // pcLine finds the line the program counter is on.

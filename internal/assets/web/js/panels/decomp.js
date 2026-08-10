@@ -77,7 +77,19 @@ export function createDecomp({ element, onGutterClick }) {
           // cannot hold a breakpoint, so it must not look as though it can.
           const mapped = addrsByLine.has(n);
           row.classList.toggle("is-mapped", mapped);
+          const comment = commentByLine.has(n)
+            ? comments.get(normalise(commentByLine.get(n)))
+            : null;
           row.classList.toggle("is-comment", commentByLine.has(n));
+          // Whose note this is. A comment an agent wrote is a guess with a
+          // sentence around it, and reading it as somebody's conclusion when
+          // nobody concluded it is the mistake this prevents.
+          row.classList.toggle("is-agent", comment?.author === "agent");
+          if (comment?.author === "agent") {
+            row.title = "written by an agent, not by you";
+          } else if (row.title) {
+            row.removeAttribute("title");
+          }
           row.classList.toggle("has-bp", bpLines.has(n));
           row.classList.toggle("is-pc", n === fn?.pcLine);
           row.classList.toggle("is-pc-ambiguous",
@@ -168,6 +180,9 @@ export function createDecomp({ element, onGutterClick }) {
       id: v.id ?? "",
       addr: v.addr ?? "",
       type: v.type ?? "",
+      // Where the name came from, so a caller can say "you named this" rather
+      // than implying it about every name on the page.
+      source: v.source ?? "",
       param: Boolean(v.param),
       rect: range.getBoundingClientRect(),
       anchor: code,
@@ -218,7 +233,12 @@ export function createDecomp({ element, onGutterClick }) {
   // FUN_0010d2b0 does not require finding its name in the text.
   function shown() {
     if (!fn) return null;
-    return { name: fn.name, entry: fn.entry, signature: fn.signature ?? "" };
+    return {
+      name: fn.name,
+      entry: fn.entry,
+      signature: fn.signature ?? "",
+      source: fn.source ?? "",
+    };
   }
 
   function caretAt(x, y) {

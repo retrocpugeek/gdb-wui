@@ -580,6 +580,7 @@ func (c *Client) edit(ctx context.Context, op string, e Edit, extra map[string]a
 		"symbol":   e.Symbol,
 		"name":     e.Name,
 		"address":  e.Address,
+		"author":   e.Author,
 	}
 	for k, v := range extra {
 		req[k] = v
