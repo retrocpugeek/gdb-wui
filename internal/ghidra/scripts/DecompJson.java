@@ -18,6 +18,7 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.PrettyPrinter;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
+import ghidra.program.model.listing.Bookmark;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Listing;
@@ -28,6 +29,7 @@ import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.symbol.IdentityNameTransformer;
+import ghidra.program.model.symbol.Symbol;
 
 public class DecompJson {
 
@@ -72,6 +74,11 @@ public class DecompJson {
 		b.append(",\"bodyStart\":").append(str(hex(f.getBody().getMinAddress())));
 		b.append(",\"bodyEnd\":").append(str(hex(f.getBody().getMaxAddress())));
 		b.append(",\"signature\":").append(str(f.getPrototypeString(true, false)));
+		// Where the name came from, in Ghidra's own vocabulary: USER_DEFINED,
+		// ANALYSIS, IMPORTED or DEFAULT. A consumer that wants to say "you
+		// named this" rather than "something inferred it" has no other way to
+		// tell, and inventing the distinction on the client would be guessing.
+		b.append(",\"source\":").append(str(source(f.getSymbol())));
 		b.append(",\"frame\":").append(frame(f));
 		b.append(",\"variables\":").append(variables(res.getHighFunction()));
 		b.append(",\"globals\":").append(globals(res.getHighFunction()));
@@ -163,13 +170,14 @@ public class DecompJson {
 	// for editing here, because it would not appear in what the user is
 	// reading. Finding 39.
 	private static String comments(Function f) {
-		Listing listing = f.getProgram().getListing();
+		Program p = f.getProgram();
+		Listing listing = p.getListing();
 		StringBuilder b = new StringBuilder("[");
 		boolean first = true;
 		String plate = listing.getComment(CommentType.PLATE, f.getEntryPoint());
 		if (plate != null) {
 			first = false;
-			b.append(comment(f.getEntryPoint(), "plate", plate));
+			b.append(comment(f.getEntryPoint(), "plate", plate, author(p, f.getEntryPoint())));
 		}
 		AddressIterator it =
 			listing.getCommentAddressIterator(CommentType.PRE, f.getBody(), true);
@@ -183,14 +191,27 @@ public class DecompJson {
 				b.append(",");
 			}
 			first = false;
-			b.append(comment(a, "pre", text));
+			b.append(comment(a, "pre", text, author(p, a)));
 		}
 		return b.append("]").toString();
 	}
 
-	private static String comment(Address at, String kind, String text) {
+	private static String comment(Address at, String kind, String text, String author) {
 		return "{\"addr\":" + str(hex(at)) + ",\"kind\":" + str(kind) +
-			",\"text\":" + str(text) + "}";
+			",\"text\":" + str(text) + ",\"author\":" + str(author) + "}";
+	}
+
+	// source is where a name came from, or "" when there is no symbol to ask.
+	private static String source(Symbol sym) {
+		return sym == null || sym.getSource() == null ? "" : sym.getSource().name();
+	}
+
+	// author is who wrote a comment. The listing stores text and nothing else,
+	// so the authorship is carried beside it as a bookmark the server writes;
+	// no bookmark means a person wrote it. Finding 40.
+	private static String author(Program p, Address at) {
+		Bookmark mark = p.getBookmarkManager().getBookmark(at, "Note", "gdb-wui/agent");
+		return mark == null ? "" : "agent";
 	}
 
 	// lineMap records, per line, every address its tokens carry — a set, not a
@@ -282,6 +303,11 @@ public class DecompJson {
 			// around 4.6e18, which does not survive a round trip through a
 			// JavaScript number. A consumer never does arithmetic on it.
 			b.append(",\"id\":").append(str(Long.toString(sym.getId())));
+			// Empty when the decompiler invented this symbol for this
+			// decompilation and there is no database entry behind it — which
+			// is a different thing from a name nobody has touched, and the two
+			// must not be shown alike. Finding 38.
+			b.append(",\"source\":").append(str(source(sym.getSymbol())));
 			b.append(",\"type\":").append(
 				str(sym.getDataType() == null ? "" : sym.getDataType().getDisplayName()));
 			b.append(",\"size\":").append(sym.getSize());

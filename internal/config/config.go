@@ -55,7 +55,15 @@ var notConfigurable = map[string]bool{
 	"print-url": true,
 	"config":    true,
 	"no-config": true,
-	SaveFlag:    true,
+	// The MCP bridge joins a running server instead of starting one, so a
+	// config file that turned it on would make `gdb-wui` stop being a way to
+	// start gdb-wui. Its two permission flags stay out for a sharper reason: a
+	// file that quietly grants an agent the right to run your program is
+	// exactly the consent that has to be given deliberately, every time.
+	"mcp":          true,
+	"mcp-annotate": true,
+	"mcp-run":      true,
+	SaveFlag:       true,
 }
 
 // Load applies a config file to fs and returns the file it used, or "" if there

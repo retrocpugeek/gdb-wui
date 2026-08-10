@@ -74,6 +74,12 @@ part. These are:
   what it guessed and
   [comment](features/decompilation.md#writing-down-what-you-worked-out) what you
   work out, as you go.
+- **Handing the work to an agent.** `gdb-wui -mcp` serves
+  [MCP](features/agent.md) for a running session, so an agent can set a
+  breakpoint, run to it, read what is actually in the variable and write the
+  conclusion into the decompilation — which is the part it cannot do against a
+  decompiler alone. What it writes is marked as its own and undone a run at a
+  time, and it needs one flag to annotate and another to run your program.
 - **Other architectures.** Use `-gdb` to select a suitable gdb, then
   [connect to a stub](features/remote.md) — a gdbserver, qemu, an emulator, or a
   board on a probe.

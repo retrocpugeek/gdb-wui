@@ -77,6 +77,10 @@ type DecompStatus struct {
 	// and disables them with the reason, because an item that is absent
 	// teaches nobody that the feature exists.
 	Editable bool `json:"editable,omitempty"`
+	// Undo describes the run at the top of the journal, so a client can offer
+	// "undo everything the agent just wrote" without asking for it first. Nil
+	// when nothing has been edited.
+	Undo *DecompRun `json:"undo,omitempty"`
 	// Mismatch is set when the decompiler's program is not the binary gdb has
 	// loaded. It is a warning rather than a refusal because the two builds are
 	// often the same code — a stripped and an unstripped link of one program
@@ -133,6 +137,10 @@ type DecompFunctionRequest struct {
 type DecompFunction struct {
 	Name      string `json:"name"`
 	Signature string `json:"signature,omitempty"`
+	// Source is where the function's name came from: one of the DecompSource
+	// constants. A stripped binary's functions are DecompSourceGhidra until
+	// somebody or something names them.
+	Source string `json:"source,omitempty"`
 	// Entry, BodyStart and BodyEnd are Ghidra addresses, before Bias.
 	Entry     string `json:"entry"`
 	BodyStart string `json:"bodyStart,omitempty"`
@@ -232,8 +240,10 @@ const (
 	DecompEditFunction = "function"
 	// DecompEditVariable is a local or a parameter.
 	DecompEditVariable = "variable"
-	// DecompEditGlobal is a module-scope symbol. Renaming one is supported;
-	// retyping one is not yet.
+	// DecompEditGlobal is a module-scope symbol, addressed by Address. A global
+	// has no HighSymbol behind it, so decomp.retype applies the type as data in
+	// the listing at that address rather than through the decompiler's own
+	// symbol table; the effect on the recovered C is the same.
 	DecompEditGlobal = "global"
 	// DecompEditLine is one line of the recovered C, addressed by the address
 	// it was generated from. Only decomp.comment takes it: a line has no name
@@ -260,13 +270,19 @@ type DecompEditRequest struct {
 	// the reply.
 	Function string `json:"function"`
 	// Symbol is DecompVar.ID, opaque and optional. An edit renumbers the ids of
-	// the symbols it did not touch, so this is routinely one edit stale and
-	// Name is the fallback key.
+	// the symbols it did not touch, so this is routinely one edit stale — and
+	// stale here does not mean it stops resolving, it means it resolves to a
+	// neighbour. It is therefore consulted only when there is no Name to check
+	// it against.
 	Symbol string `json:"symbol,omitempty"`
-	// Name is the symbol's current name. Sent for every kind, so that a stale
-	// view is reported rather than silently applied to a neighbour. A comment
-	// hangs on an address rather than on a symbol, so for decomp.comment this
-	// carries the function's name and is used only to describe the edit.
+	// Name is the symbol's current name, and it is the key: it is what the
+	// caller pointed at, and unlike an id it does not silently become somebody
+	// else. A name that is not in the function any more is refused rather than
+	// applied to whatever the id now addresses, and the refusal lists what the
+	// function does have, so a client working from a stale view can recover
+	// without decompiling again to find out. A comment hangs on an address
+	// rather than on a symbol, so for decomp.comment this carries the
+	// function's name and is used only to describe the edit.
 	Name string `json:"name,omitempty"`
 	// Address locates a DecompEditGlobal or a DecompEditLine, runtime.
 	Address string `json:"address,omitempty"`
@@ -274,18 +290,70 @@ type DecompEditRequest struct {
 	// refused for a name and a type, and for a comment means remove it: a
 	// stored empty comment prints as a bare `/* */`, which is a mark on the
 	// page that says nothing.
-	Value   string `json:"value"`
+	Value string `json:"value"`
+	// Author is DecompAuthorAgent when something other than the person at the
+	// keyboard made this edit. The browser never sets it; the MCP bridge always
+	// does. It changes how the edit is recorded — a name becomes an inferred
+	// name rather than a stated one, and a comment is marked with its author —
+	// and nothing else: an agent passes the same guards as anyone.
+	//
+	// It is a claim by the client, not a fact the server can check. Anything
+	// that can reach this protocol could lie about it, and anything that can
+	// reach this protocol can already rename whatever it likes.
+	Author  string `json:"author,omitempty"`
 	StopSeq uint64 `json:"stopSeq,omitempty"`
 }
 
-// DecompUndoRequest reverses the last edit of this session.
+// DecompAuthorAgent marks an edit as an agent's rather than a person's.
+const DecompAuthorAgent = "agent"
+
+// Where a decompiler name came from. Reported so a client can say "you named
+// this" rather than implying it about everything.
+const (
+	// DecompSourceUser is a name somebody typed.
+	DecompSourceUser = "user"
+	// DecompSourceInferred is a name something worked out: an agent, or one of
+	// Ghidra's own analysers. The two are not distinguished, because Ghidra
+	// does not distinguish them — and a client that said "an agent named this"
+	// on the strength of it would be crediting a demangler's work to a model.
+	DecompSourceInferred = "inferred"
+	// DecompSourceSymbol is a name that came out of the binary: a symbol table,
+	// or DWARF.
+	DecompSourceSymbol = "symbol"
+	// DecompSourceGhidra is Ghidra's own generated name — local_10, FUN_00401154.
+	DecompSourceGhidra = "ghidra"
+	// DecompSourceNone, the empty string, means there is no symbol behind this
+	// name at all: the decompiler invented it for this decompilation and it
+	// exists nowhere in the program's database. Not the same as a name nobody
+	// has touched, and not shown alike.
+	DecompSourceNone = ""
+)
+
+// DecompUndoRequest reverses the last edit of this session, or a whole run of
+// them.
 //
 // gdb-wui keeps its own journal of inverse edits rather than using Ghidra's
 // undo, because saving clears Ghidra's undo stack (finding 33) and every edit
 // is saved: an unsaved rename lives only inside the sidecar process, and losing
 // an afternoon of naming to a crash is not a trade worth making.
 type DecompUndoRequest struct {
+	// Run reverses every edit in one run rather than the single last edit. An
+	// agent writes forty annotations in a burst and forty undos is not an undo;
+	// the server groups consecutive edits by the same author into a run and
+	// reports the topmost one in DecompStatus.
+	Run     string `json:"run,omitempty"`
 	StopSeq uint64 `json:"stopSeq,omitempty"`
+}
+
+// DecompRun describes the group of edits at the top of the undo journal, so a
+// client can offer to reverse the lot rather than one at a time.
+type DecompRun struct {
+	// ID identifies the run in a DecompUndoRequest.
+	ID string `json:"id"`
+	// Author is DecompAuthorAgent for an agent's run, empty for a person's.
+	Author string `json:"author,omitempty"`
+	// Count is how many edits are in it.
+	Count int `json:"count"`
 }
 
 // DecompEdit is the reply to decomp.rename, decomp.retype, decomp.comment and
@@ -306,6 +374,9 @@ type DecompEdit struct {
 	// CanUndo reports whether anything is left on the journal, so a client can
 	// disable the item rather than offer an undo that will fail.
 	CanUndo bool `json:"canUndo,omitempty"`
+	// Run is the group this edit was recorded in, and what to send back to undo
+	// the whole of it.
+	Run *DecompRun `json:"run,omitempty"`
 }
 
 // ExecStepLineRequest steps until the program counter leaves a set of
@@ -403,6 +474,10 @@ type DecompComment struct {
 	// Kind is DecompCommentPre or DecompCommentPlate.
 	Kind string `json:"kind"`
 	Text string `json:"text"`
+	// Author is DecompAuthorAgent when an agent wrote this note, empty when a
+	// person did. A comment has no source type of its own, so the sidecar keeps
+	// this beside it as a Ghidra bookmark.
+	Author string `json:"author,omitempty"`
 }
 
 // Storage kinds for a decompiled variable. They are not equally useful and the
@@ -432,6 +507,8 @@ type DecompVar struct {
 	ID    string `json:"id,omitempty"`
 	Type  string `json:"type,omitempty"`
 	Param bool   `json:"param,omitempty"`
+	// Source is where the name came from: one of the DecompSource constants.
+	Source string `json:"source,omitempty"`
 	// Storage is one of the DecompStorage* constants.
 	Storage string `json:"storage"`
 	// Expr is a gdb expression for the variable's value, when one can be

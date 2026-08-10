@@ -35,6 +35,9 @@ type Function struct {
 	BodyStart string `json:"bodyStart"`
 	BodyEnd   string `json:"bodyEnd"`
 	Signature string `json:"signature"`
+	// Source is where the name came from, in Ghidra's vocabulary:
+	// USER_DEFINED, ANALYSIS, IMPORTED or DEFAULT. See SourceUser and friends.
+	Source    string `json:"source"`
 	Frame     Frame  `json:"frame"`
 	Variables []Var  `json:"variables"`
 	// Globals are the module-scope symbols the function touches. A separate
@@ -74,12 +77,35 @@ type CommentLine struct {
 	Addr string `json:"addr,omitempty"`
 }
 
+// Ghidra's source types, as the sidecar spells them. Ghidra's own analysers
+// also produce ANALYSIS names — a demangler's, for one — so it means "inferred
+// rather than stated" and not "written by an agent". A consumer that claimed
+// the stronger reading would be crediting a guess to whoever last ran an agent.
+const (
+	SourceUser     = "USER_DEFINED"
+	SourceAnalysis = "ANALYSIS"
+	SourceImported = "IMPORTED"
+	SourceDefault  = "DEFAULT"
+)
+
+// AuthorAgent marks an edit as something other than a person typing.
+//
+// It decides two things in the sidecar: a name is recorded as ANALYSIS rather
+// than USER_DEFINED, and a comment is bookmarked so its author outlives the
+// session. Nothing else about the edit changes — an agent goes through the same
+// guards, the same transaction and the same journal.
+const AuthorAgent = "agent"
+
 // Comment is one note stored in the program's listing.
 type Comment struct {
 	// Addr is Ghidra's link-time address, before any bias.
 	Addr string `json:"addr"`
 	Kind string `json:"kind"`
 	Text string `json:"text"`
+	// Author is AuthorAgent when a bookmark marks this comment as an agent's,
+	// and empty when a person wrote it. A comment carries no source type of its
+	// own, so this is the only record there is.
+	Author string `json:"author"`
 }
 
 // Line maps one line of Text to the addresses its tokens carry.
@@ -130,10 +156,14 @@ type Var struct {
 	// survive a round trip through a JavaScript number; nothing does arithmetic
 	// on it. Empty from a sidecar written before edits existed, which is why
 	// the name is also a key. See Edit.
-	ID    string `json:"id"`
-	Type  string `json:"type"`
-	Size  int    `json:"size"`
-	Param bool   `json:"param"`
+	ID string `json:"id"`
+	// Source is where the name came from. Empty means there is no database
+	// symbol at all — the decompiler invented this one for this decompilation,
+	// which is not the same as a name nobody has touched.
+	Source string `json:"source"`
+	Type   string `json:"type"`
+	Size   int    `json:"size"`
+	Param  bool   `json:"param"`
 	// PC bounds a register variable's validity. Empty for stack storage.
 	PC      string  `json:"pc"`
 	Storage Storage `json:"storage"`
@@ -212,12 +242,14 @@ type Edit struct {
 	// Function is the entry address of the function on screen, in Ghidra's
 	// coordinates.
 	Function string
-	// Symbol is Var.ID. Optional: an edit renumbers the ids of the symbols it
-	// did not touch, so a caller's id is routinely one edit stale and Name is
-	// the fallback.
+	// Symbol is Var.ID. Optional, and only consulted when Name is empty: an
+	// edit renumbers the ids of the symbols it did not touch, so a caller's id
+	// is routinely one edit stale, and a stale id resolves to a neighbour
+	// rather than to nothing.
 	Symbol string
-	// Name is the symbol's current name, both as a fallback key and so a
-	// mismatch can be reported instead of guessed at.
+	// Name is the symbol's current name, and the key an edit is resolved by. A
+	// name the function no longer has is a stale view, and is reported as one
+	// rather than guessed at.
 	Name string
 	// Address locates an EditGlobal, in Ghidra's coordinates.
 	Address string
@@ -225,6 +257,9 @@ type Edit struct {
 	// for EditFunction — for a retype, or the text for a comment. Empty is a
 	// valid comment and means remove it; it is rejected for the other two.
 	Value string
+	// Author is AuthorAgent for an edit made by something other than the person
+	// at the keyboard, and empty otherwise.
+	Author string
 }
 
 // EditResult is what one edit produced.

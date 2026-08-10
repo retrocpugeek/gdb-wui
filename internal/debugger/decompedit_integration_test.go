@@ -4,6 +4,7 @@ package debugger_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -404,6 +405,169 @@ func TestCommentsAreRefusedForTheUsersOwnProject(t *testing.T) {
 	if strings.Contains(after.Text, "not allowed here either") {
 		t.Error("the refused comment was written anyway")
 	}
+}
+
+// TestAnAgentsEditsAreGroupedIntoARun. Forty annotations written in a burst
+// have to come off in one step, and the grouping is by author: a person's edit
+// between two of an agent's is where a user would put the boundary, so it is
+// where the journal puts it too.
+func TestAnAgentsEditsAreGroupedIntoARun(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+	waitReady(t, do)
+
+	fn := do(wire.TypeDecompFunction,
+		wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
+	lines := mappedLines(t, fn, 2)
+
+	for i, line := range lines {
+		out := do(wire.TypeDecompComment, wire.DecompEditRequest{
+			Kind:     wire.DecompEditLine,
+			Function: fn.Entry,
+			Address:  line.Addrs[0],
+			Name:     fn.Name,
+			Value:    fmt.Sprintf("agent note %d", i),
+			Author:   wire.DecompAuthorAgent,
+		}).(wire.DecompEdit)
+		if out.Run == nil {
+			t.Fatalf("edit %d reports no run", i)
+		}
+		if out.Run.Author != wire.DecompAuthorAgent {
+			t.Errorf("run author = %q, want %q", out.Run.Author, wire.DecompAuthorAgent)
+		}
+		if out.Run.Count != i+1 {
+			t.Errorf("after %d agent edits the run holds %d", i+1, out.Run.Count)
+		}
+	}
+
+	// A person's edit starts a new run rather than joining the agent's.
+	mine := do(wire.TypeDecompRename, wire.DecompEditRequest{
+		Kind:     wire.DecompEditFunction,
+		Function: fn.Entry,
+		Name:     fn.Name,
+		Value:    "named_by_me",
+	}).(wire.DecompEdit)
+	if mine.Run == nil || mine.Run.Count != 1 || mine.Run.Author != "" {
+		t.Fatalf("a person's edit joined the agent's run: %+v", mine.Run)
+	}
+
+	// The status says the same thing, which is how a tab that made none of
+	// these edits learns there is something to offer.
+	st := do(wire.TypeDecompStatus, struct{}{}).(wire.DecompStatus)
+	if st.Undo == nil || st.Undo.ID != mine.Run.ID {
+		t.Fatalf("status reports %+v, want the run the last edit was in", st.Undo)
+	}
+
+	// Undo the person's edit, and the agent's run is back on top, whole.
+	do(wire.TypeDecompUndo, wire.DecompUndoRequest{})
+	st = do(wire.TypeDecompStatus, struct{}{}).(wire.DecompStatus)
+	if st.Undo == nil || st.Undo.Author != wire.DecompAuthorAgent ||
+		st.Undo.Count != len(lines) {
+		t.Fatalf("the agent's run is %+v, want %d edits", st.Undo, len(lines))
+	}
+
+	// And the whole run reverses in one request.
+	back := do(wire.TypeDecompUndo,
+		wire.DecompUndoRequest{Run: st.Undo.ID}).(wire.DecompEdit)
+	for i := range lines {
+		if strings.Contains(back.Function.Text, fmt.Sprintf("agent note %d", i)) {
+			t.Errorf("note %d survived the run being undone:\n%s", i, back.Function.Text)
+		}
+	}
+	if back.CanUndo {
+		t.Error("canUndo is still true after every edit was undone")
+	}
+	if !strings.Contains(back.Did, fmt.Sprintf("%d", len(lines))) {
+		t.Errorf("did = %q, which does not say how many edits were undone", back.Did)
+	}
+}
+
+// TestOnlyTheTopRunCanBeUndone. Each inverse was computed against the state its
+// edit left behind, so reversing an older run first would put a name back that
+// something later had already renamed.
+func TestOnlyTheTopRunCanBeUndone(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+	waitReady(t, do)
+
+	fn := do(wire.TypeDecompFunction,
+		wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
+	line := firstWireMappedLine(t, fn)
+
+	first := do(wire.TypeDecompComment, wire.DecompEditRequest{
+		Kind: wire.DecompEditLine, Function: fn.Entry, Address: line.Addrs[0],
+		Name: fn.Name, Value: "the agent's", Author: wire.DecompAuthorAgent,
+	}).(wire.DecompEdit)
+	do(wire.TypeDecompRename, wire.DecompEditRequest{
+		Kind: wire.DecompEditFunction, Function: fn.Entry,
+		Name: fn.Name, Value: "mine",
+	})
+
+	_, werr := k.try(wire.TypeDecompUndo, wire.DecompUndoRequest{Run: first.Run.ID})
+	if werr == nil {
+		t.Fatal("a run below the top of the journal was undone")
+	}
+	if !strings.Contains(werr.Message, "top") {
+		t.Errorf("message = %q, which does not say why it was refused", werr.Message)
+	}
+}
+
+// TestTheClientIsToldWhereANameCameFrom. The pane says "you named this" only
+// where it is true, and this is the field it reads.
+func TestTheClientIsToldWhereANameCameFrom(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+	waitReady(t, do)
+
+	fn := do(wire.TypeDecompFunction,
+		wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
+
+	agent := do(wire.TypeDecompRename, wire.DecompEditRequest{
+		Kind: wire.DecompEditFunction, Function: fn.Entry,
+		Name: fn.Name, Value: "guessed", Author: wire.DecompAuthorAgent,
+	}).(wire.DecompEdit)
+	if agent.Function.Source != wire.DecompSourceInferred {
+		t.Errorf("source = %q, want %q", agent.Function.Source, wire.DecompSourceInferred)
+	}
+
+	mine := do(wire.TypeDecompRename, wire.DecompEditRequest{
+		Kind: wire.DecompEditFunction, Function: fn.Entry,
+		Name: "guessed", Value: "chosen",
+	}).(wire.DecompEdit)
+	if mine.Function.Source != wire.DecompSourceUser {
+		t.Errorf("source = %q, want %q", mine.Function.Source, wire.DecompSourceUser)
+	}
+
+	// A claim this layer does not recognise is read as a person's, which
+	// understates the machine rather than overstating the human.
+	odd := do(wire.TypeDecompRename, wire.DecompEditRequest{
+		Kind: wire.DecompEditFunction, Function: fn.Entry,
+		Name: "chosen", Value: "chosen_again", Author: "AGENT",
+	}).(wire.DecompEdit)
+	if odd.Function.Source != wire.DecompSourceUser {
+		t.Errorf("source = %q for an unrecognised author, want %q",
+			odd.Function.Source, wire.DecompSourceUser)
+	}
+}
+
+// mappedLines returns n distinct lines that came from an address.
+func mappedLines(t *testing.T, fn wire.DecompFunction, n int) []wire.DecompLine {
+	t.Helper()
+	var out []wire.DecompLine
+	for _, l := range fn.Lines {
+		if len(l.Addrs) == 0 {
+			continue
+		}
+		out = append(out, l)
+		if len(out) == n {
+			return out
+		}
+	}
+	t.Fatalf("%s has %d lines with addresses, want %d", fn.Name, len(out), n)
+	return nil
 }
 
 func firstWireMappedLine(t *testing.T, fn wire.DecompFunction) wire.DecompLine {

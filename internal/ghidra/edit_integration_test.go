@@ -5,6 +5,7 @@ package ghidra_test
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,13 +25,19 @@ import (
 // to stop the process and open the same project again.
 func startWritable(t *testing.T) (*ghidra.Client, ghidra.Options) {
 	t.Helper()
+	return startWritableOn(t, fixture(t))
+}
+
+// startWritableOn is startWritable against a chosen binary, for the tests that
+// need a shape the shared fixture does not have.
+func startWritableOn(t *testing.T, bin string) (*ghidra.Client, ghidra.Options) {
+	t.Helper()
 	in := install(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	t.Cleanup(cancel)
 
 	projectDir := t.TempDir()
-	bin := fixture(t)
 	logf := func(f string, a ...any) { t.Logf(f, a...) }
 	if err := ghidra.Import(ctx, in, projectDir, "itest", bin, logf); err != nil {
 		t.Fatalf("Import: %v", err)
@@ -167,6 +174,298 @@ func TestRenameAndRetypeALocal(t *testing.T) {
 	}
 }
 
+// TestRenamingOverAStrandedNameSucceeds covers the wall with nothing behind it.
+//
+// Renaming a decompiler-invented variable commits it to the database. An edit
+// that reshapes the body afterwards can leave that storage unused, and the name
+// then belongs to a variable on no line of the function — invisible, addressable
+// by neither id nor name, and still holding its name against the namespace. The
+// user's own name, refused on behalf of something that is not there.
+func TestRenamingOverAStrandedNameSucceeds(t *testing.T) {
+	c, _ := startWritableOn(t, tableFixture(t))
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "dir_for")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	// A decompiler temporary: it holds the unpacked nibble and lives in no
+	// register and no frame slot. Naming one commits it to the database keyed
+	// by the shape of the p-code around it, which is what makes it fragile.
+	var temp *ghidra.Var
+	for i := range fn.Variables {
+		if fn.Variables[i].Storage.Kind == ghidra.StorageUnique && fn.Variables[i].ID != "" {
+			temp = &fn.Variables[i]
+			break
+		}
+	}
+	if temp == nil {
+		t.Skipf("no decompiler temporary among %v; nothing to strand", names(fn.Variables))
+	}
+
+	if _, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   temp.ID,
+		Name:     temp.Name,
+		Value:    "probe",
+	}); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+
+	// Typing the packed table reshapes the body that temporary came out of, so
+	// the name is left in the database addressing nothing. This is the sequence
+	// that stranded a name in practice.
+	res2, err := c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  globalNamed(t, fn, "loc").Address,
+		Name:     "loc",
+		Value:    "byte[4]",
+	})
+	if err != nil {
+		t.Fatalf("Retype: %v", err)
+	}
+	if hasVar(res2.Function.Variables, "probe") {
+		t.Skipf("probe is still on screen after the retype, so nothing was stranded: %v",
+			names(res2.Function.Variables))
+	}
+
+	// The name is now held by a variable the function does not use. Claiming it
+	// for one that is on screen must work, and must say what it freed.
+	var live *ghidra.Var
+	for i := range res2.Function.Variables {
+		if res2.Function.Variables[i].ID != "" {
+			live = &res2.Function.Variables[i]
+			break
+		}
+	}
+	if live == nil {
+		t.Fatal("no addressable variable left to rename")
+	}
+	res3, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   live.ID,
+		Name:     live.Name,
+		Value:    "probe",
+	})
+	if err != nil {
+		t.Fatalf("a stranded name blocked its own reuse: %v", err)
+	}
+	if !hasVar(res3.Function.Variables, "probe") {
+		t.Errorf("no probe among %v", names(res3.Function.Variables))
+	}
+	if !strings.Contains(res3.Warning, "stranded") {
+		t.Errorf("warning = %q, which does not say a stranded name was freed", res3.Warning)
+	}
+}
+
+// TestARealDuplicateIsStillRefused is the other half: a name that something on
+// screen is using is a collision worth refusing, and freeing stranded names
+// must not turn that into a silent overwrite.
+func TestARealDuplicateIsStillRefused(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	var addressable []ghidra.Var
+	for _, v := range fn.Variables {
+		if v.ID != "" {
+			addressable = append(addressable, v)
+		}
+	}
+	if len(addressable) < 2 {
+		t.Skipf("need two addressable variables, got %v", names(fn.Variables))
+	}
+
+	res, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   addressable[0].ID,
+		Name:     addressable[0].Name,
+		Value:    "taken",
+	})
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	other := findOther(res.Function.Variables, "taken")
+	if other == nil {
+		t.Skipf("only one variable survived: %v", names(res.Function.Variables))
+	}
+	if _, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   other.ID,
+		Name:     other.Name,
+		Value:    "taken",
+	}); err == nil {
+		t.Error("two variables on screen were allowed to share a name")
+	}
+}
+
+// findOther returns an addressable variable that is not the one named skip.
+func findOther(vars []ghidra.Var, skip string) *ghidra.Var {
+	for i := range vars {
+		if vars[i].ID != "" && vars[i].Name != skip {
+			return &vars[i]
+		}
+	}
+	return nil
+}
+
+// TestRetypeAGlobal covers the kind that has no HighSymbol behind it.
+//
+// A global's type is the data defined at its address, not an entry in the
+// decompiler's symbol table, so it goes through a different Ghidra API than a
+// local — and getting an array type onto one is the whole point: it is what
+// turns an open-coded *(char **)(&names + i * 8) back into names[i].
+func TestRetypeAGlobal(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "pick")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	g := globalNamed(t, fn, "names")
+
+	res, err := c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  g.Address,
+		Name:     g.Name,
+		Value:    "char *[3]",
+	})
+	if err != nil {
+		t.Fatalf("Retype: %v", err)
+	}
+	if res.Now != "names" {
+		t.Errorf("now = %q, want names — a retype must not rename", res.Now)
+	}
+	var after *ghidra.Global
+	for i := range res.Function.Globals {
+		if res.Function.Globals[i].Name == "names" {
+			after = &res.Function.Globals[i]
+			break
+		}
+	}
+	if after == nil {
+		t.Fatalf("names vanished from the re-decompiled function")
+	}
+	if !strings.Contains(after.Type, "[3]") {
+		t.Errorf("type = %q, want the array type", after.Type)
+	}
+}
+
+// TestRetypingAGlobalReportsWhatItReplaced covers the case that has to be told
+// rather than refused: a type one element too long eats the next global, and
+// silence there looks exactly like success.
+func TestRetypingAGlobalReportsWhatItReplaced(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "pick")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	names := globalNamed(t, fn, "names")
+	tail := globalNamed(t, fn, "tail")
+
+	// Give tail a type of its own, so what follows names is defined data and
+	// not the undefined bytes any clear mode would take without comment.
+	if _, err := c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  tail.Address,
+		Name:     tail.Name,
+		Value:    "char *[1]",
+	}); err != nil {
+		t.Fatalf("typing tail: %v", err)
+	}
+
+	// names is three pointers, so a fourth element reaches 8 bytes past it.
+	// That only lands on tail if the linker put them next to each other, which
+	// it is not obliged to do.
+	if !adjacent(t, names.Address, 24, tail.Address) {
+		t.Skipf("tail is at %s, not just past names at %s; nothing to overrun",
+			tail.Address, names.Address)
+	}
+	res, err := c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  names.Address,
+		Name:     names.Name,
+		Value:    "char *[4]",
+	})
+	if err != nil {
+		t.Fatalf("a type that overruns a neighbour should apply, not fail: %v", err)
+	}
+	if res.Warning == "" {
+		t.Error("no warning: the edit deleted tail and said nothing")
+	} else if !strings.Contains(res.Warning, "replaced") {
+		t.Errorf("warning = %q, which does not say what was replaced", res.Warning)
+	}
+}
+
+// TestRetypingAGlobalOffTheEndIsRefused is the limit that survives whatever the
+// clear mode is: data cannot be created past the end of the memory block, and
+// an edit that cannot be made must not report that it was.
+func TestRetypingAGlobalOffTheEndIsRefused(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "pick")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	g := globalNamed(t, fn, "names")
+
+	_, err = c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  g.Address,
+		Name:     g.Name,
+		Value:    "char *[100000]",
+	})
+	if err == nil {
+		t.Error("a type that runs off the end of the block was accepted")
+	}
+}
+
+// globalNamed finds one of the module-scope symbols a function touches.
+func globalNamed(t *testing.T, fn *ghidra.Function, name string) *ghidra.Global {
+	t.Helper()
+	for i := range fn.Globals {
+		if fn.Globals[i].Name == name {
+			return &fn.Globals[i]
+		}
+	}
+	var had []string
+	for _, g := range fn.Globals {
+		had = append(had, g.Name)
+	}
+	t.Fatalf("no global named %s among %v", name, had)
+	return nil
+}
+
+// adjacent reports whether after starts exactly size bytes past first.
+func adjacent(t *testing.T, first string, size int64, after string) bool {
+	t.Helper()
+	a, err := strconv.ParseInt(strings.TrimPrefix(first, "0x"), 16, 64)
+	if err != nil {
+		t.Fatalf("address %q: %v", first, err)
+	}
+	b, err := strconv.ParseInt(strings.TrimPrefix(after, "0x"), 16, 64)
+	if err != nil {
+		t.Fatalf("address %q: %v", after, err)
+	}
+	return a+size == b
+}
+
 // TestRetypeAFunctionRenamesIt pins finding 36: applying a prototype in Ghidra
 // carries the name with it, so "set the signature" is also a rename. A caller
 // that reported only a type change would leave the stack showing the old name.
@@ -286,6 +585,97 @@ func TestAStaleSymbolIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no_such_variable") {
 		t.Errorf("error = %q, which does not say what could not be found", err)
+	}
+}
+
+// TestAStaleIDIsNotObeyedOverALiveName is the dangerous half of finding 34.
+//
+// A stale id usually does not fail to resolve — it resolves to somebody else,
+// because an edit renumbers the whole function. So the case that matters is not
+// an id nothing answers to but an id that disagrees with the name beside it,
+// and the name is what the caller pointed at: the text on screen, or the
+// recovered C an agent read. Obeying the id here renames a variable nobody
+// chose, reports success, and leaves the caller's own target untouched.
+func TestAStaleIDIsNotObeyedOverALiveName(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	target := findOther(fn.Variables, "")
+	if target == nil {
+		t.Fatal("no addressable variable to rename")
+	}
+	decoy := findOther(fn.Variables, target.Name)
+	if decoy == nil {
+		t.Skip("accumulate has only one addressable variable, so no id can disagree")
+	}
+
+	// The name of one, the id of the other. Only the name was chosen by anyone.
+	res, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   decoy.ID,
+		Name:     target.Name,
+		Value:    "chosen",
+	})
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if res.Was != target.Name {
+		t.Errorf("renamed %q, but the caller named %q — the id decided", res.Was, target.Name)
+	}
+	if !hasVar(res.Function.Variables, decoy.Name) {
+		t.Errorf("%s is gone from %v; the id's holder was renamed instead",
+			decoy.Name, names(res.Function.Variables))
+	}
+}
+
+// TestAVanishedNameIsRefusedEvenWhenTheIDStillResolves is the same bug from the
+// other side, and the one the busybox session walked into.
+//
+// Typing a global as an array reshapes the body around it. Names an agent wrote
+// before that are gone from the view it is still holding, while the ids it
+// collected go on resolving — to whatever inherited them. An edit sent from
+// that view must be refused rather than landing somewhere, and the refusal is
+// worth more if it says what the function has now: that is the whole content of
+// the decompile the caller would otherwise have to make to find out.
+func TestAVanishedNameIsRefusedEvenWhenTheIDStillResolves(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	live := findOther(fn.Variables, "")
+	if live == nil {
+		t.Fatal("no addressable variable to point at")
+	}
+
+	_, err = c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   live.ID, // resolves, and to the wrong thing
+		Name:     "renamed_out_from_under_us",
+		Value:    "wrong",
+	})
+	if err == nil {
+		t.Fatal("an edit from a stale view was accepted")
+	}
+	if !strings.Contains(err.Error(), live.Name) {
+		t.Errorf("error = %q, which does not say what the function has now, "+
+			"so the caller has to decompile again to find out", err)
+	}
+
+	after, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	if hasVar(after.Variables, "wrong") {
+		t.Errorf("the id's holder was renamed anyway: %v", names(after.Variables))
 	}
 }
 
@@ -571,6 +961,212 @@ func TestReadOnlyClientRefusesComments(t *testing.T) {
 	}
 	if strings.Contains(after.Text, "should not be written") {
 		t.Error("the refused comment was written anyway")
+	}
+}
+
+// TestAnAgentsNameIsRecordedAsInferred pins finding 40's first half. A name a
+// person typed and a name something guessed must not come back alike, and
+// Ghidra's own source types are the record: ANALYSIS for the guess,
+// USER_DEFINED for the person.
+func TestAnAgentsNameIsRecordedAsInferred(t *testing.T) {
+	c, opts := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	agent, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Name:     fn.Name,
+		Value:    "guessed_name",
+		Author:   ghidra.AuthorAgent,
+	})
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if agent.Function.Source != ghidra.SourceAnalysis {
+		t.Errorf("source = %q, want %s — an agent's name is inferred, not stated",
+			agent.Function.Source, ghidra.SourceAnalysis)
+	}
+
+	// The same edit from a person is recorded differently, which is the whole
+	// point: one field, two claims.
+	person, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Name:     "guessed_name",
+		Value:    "chosen_name",
+	})
+	if err != nil {
+		t.Fatalf("second Rename: %v", err)
+	}
+	if person.Function.Source != ghidra.SourceUser {
+		t.Errorf("source = %q, want %s", person.Function.Source, ghidra.SourceUser)
+	}
+
+	// And a local, which goes through a different Ghidra API — the one that
+	// creates the database variable a decompiler local does not have.
+	var local *ghidra.Var
+	for i := range person.Function.Variables {
+		if person.Function.Variables[i].ID != "" {
+			local = &person.Function.Variables[i]
+			break
+		}
+	}
+	if local == nil {
+		t.Fatal("no variable carried a symbol id")
+	}
+	withLocal, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   local.ID,
+		Name:     local.Name,
+		Value:    "guessed_local",
+		Author:   ghidra.AuthorAgent,
+	})
+	if err != nil {
+		t.Fatalf("renaming a local: %v", err)
+	}
+	got := findVar(withLocal.Function.Variables, "guessed_local")
+	if got == nil {
+		t.Fatalf("guessed_local is not there: %v", names(withLocal.Function.Variables))
+	}
+	if got.Source != ghidra.SourceAnalysis {
+		t.Errorf("local source = %q, want %s", got.Source, ghidra.SourceAnalysis)
+	}
+
+	// All of it has to survive the project being closed and opened again,
+	// because that is when a user next sees it — in gdb-wui or in Ghidra.
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	again, err := ghidra.Start(ctx, opts)
+	if err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	defer again.Close()
+	back, err := again.Decompile(ctx, "chosen_name")
+	if err != nil {
+		t.Fatalf("Decompile after restart: %v", err)
+	}
+	if back.Source != ghidra.SourceUser {
+		t.Errorf("after a restart the function's source is %q, want %s",
+			back.Source, ghidra.SourceUser)
+	}
+	if v := findVar(back.Variables, "guessed_local"); v == nil ||
+		v.Source != ghidra.SourceAnalysis {
+		t.Errorf("after a restart the local is %+v, want one marked %s",
+			v, ghidra.SourceAnalysis)
+	}
+}
+
+// TestAnAgentsCommentIsMarked pins the other half. A comment has no source type
+// — the listing stores text and nothing else — so authorship rides beside it as
+// a bookmark, and the interesting cases are the transitions.
+func TestAnAgentsCommentIsMarked(t *testing.T) {
+	c, opts := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	line := firstMappedLine(t, fn)
+	at := line.Addrs[0]
+
+	res, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  at,
+		Value:    "the agent thinks this is a length",
+		Author:   ghidra.AuthorAgent,
+	})
+	if err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+	if got := findComment(res.Function.Comments, at); got == nil ||
+		got.Author != ghidra.AuthorAgent {
+		t.Fatalf("comment = %+v, want one marked as the agent's", got)
+	}
+
+	// A person editing an agent's note takes it over. What is on the page
+	// afterwards is theirs, and leaving the mark would credit the agent with a
+	// sentence it did not write.
+	res, err = c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  at,
+		Value:    "no: it is a count",
+	})
+	if err != nil {
+		t.Fatalf("second Comment: %v", err)
+	}
+	if got := findComment(res.Function.Comments, at); got == nil || got.Author != "" {
+		t.Fatalf("after a person rewrote it the comment is %+v, want no author", got)
+	}
+
+	// And the mark survives a restart when it is the agent's.
+	if _, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditFunction,
+		Function: fn.Entry,
+		Value:    "written by the agent, before the restart",
+		Author:   ghidra.AuthorAgent,
+	}); err != nil {
+		t.Fatalf("commenting the function: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	again, err := ghidra.Start(ctx, opts)
+	if err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	defer again.Close()
+	back, err := again.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile after restart: %v", err)
+	}
+	if got := findComment(back.Comments, back.Entry); got == nil ||
+		got.Author != ghidra.AuthorAgent {
+		t.Errorf("after a restart the function comment is %+v, want the agent's mark", got)
+	}
+}
+
+// TestRemovingACommentRemovesItsMark. A bookmark left behind would put the
+// agent's name on whatever a person writes there next.
+func TestRemovingACommentRemovesItsMark(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	line := firstMappedLine(t, fn)
+	at := line.Addrs[0]
+
+	for _, e := range []ghidra.Edit{
+		{Kind: ghidra.EditLine, Function: fn.Entry, Address: at,
+			Value: "the agent's", Author: ghidra.AuthorAgent},
+		{Kind: ghidra.EditLine, Function: fn.Entry, Address: at, Value: ""},
+	} {
+		if _, err := c.Comment(ctx, e); err != nil {
+			t.Fatalf("Comment %+v: %v", e, err)
+		}
+	}
+	res, err := c.Comment(ctx, ghidra.Edit{
+		Kind:     ghidra.EditLine,
+		Function: fn.Entry,
+		Address:  at,
+		Value:    "mine now",
+	})
+	if err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+	if got := findComment(res.Function.Comments, at); got == nil || got.Author != "" {
+		t.Errorf("comment = %+v; the agent's mark outlived the comment it was on", got)
 	}
 }
 

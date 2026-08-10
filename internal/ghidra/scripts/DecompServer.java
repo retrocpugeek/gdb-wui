@@ -40,7 +40,7 @@
 //       "symbol":"57","name":"local_10","newName":"count"}
 //   <- {"id":5,"ok":true,"function":{...}}
 //   -> {"id":6,"op":"comment","kind":"line","function":"0x10d2b0",
-//       "address":"0x10d2c4","text":"retry count, not a length"}
+//       "address":"0x10d2c4","text":"retry count, not a length","author":"agent"}
 //   <- {"id":6,"ok":true,"function":{...},"was":"","now":"retry count, ..."}
 //
 // An edit replies with the whole re-decompiled function rather than an
@@ -80,10 +80,16 @@ import ghidra.app.util.cparser.C.CParserUtils;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.DataUtilities;
 import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.CommentType;
+import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Listing;
+import ghidra.program.model.listing.Variable;
+import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.symbol.SourceType;
@@ -279,6 +285,32 @@ public class DecompServer extends GhidraScript {
 	// Without the save the new name lives only in this process and any crash
 	// loses an afternoon's work.
 
+	// AGENT is the author string that means "not the person at the keyboard".
+	// It changes two things: names are written as inferred rather than as
+	// stated, and comments are bookmarked so their author survives the session.
+	private static final String AGENT = "agent";
+
+	// The bookmark that records who wrote a comment. A comment has no source
+	// type — the listing stores text and nothing else — so the authorship has
+	// to sit beside it. A bookmark is Ghidra's own mechanism for that, it
+	// survives the save and a later re-analysis (finding 40), and it leaves the
+	// comment text exactly as it was typed. The alternative, a marker inside
+	// the text, would have to be parsed off on the way back and would be
+	// visible to anyone reading the project in Ghidra as noise.
+	private static final String BOOKMARK_TYPE = "Note";
+	private static final String BOOKMARK_CATEGORY = "gdb-wui/agent";
+
+	// sourceOf decides how a name is recorded.
+	//
+	// ANALYSIS rather than USER_DEFINED for an agent, which is Ghidra's own
+	// vocabulary for "inferred" and is what the Ghidra UI shows afterwards.
+	// The reverse mapping is deliberately not exact and the consumer is told
+	// so: Ghidra's own analysers also produce ANALYSIS names, so "analysis"
+	// means "not typed by a person" rather than "written by an agent".
+	private static SourceType sourceOf(String author) {
+		return AGENT.equals(author) ? SourceType.ANALYSIS : SourceType.USER_DEFINED;
+	}
+
 	private static final String READ_ONLY =
 		"this project is opened read-only: gdb-wui edits only the project it " +
 			"imported itself, never one you named with -ghidra-project";
@@ -298,6 +330,7 @@ public class DecompServer extends GhidraScript {
 		if (want.isEmpty()) {
 			return fail(id, "a new name is required");
 		}
+		SourceType source = sourceOf(field(req, "author"));
 
 		String err = null;
 		boolean ok = false;
@@ -305,20 +338,23 @@ public class DecompServer extends GhidraScript {
 		// than asked for beforehand because only this side can see the symbol
 		// the edit actually landed on.
 		String was = null;
+		String warning = null;
 		int tx = currentProgram.startTransaction("rename to " + want);
 		try {
 			if ("function".equals(kind)) {
 				was = f.getName();
-				f.setName(want, SourceType.USER_DEFINED);
+				f.setName(want, source);
 			}
 			else if ("variable".equals(kind)) {
-				HighSymbol sym = symbolFor(f, field(req, "symbol"), field(req, "name"));
+				HighFunction high = highOf(f);
+				HighSymbol sym = symbolIn(high, field(req, "symbol"), field(req, "name"));
 				if (sym == null) {
-					err = stale(field(req, "name"), f);
+					err = stale(field(req, "name"), high, f);
 				}
 				else {
 					was = sym.getName();
-					HighFunctionDBUtil.updateDBVariable(sym, want, null, SourceType.USER_DEFINED);
+					warning = clearStranded(f, high, want);
+					HighFunctionDBUtil.updateDBVariable(sym, want, null, source);
 				}
 			}
 			else if ("global".equals(kind)) {
@@ -329,7 +365,7 @@ public class DecompServer extends GhidraScript {
 				}
 				else {
 					was = sym.getName();
-					sym.setName(want, SourceType.USER_DEFINED);
+					sym.setName(want, source);
 				}
 			}
 			else {
@@ -346,7 +382,10 @@ public class DecompServer extends GhidraScript {
 		if (!ok) {
 			return fail(id, err);
 		}
-		return edited(id, f, duplicateWarning(kind, want), was, want);
+		if (warning == null) {
+			warning = duplicateWarning(kind, want);
+		}
+		return edited(id, f, warning, was, want);
 	}
 
 	private boolean retype(long id, String req) {
@@ -364,11 +403,13 @@ public class DecompServer extends GhidraScript {
 		if (text.isEmpty()) {
 			return fail(id, "a type is required");
 		}
+		SourceType source = sourceOf(field(req, "author"));
 
 		String err = null;
 		boolean ok = false;
 		String was = null;
 		String now = null;
+		String warning = null;
 		int tx = currentProgram.startTransaction("retype to " + text);
 		try {
 			if ("function".equals(kind)) {
@@ -393,16 +434,17 @@ public class DecompServer extends GhidraScript {
 				// prototype does not carry one and Ghidra's guess is better
 				// than the default.
 				else if (!new ApplyFunctionSignatureCmd(f.getEntryPoint(), def,
-					SourceType.USER_DEFINED, true, false,
+					source, true, false,
 					DataTypeConflictHandler.DEFAULT_HANDLER, FunctionRenameOption.RENAME)
 						.applyTo(currentProgram, monitor)) {
 					err = "the prototype parsed but could not be applied";
 				}
 			}
 			else if ("variable".equals(kind)) {
-				HighSymbol sym = symbolFor(f, field(req, "symbol"), field(req, "name"));
+				HighFunction high = highOf(f);
+				HighSymbol sym = symbolIn(high, field(req, "symbol"), field(req, "name"));
 				if (sym == null) {
-					err = stale(field(req, "name"), f);
+					err = stale(field(req, "name"), high, f);
 				}
 				else {
 					was = sym.getDataType() == null ? "" : sym.getDataType().getDisplayName();
@@ -410,11 +452,42 @@ public class DecompServer extends GhidraScript {
 					// The name is passed back unchanged rather than left null,
 					// so a retype is only ever a retype.
 					HighFunctionDBUtil.updateDBVariable(sym, sym.getName(), parseType(text),
-						SourceType.USER_DEFINED);
+						source);
+				}
+			}
+			else if ("global".equals(kind)) {
+				// A global has no HighSymbol to update: its type is the data
+				// defined at its address, so this applies a data type to the
+				// listing and the decompiler picks it up. Typing one as an
+				// array is what turns *(char **)(&tbl + i * 8) back into
+				// tbl[i], which is the point of doing it at all.
+				Symbol sym = globalAt(field(req, "address"), field(req, "name"));
+				if (sym == null) {
+					err = "no symbol named " + field(req, "name") + " at "
+						+ field(req, "address");
+				}
+				else {
+					Address at = sym.getAddress();
+					Listing listing = currentProgram.getListing();
+					Data existing = listing.getDataAt(at);
+					// Only a type that is really there is worth an undo. Undefined
+					// bytes are not a type to go back to: "restoring" them would
+					// clear the address rather than put anything back, so this
+					// reports no previous value and the edit is left un-undoable.
+					was = existing != null && existing.isDefined()
+						&& existing.getDataType() != null
+							? existing.getDataType().getDisplayName()
+							: "";
+					now = sym.getName();
+					DataType dt = parseType(text);
+					warning = replacedNeighbours(listing, at, dt);
+					// -1 lets a fixed-size type size itself.
+					DataUtilities.createData(currentProgram, at, dt, -1,
+						DataUtilities.ClearDataMode.CLEAR_ALL_CONFLICT_DATA);
 				}
 			}
 			else {
-				err = "cannot retype a " + kind + " yet";
+				err = "cannot retype a " + kind;
 			}
 			ok = err == null;
 		}
@@ -431,8 +504,51 @@ public class DecompServer extends GhidraScript {
 			return fail(id, err);
 		}
 		// A signature carries a name, so applying one renames the function too.
-		return edited(id, f, duplicateWarning(kind, f.getName()), was,
-			now == null ? f.getName() : now);
+		if (warning == null) {
+			warning = duplicateWarning(kind, f.getName());
+		}
+		return edited(id, f, warning, was, now == null ? f.getName() : now);
+	}
+
+	// replacedNeighbours describes the defined data a new global type will
+	// consume, so the caller hears about it.
+	//
+	// A neighbour does not refuse the edit: applying a type is the one thing
+	// this op is for, Ghidra's own UI asks and proceeds, and a caller that
+	// named an address explicitly meant that address. What would be wrong is
+	// doing it silently — a type one element too long deletes the next global
+	// and then looks like it worked. Instructions are never at risk whatever
+	// the clear mode says; createData refuses to run over those.
+	private String replacedNeighbours(Listing listing, Address at, DataType dt) {
+		int len = dt.getLength();
+		if (len <= 0) {
+			// A dynamic type sizes itself against the bytes at the address, so
+			// there is no range to measure until it has been applied.
+			return null;
+		}
+		Address end;
+		try {
+			end = at.add(len - 1);
+		}
+		catch (Exception offTheEnd) {
+			// Past the end of the space; createData is about to refuse it.
+			return null;
+		}
+		List<String> hit = new ArrayList<>();
+		Data d = listing.getDefinedDataAfter(at);
+		while (d != null && d.getMinAddress().compareTo(end) <= 0) {
+			if (hit.size() == 4) {
+				hit.add("...");
+				break;
+			}
+			DataType had = d.getDataType();
+			hit.add((had == null ? "data" : had.getDisplayName()) + " at " + d.getMinAddress());
+			d = listing.getDefinedDataAfter(d.getMaxAddress());
+		}
+		if (hit.isEmpty()) {
+			return null;
+		}
+		return "replaced defined data: " + String.join(", ", hit);
 	}
 
 	// comment writes a note into the program's listing, where the decompiler
@@ -499,9 +615,22 @@ public class DecompServer extends GhidraScript {
 		String was = listing.getComment(type, at);
 		String err = null;
 		boolean ok = false;
+		boolean agent = AGENT.equals(field(req, "author"));
 		int tx = currentProgram.startTransaction(text.isEmpty() ? "remove a comment" : "comment");
 		try {
 			listing.setComment(at, type, text.isEmpty() ? null : text);
+			// The mark goes on and comes off with the comment, and a person
+			// editing an agent's note takes it over: what is on the page after
+			// this call is theirs, and marking it otherwise would credit the
+			// agent with a sentence it did not write.
+			BookmarkManager marks = currentProgram.getBookmarkManager();
+			Bookmark had = marks.getBookmark(at, BOOKMARK_TYPE, BOOKMARK_CATEGORY);
+			if (had != null) {
+				marks.removeBookmark(had);
+			}
+			if (agent && !text.isEmpty()) {
+				marks.setBookmark(at, BOOKMARK_TYPE, BOOKMARK_CATEGORY, kind);
+			}
 			ok = true;
 		}
 		catch (Exception e) {
@@ -585,37 +714,122 @@ public class DecompServer extends GhidraScript {
 		}
 	}
 
-	// symbolFor finds the symbol an edit names.
-	//
-	// The id first and the name second, because an edit renumbers the ids of
-	// the symbols it did not touch (finding 34), so a client's id is routinely
-	// one edit out of date while its name is still right. Finding nothing is an
-	// error and never a nearest match: renaming the wrong variable is worse
-	// than refusing to rename anything.
-	private HighSymbol symbolFor(Function f, String symbolID, String name) {
+	// highOf is the decompiled form of a function, for the callers that need
+	// the whole of it rather than one symbol out of it.
+	private HighFunction highOf(Function f) {
 		DecompileResults res = decomp.decompileFunction(f, DECOMPILE_TIMEOUT_SECS, monitor);
-		if (res == null || res.getHighFunction() == null) {
-			return null;
-		}
-		HighSymbol byName = null;
-		Iterator<HighSymbol> it = res.getHighFunction().getLocalSymbolMap().getSymbols();
-		while (it.hasNext()) {
-			HighSymbol sym = it.next();
-			if (symbolID != null && !symbolID.isEmpty()
-				&& symbolID.equals(Long.toString(sym.getId()))) {
-				return sym;
-			}
-			if (name != null && name.equals(sym.getName())) {
-				byName = sym;
-			}
-		}
-		return byName;
+		return res == null ? null : res.getHighFunction();
 	}
 
-	private String stale(String name, Function f) {
-		return "no variable " + name + " in " + f.getName()
-			+ " any more; the decompiled view is out of date";
+	// symbolIn resolves the symbol an edit is aimed at, and the name decides.
+	//
+	// A client holds two keys for a variable and they go stale differently. An
+	// edit renumbers the ids of the symbols it did not touch (finding 34), so
+	// an id from before the last edit does not merely stop resolving — it
+	// routinely resolves to a *different* variable, and obeying it renames one
+	// the caller never saw. The name is what the caller pointed at, in the
+	// decompiled text or in a menu opened on it, so the name is the key and the
+	// id is not consulted while there is a name to check.
+	//
+	// The id is still worth having for a caller that has no name to send. When
+	// there is one and it is gone, that is a stale view, and it is refused:
+	// renaming the wrong variable is worse than refusing to rename anything.
+	private static HighSymbol symbolIn(HighFunction high, String symbolID, String name) {
+		if (high == null) {
+			return null;
+		}
+		boolean named = name != null && !name.isEmpty();
+		HighSymbol byID = null;
+		Iterator<HighSymbol> it = high.getLocalSymbolMap().getSymbols();
+		while (it.hasNext()) {
+			HighSymbol sym = it.next();
+			if (named && name.equals(sym.getName())) {
+				return sym;
+			}
+			if (symbolID != null && !symbolID.isEmpty()
+				&& symbolID.equals(Long.toString(sym.getId()))) {
+				byID = sym;
+			}
+		}
+		return named ? null : byID;
 	}
+
+	// clearStranded frees a name that nothing on screen is using.
+	//
+	// Renaming a decompiler-invented variable commits it to the database at
+	// the storage and pc it had at the time. A later edit that reshapes the
+	// body — typing a global as an array, applying a prototype — can leave
+	// that storage carrying no variable, and the name then belongs to
+	// something on no line of the function. It is invisible, it cannot be
+	// addressed by id or by name because it is in no symbol map, and it still
+	// holds its name against the function's namespace: reusing that name
+	// answers DuplicateNameException, which is a wall with nothing behind it.
+	// The user's own name, refused on behalf of a variable that is not there.
+	//
+	// A name that *is* on screen is a real collision and is left alone, so the
+	// duplicate is still refused when refusing it means something.
+	private String clearStranded(Function f, HighFunction high, String want) {
+		if (high == null) {
+			return null;
+		}
+		Iterator<HighSymbol> it = high.getLocalSymbolMap().getSymbols();
+		while (it.hasNext()) {
+			if (want.equals(it.next().getName())) {
+				return null;
+			}
+		}
+		int gone = 0;
+		String where = null;
+		for (Variable v : f.getLocalVariables()) {
+			if (want.equals(v.getName())) {
+				where = String.valueOf(v.getVariableStorage());
+				f.removeVariable(v);
+				gone++;
+			}
+		}
+		if (gone == 0) {
+			return null;
+		}
+		if (gone > 1) {
+			return "freed the name " + want + " from " + gone
+				+ " stranded variables, which the database held but the function does not use";
+		}
+		return "freed the name " + want + " from a stranded variable at " + where
+			+ ", which the database held but the function does not use";
+	}
+
+	// stale reports a view that has moved on, and says what it moved to.
+	//
+	// The caller's only way forward is to decompile the function again, and the
+	// names it would get back are already in hand here. Handing them over costs
+	// a line of the message and saves a round trip whose entire purpose is to
+	// learn what this reply could have said — which for an agent is a whole
+	// turn spent discovering the obvious.
+	private String stale(String name, HighFunction high, Function f) {
+		String msg = "no variable " + name + " in " + f.getName()
+			+ " any more; the decompiled view is out of date";
+		if (high == null) {
+			return msg;
+		}
+		List<String> now = new ArrayList<>();
+		Iterator<HighSymbol> it = high.getLocalSymbolMap().getSymbols();
+		while (it.hasNext()) {
+			now.add(it.next().getName());
+		}
+		if (now.isEmpty()) {
+			return msg + " and it has no variables at all now";
+		}
+		String list = String.join(", ", now.subList(0, Math.min(now.size(), STALE_NAMES)));
+		if (now.size() > STALE_NAMES) {
+			list += ", and " + (now.size() - STALE_NAMES) + " more";
+		}
+		return msg + "; it now has " + list;
+	}
+
+	// How many current names a stale edit is told about. Enough to recognise a
+	// renamed variable in an ordinary function, short of pasting a large one's
+	// whole symbol map into an error string.
+	private static final int STALE_NAMES = 12;
 
 	private Symbol globalAt(String address, String name) {
 		try {

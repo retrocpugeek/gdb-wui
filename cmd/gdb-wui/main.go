@@ -29,6 +29,7 @@ import (
 	"github.com/retrocpugeek/gdb-wui/internal/ghidra"
 	"github.com/retrocpugeek/gdb-wui/internal/httpapi"
 	"github.com/retrocpugeek/gdb-wui/internal/hub"
+	"github.com/retrocpugeek/gdb-wui/internal/mcp"
 	"github.com/retrocpugeek/gdb-wui/internal/mi"
 	"github.com/retrocpugeek/gdb-wui/internal/runfile"
 	"github.com/retrocpugeek/gdb-wui/internal/srcfs"
@@ -53,6 +54,15 @@ type options struct {
 	miLog    bool
 	printURL bool
 	idleExit time.Duration
+
+	// The MCP bridge, which joins a running server rather than starting one.
+	// Three flags rather than one because reading a binary, writing into the
+	// decompiler and running the program are three different things to agree
+	// to, and bundling them would make the cautious answer to any of them no
+	// to all three.
+	mcp         bool
+	mcpAnnotate bool
+	mcpRun      bool
 
 	// Where the settings came from. Not settable in a config file: a file that
 	// chose which file to read would be its own puzzle.
@@ -85,6 +95,12 @@ func main() {
 	flag.BoolVar(&opt.noGDB, "no-gdb", false, "browse the project without starting a debugger")
 	flag.BoolVar(&opt.miLog, "mi-log", false, "stream raw MI traffic to the browser's log pane")
 	flag.BoolVar(&opt.printURL, "print-url", false, "print a fresh login URL for an already-running gdb-wui and exit")
+	flag.BoolVar(&opt.mcp, "mcp", false,
+		"serve MCP on stdio for an already-running gdb-wui, so an agent can read the program")
+	flag.BoolVar(&opt.mcpAnnotate, "mcp-annotate", false,
+		"with -mcp: also let the agent write names, types and comments into the decompiler")
+	flag.BoolVar(&opt.mcpRun, "mcp-run", false,
+		"with -mcp: also let the agent set breakpoints and run the program")
 	flag.StringVar(&opt.ghidraDir, "ghidra", "", "Ghidra installation directory for decompilation (default $"+ghidra.EnvInstall+", then the usual locations)")
 	flag.StringVar(&opt.ghidraProject, "ghidra-project", "", "existing Ghidra project (.gpr) to read, opened read-only")
 	flag.StringVar(&opt.ghidraProgram, "ghidra-program", "", "which program inside -ghidra-project to decompile")
@@ -132,6 +148,25 @@ func main() {
 
 	if opt.showVersion {
 		fmt.Println("gdb-wui", version)
+		return
+	}
+	if opt.mcp {
+		// stderr, because stdout is the protocol: one JSON object per line,
+		// and a stray log line in the middle of it is a client that
+		// disconnects with a parse error nobody can place.
+		logf := func(format string, args ...any) { log.Printf(format, args...) }
+		if !opt.verbose {
+			logf = func(string, ...any) {}
+		}
+		if err := mcp.Run(context.Background(), mcp.Options{
+			Addr:     addrForLookup(opt.addr),
+			Annotate: opt.mcpAnnotate,
+			Run:      opt.mcpRun,
+			Version:  version,
+			Logf:     logf,
+		}); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 	if opt.printURL {

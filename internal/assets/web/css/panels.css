@@ -911,6 +911,16 @@
  * own markup, so this never mistakes a string literal for a comment. */
 .dec-row.is-comment .dec-code { color: var(--tok-comment); font-style: italic; }
 
+/* A note an agent wrote, marked for the same reason a recovered name is
+ * italic: it is a guess with a sentence around it, and a page that showed it
+ * the same as something you concluded would be claiming knowledge nobody has.
+ * The rule is the dotted underline used elsewhere for "inferred", not a colour,
+ * because comments are already coloured as comments. */
+.dec-row.is-comment.is-agent .dec-code {
+  text-decoration: underline dotted var(--tok-comment);
+  text-underline-offset: 3px;
+}
+
 .dec-row.is-pc { background: var(--exec-line); }
 .dec-row.is-pc .dec-gutter { background: var(--exec-line); color: var(--fg-0); }
 
