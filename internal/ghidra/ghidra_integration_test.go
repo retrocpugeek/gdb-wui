@@ -65,6 +65,45 @@ int main(void) { printf("%d %s\n", accumulate(7), pick(1)); return 0; }
 	return bin
 }
 
+// tableFixture compiles an optimised program whose table walk the decompiler
+// has to invent a temporary for.
+//
+// Optimised on purpose: at -O0 every intermediate gets a stack slot, and a
+// variable with real storage is not the one that strands. A name committed to a
+// register or a frame offset survives a reshape, because the storage is still
+// there to hang it on; a name committed for a decompiler temporary is keyed by
+// the shape of the p-code, and a reshape leaves it addressing nothing.
+func tableFixture(t *testing.T) string {
+	t.Helper()
+	cc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc is not installed")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "table.c")
+	// The shape this is modelled on is busybox's applet installer: a nibble
+	// packed two to a byte, indexing a table of directory strings.
+	const body = `
+#include <stdio.h>
+static const unsigned char loc[4] = { 0x31, 0x42, 0x13, 0x24 };
+const char *dirs[] = { "/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/" };
+const char *dir_for(unsigned i) {
+	unsigned n = (i & 1) ? (loc[i >> 1] >> 4) : (loc[i >> 1] & 0xf);
+	return dirs[n];
+}
+int main(int argc, char **argv) { printf("%s\n", dir_for(argc)); return 0; }
+`
+	if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "table")
+	out, err := exec.Command(cc, "-O2", "-o", bin, src).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	return bin
+}
+
 // start imports the fixture and returns a resident client. Import and analysis
 // of a hello-world is seconds; a large image is minutes, which is why the
 // caller of this in production is a job rather than a click.

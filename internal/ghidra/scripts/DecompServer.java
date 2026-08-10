@@ -88,6 +88,8 @@ import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Listing;
+import ghidra.program.model.listing.Variable;
+import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.symbol.SourceType;
@@ -336,6 +338,7 @@ public class DecompServer extends GhidraScript {
 		// than asked for beforehand because only this side can see the symbol
 		// the edit actually landed on.
 		String was = null;
+		String warning = null;
 		int tx = currentProgram.startTransaction("rename to " + want);
 		try {
 			if ("function".equals(kind)) {
@@ -343,12 +346,14 @@ public class DecompServer extends GhidraScript {
 				f.setName(want, source);
 			}
 			else if ("variable".equals(kind)) {
-				HighSymbol sym = symbolFor(f, field(req, "symbol"), field(req, "name"));
+				HighFunction high = highOf(f);
+				HighSymbol sym = symbolIn(high, field(req, "symbol"), field(req, "name"));
 				if (sym == null) {
 					err = stale(field(req, "name"), f);
 				}
 				else {
 					was = sym.getName();
+					warning = clearStranded(f, high, want);
 					HighFunctionDBUtil.updateDBVariable(sym, want, null, source);
 				}
 			}
@@ -377,7 +382,10 @@ public class DecompServer extends GhidraScript {
 		if (!ok) {
 			return fail(id, err);
 		}
-		return edited(id, f, duplicateWarning(kind, want), was, want);
+		if (warning == null) {
+			warning = duplicateWarning(kind, want);
+		}
+		return edited(id, f, warning, was, want);
 	}
 
 	private boolean retype(long id, String req) {
@@ -713,12 +721,22 @@ public class DecompServer extends GhidraScript {
 	// error and never a nearest match: renaming the wrong variable is worse
 	// than refusing to rename anything.
 	private HighSymbol symbolFor(Function f, String symbolID, String name) {
+		return symbolIn(highOf(f), symbolID, name);
+	}
+
+	// highOf is the decompiled form of a function, for the callers that need
+	// the whole of it rather than one symbol out of it.
+	private HighFunction highOf(Function f) {
 		DecompileResults res = decomp.decompileFunction(f, DECOMPILE_TIMEOUT_SECS, monitor);
-		if (res == null || res.getHighFunction() == null) {
+		return res == null ? null : res.getHighFunction();
+	}
+
+	private static HighSymbol symbolIn(HighFunction high, String symbolID, String name) {
+		if (high == null) {
 			return null;
 		}
 		HighSymbol byName = null;
-		Iterator<HighSymbol> it = res.getHighFunction().getLocalSymbolMap().getSymbols();
+		Iterator<HighSymbol> it = high.getLocalSymbolMap().getSymbols();
 		while (it.hasNext()) {
 			HighSymbol sym = it.next();
 			if (symbolID != null && !symbolID.isEmpty()
@@ -730,6 +748,50 @@ public class DecompServer extends GhidraScript {
 			}
 		}
 		return byName;
+	}
+
+	// clearStranded frees a name that nothing on screen is using.
+	//
+	// Renaming a decompiler-invented variable commits it to the database at
+	// the storage and pc it had at the time. A later edit that reshapes the
+	// body — typing a global as an array, applying a prototype — can leave
+	// that storage carrying no variable, and the name then belongs to
+	// something on no line of the function. It is invisible, it cannot be
+	// addressed by id or by name because it is in no symbol map, and it still
+	// holds its name against the function's namespace: reusing that name
+	// answers DuplicateNameException, which is a wall with nothing behind it.
+	// The user's own name, refused on behalf of a variable that is not there.
+	//
+	// A name that *is* on screen is a real collision and is left alone, so the
+	// duplicate is still refused when refusing it means something.
+	private String clearStranded(Function f, HighFunction high, String want) {
+		if (high == null) {
+			return null;
+		}
+		Iterator<HighSymbol> it = high.getLocalSymbolMap().getSymbols();
+		while (it.hasNext()) {
+			if (want.equals(it.next().getName())) {
+				return null;
+			}
+		}
+		int gone = 0;
+		String where = null;
+		for (Variable v : f.getLocalVariables()) {
+			if (want.equals(v.getName())) {
+				where = String.valueOf(v.getVariableStorage());
+				f.removeVariable(v);
+				gone++;
+			}
+		}
+		if (gone == 0) {
+			return null;
+		}
+		if (gone > 1) {
+			return "freed the name " + want + " from " + gone
+				+ " stranded variables, which the database held but the function does not use";
+		}
+		return "freed the name " + want + " from a stranded variable at " + where
+			+ ", which the database held but the function does not use";
 	}
 
 	private String stale(String name, Function f) {

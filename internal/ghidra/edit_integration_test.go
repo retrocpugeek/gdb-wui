@@ -25,13 +25,19 @@ import (
 // to stop the process and open the same project again.
 func startWritable(t *testing.T) (*ghidra.Client, ghidra.Options) {
 	t.Helper()
+	return startWritableOn(t, fixture(t))
+}
+
+// startWritableOn is startWritable against a chosen binary, for the tests that
+// need a shape the shared fixture does not have.
+func startWritableOn(t *testing.T, bin string) (*ghidra.Client, ghidra.Options) {
+	t.Helper()
 	in := install(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	t.Cleanup(cancel)
 
 	projectDir := t.TempDir()
-	bin := fixture(t)
 	logf := func(f string, a ...any) { t.Logf(f, a...) }
 	if err := ghidra.Import(ctx, in, projectDir, "itest", bin, logf); err != nil {
 		t.Fatalf("Import: %v", err)
@@ -166,6 +172,149 @@ func TestRenameAndRetypeALocal(t *testing.T) {
 	if res2.Was != renamed.Type {
 		t.Errorf("was = %q, want the previous type %q", res2.Was, renamed.Type)
 	}
+}
+
+// TestRenamingOverAStrandedNameSucceeds covers the wall with nothing behind it.
+//
+// Renaming a decompiler-invented variable commits it to the database. An edit
+// that reshapes the body afterwards can leave that storage unused, and the name
+// then belongs to a variable on no line of the function — invisible, addressable
+// by neither id nor name, and still holding its name against the namespace. The
+// user's own name, refused on behalf of something that is not there.
+func TestRenamingOverAStrandedNameSucceeds(t *testing.T) {
+	c, _ := startWritableOn(t, tableFixture(t))
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "dir_for")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	// A decompiler temporary: it holds the unpacked nibble and lives in no
+	// register and no frame slot. Naming one commits it to the database keyed
+	// by the shape of the p-code around it, which is what makes it fragile.
+	var temp *ghidra.Var
+	for i := range fn.Variables {
+		if fn.Variables[i].Storage.Kind == ghidra.StorageUnique && fn.Variables[i].ID != "" {
+			temp = &fn.Variables[i]
+			break
+		}
+	}
+	if temp == nil {
+		t.Skipf("no decompiler temporary among %v; nothing to strand", names(fn.Variables))
+	}
+
+	if _, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   temp.ID,
+		Name:     temp.Name,
+		Value:    "probe",
+	}); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+
+	// Typing the packed table reshapes the body that temporary came out of, so
+	// the name is left in the database addressing nothing. This is the sequence
+	// that stranded a name in practice.
+	res2, err := c.Retype(ctx, ghidra.Edit{
+		Kind:     ghidra.EditGlobal,
+		Function: fn.Entry,
+		Address:  globalNamed(t, fn, "loc").Address,
+		Name:     "loc",
+		Value:    "byte[4]",
+	})
+	if err != nil {
+		t.Fatalf("Retype: %v", err)
+	}
+	if hasVar(res2.Function.Variables, "probe") {
+		t.Skipf("probe is still on screen after the retype, so nothing was stranded: %v",
+			names(res2.Function.Variables))
+	}
+
+	// The name is now held by a variable the function does not use. Claiming it
+	// for one that is on screen must work, and must say what it freed.
+	var live *ghidra.Var
+	for i := range res2.Function.Variables {
+		if res2.Function.Variables[i].ID != "" {
+			live = &res2.Function.Variables[i]
+			break
+		}
+	}
+	if live == nil {
+		t.Fatal("no addressable variable left to rename")
+	}
+	res3, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   live.ID,
+		Name:     live.Name,
+		Value:    "probe",
+	})
+	if err != nil {
+		t.Fatalf("a stranded name blocked its own reuse: %v", err)
+	}
+	if !hasVar(res3.Function.Variables, "probe") {
+		t.Errorf("no probe among %v", names(res3.Function.Variables))
+	}
+	if !strings.Contains(res3.Warning, "stranded") {
+		t.Errorf("warning = %q, which does not say a stranded name was freed", res3.Warning)
+	}
+}
+
+// TestARealDuplicateIsStillRefused is the other half: a name that something on
+// screen is using is a collision worth refusing, and freeing stranded names
+// must not turn that into a silent overwrite.
+func TestARealDuplicateIsStillRefused(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	var addressable []ghidra.Var
+	for _, v := range fn.Variables {
+		if v.ID != "" {
+			addressable = append(addressable, v)
+		}
+	}
+	if len(addressable) < 2 {
+		t.Skipf("need two addressable variables, got %v", names(fn.Variables))
+	}
+
+	res, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   addressable[0].ID,
+		Name:     addressable[0].Name,
+		Value:    "taken",
+	})
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	other := findOther(res.Function.Variables, "taken")
+	if other == nil {
+		t.Skipf("only one variable survived: %v", names(res.Function.Variables))
+	}
+	if _, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   other.ID,
+		Name:     other.Name,
+		Value:    "taken",
+	}); err == nil {
+		t.Error("two variables on screen were allowed to share a name")
+	}
+}
+
+// findOther returns an addressable variable that is not the one named skip.
+func findOther(vars []ghidra.Var, skip string) *ghidra.Var {
+	for i := range vars {
+		if vars[i].ID != "" && vars[i].Name != skip {
+			return &vars[i]
+		}
+	}
+	return nil
 }
 
 // TestRetypeAGlobal covers the kind that has no HighSymbol behind it.
