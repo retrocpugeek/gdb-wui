@@ -349,7 +349,7 @@ public class DecompServer extends GhidraScript {
 				HighFunction high = highOf(f);
 				HighSymbol sym = symbolIn(high, field(req, "symbol"), field(req, "name"));
 				if (sym == null) {
-					err = stale(field(req, "name"), f);
+					err = stale(field(req, "name"), high, f);
 				}
 				else {
 					was = sym.getName();
@@ -441,9 +441,10 @@ public class DecompServer extends GhidraScript {
 				}
 			}
 			else if ("variable".equals(kind)) {
-				HighSymbol sym = symbolFor(f, field(req, "symbol"), field(req, "name"));
+				HighFunction high = highOf(f);
+				HighSymbol sym = symbolIn(high, field(req, "symbol"), field(req, "name"));
 				if (sym == null) {
-					err = stale(field(req, "name"), f);
+					err = stale(field(req, "name"), high, f);
 				}
 				else {
 					was = sym.getDataType() == null ? "" : sym.getDataType().getDisplayName();
@@ -713,17 +714,6 @@ public class DecompServer extends GhidraScript {
 		}
 	}
 
-	// symbolFor finds the symbol an edit names.
-	//
-	// The id first and the name second, because an edit renumbers the ids of
-	// the symbols it did not touch (finding 34), so a client's id is routinely
-	// one edit out of date while its name is still right. Finding nothing is an
-	// error and never a nearest match: renaming the wrong variable is worse
-	// than refusing to rename anything.
-	private HighSymbol symbolFor(Function f, String symbolID, String name) {
-		return symbolIn(highOf(f), symbolID, name);
-	}
-
 	// highOf is the decompiled form of a function, for the callers that need
 	// the whole of it rather than one symbol out of it.
 	private HighFunction highOf(Function f) {
@@ -731,23 +721,37 @@ public class DecompServer extends GhidraScript {
 		return res == null ? null : res.getHighFunction();
 	}
 
+	// symbolIn resolves the symbol an edit is aimed at, and the name decides.
+	//
+	// A client holds two keys for a variable and they go stale differently. An
+	// edit renumbers the ids of the symbols it did not touch (finding 34), so
+	// an id from before the last edit does not merely stop resolving — it
+	// routinely resolves to a *different* variable, and obeying it renames one
+	// the caller never saw. The name is what the caller pointed at, in the
+	// decompiled text or in a menu opened on it, so the name is the key and the
+	// id is not consulted while there is a name to check.
+	//
+	// The id is still worth having for a caller that has no name to send. When
+	// there is one and it is gone, that is a stale view, and it is refused:
+	// renaming the wrong variable is worse than refusing to rename anything.
 	private static HighSymbol symbolIn(HighFunction high, String symbolID, String name) {
 		if (high == null) {
 			return null;
 		}
-		HighSymbol byName = null;
+		boolean named = name != null && !name.isEmpty();
+		HighSymbol byID = null;
 		Iterator<HighSymbol> it = high.getLocalSymbolMap().getSymbols();
 		while (it.hasNext()) {
 			HighSymbol sym = it.next();
-			if (symbolID != null && !symbolID.isEmpty()
-				&& symbolID.equals(Long.toString(sym.getId()))) {
+			if (named && name.equals(sym.getName())) {
 				return sym;
 			}
-			if (name != null && name.equals(sym.getName())) {
-				byName = sym;
+			if (symbolID != null && !symbolID.isEmpty()
+				&& symbolID.equals(Long.toString(sym.getId()))) {
+				byID = sym;
 			}
 		}
-		return byName;
+		return named ? null : byID;
 	}
 
 	// clearStranded frees a name that nothing on screen is using.
@@ -794,10 +798,38 @@ public class DecompServer extends GhidraScript {
 			+ ", which the database held but the function does not use";
 	}
 
-	private String stale(String name, Function f) {
-		return "no variable " + name + " in " + f.getName()
+	// stale reports a view that has moved on, and says what it moved to.
+	//
+	// The caller's only way forward is to decompile the function again, and the
+	// names it would get back are already in hand here. Handing them over costs
+	// a line of the message and saves a round trip whose entire purpose is to
+	// learn what this reply could have said — which for an agent is a whole
+	// turn spent discovering the obvious.
+	private String stale(String name, HighFunction high, Function f) {
+		String msg = "no variable " + name + " in " + f.getName()
 			+ " any more; the decompiled view is out of date";
+		if (high == null) {
+			return msg;
+		}
+		List<String> now = new ArrayList<>();
+		Iterator<HighSymbol> it = high.getLocalSymbolMap().getSymbols();
+		while (it.hasNext()) {
+			now.add(it.next().getName());
+		}
+		if (now.isEmpty()) {
+			return msg + " and it has no variables at all now";
+		}
+		String list = String.join(", ", now.subList(0, Math.min(now.size(), STALE_NAMES)));
+		if (now.size() > STALE_NAMES) {
+			list += ", and " + (now.size() - STALE_NAMES) + " more";
+		}
+		return msg + "; it now has " + list;
 	}
+
+	// How many current names a stale edit is told about. Enough to recognise a
+	// renamed variable in an ordinary function, short of pasting a large one's
+	// whole symbol map into an error string.
+	private static final int STALE_NAMES = 12;
 
 	private Symbol globalAt(String address, String name) {
 		try {

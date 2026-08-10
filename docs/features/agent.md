@@ -85,6 +85,14 @@ nothing else can be read while the program is running. If a call comes back
 "still running", the program is waiting for input or in a loop, and `pause`
 stops it.
 
+**The tools that write answer with the function decompiled again**, for the same
+reason. An edit is not local to what it touched: a prototype changes how every
+caller reads, and a type reshapes the body around it — typing a table as an
+array can merge or retire the very variable that indexes it. So the reply is the
+new view, and the next edit is built from that rather than from the
+decompilation before it. An edit naming a variable the function no longer has is
+refused, and the refusal lists the names it does have.
+
 ## Reading what an agent wrote
 
 Everything it writes is marked, in gdb-wui and in Ghidra.

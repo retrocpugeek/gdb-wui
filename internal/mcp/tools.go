@@ -426,16 +426,15 @@ func tools() []tool {
 		name: "rename",
 		tier: tierAnnotate,
 		desc: "Give a decompiler name of your own. kind is \"function\", " +
-			"\"variable\" (a local, addressed by the id decompile_function " +
-			"reported) or \"global\" (addressed by its address). The name is " +
-			"recorded as inferred rather than as something a person stated, and " +
-			"it goes into the Ghidra project, so it is there next time and every " +
-			"open browser tab repaints.",
+			"\"variable\" (a local, addressed by name) or \"global\" (addressed " +
+			"by its address). The name is recorded as inferred rather than as " +
+			"something a person stated, and it goes into the Ghidra project, so " +
+			"it is there next time and every open browser tab repaints.",
 		schema: object(map[string]any{
 			"kind":     prop("string", `"function", "variable" or "global"`),
 			"function": prop("string", "entry address of the function on screen, runtime hex"),
-			"symbol":   prop("string", "the variable's id from decompile_function"),
-			"name":     prop("string", "its current name, as a check that this is the right one"),
+			"name":     prop("string", "the variable's current name — the key an edit is resolved by, so it must come from the most recent decompilation"),
+			"symbol":   prop("string", "its id from decompile_function; only used when no name is given, since an edit renumbers ids"),
 			"address":  prop("string", "a global's address, runtime hex"),
 			"new_name": prop("string", "the new name"),
 		}, "kind", "function", "new_name"),
@@ -450,12 +449,15 @@ func tools() []tool {
 			"prototype when kind is \"function\" — a prototype carries the name " +
 			"too, so applying one renames the function. Getting a type right " +
 			"often reshapes the decompiled body, which is the point: typing a " +
-			"global as an array turns *(char **)(&tbl + i * 8) into tbl[i].",
+			"global as an array turns *(char **)(&tbl + i * 8) into tbl[i]. " +
+			"Because it reshapes the body, the names and ids from before it are " +
+			"stale: every reply carries the function decompiled again, and that " +
+			"is what the next edit must be built from.",
 		schema: object(map[string]any{
 			"kind":     prop("string", `"variable", "global" or "function"`),
 			"function": prop("string", "entry address of the function, runtime hex"),
-			"symbol":   prop("string", "the variable's id from decompile_function"),
-			"name":     prop("string", "its current name"),
+			"name":     prop("string", "the variable's current name — the key an edit is resolved by, so it must come from the most recent decompilation"),
+			"symbol":   prop("string", "its id from decompile_function; only used when no name is given, since an edit renumbers ids"),
 			"address":  prop("string", "a global's address, runtime hex"),
 			"type":     prop("string", `a C type, or a whole prototype: "long parse(char *, int)"`),
 		}, "kind", "function", "type"),

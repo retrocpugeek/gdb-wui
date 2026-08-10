@@ -280,8 +280,15 @@ implementing:
     Two consequences. An edit has to answer with the whole function decompiled
     again, because every id the client is holding has just gone stale; and a
     stale id must be *refused* rather than applied to whatever now holds it,
-    since renaming the wrong variable is worse than renaming nothing. The
-    symbol's name is the fallback key, and it is the one that survives.
+    since renaming the wrong variable is worse than renaming nothing.
+
+    The second one is easy to under-implement, because "stale" suggests an id
+    that resolves to nothing and the renumbering says otherwise: the ids stay
+    dense, so a client's old id lands on a *neighbour*. An edit resolved by id
+    with a name beside it therefore has to be resolved by the name, which is
+    what the caller pointed at and the only key that does not quietly become
+    somebody else. The id is worth keeping for a caller with no name to send,
+    and worth ignoring the moment there is one.
 
     Ids are also large — a decompiler-only symbol's is around 4.6e18 — so they
     cross the wire as strings. A JavaScript number cannot hold one exactly.

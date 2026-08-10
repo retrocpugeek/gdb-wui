@@ -270,13 +270,19 @@ type DecompEditRequest struct {
 	// the reply.
 	Function string `json:"function"`
 	// Symbol is DecompVar.ID, opaque and optional. An edit renumbers the ids of
-	// the symbols it did not touch, so this is routinely one edit stale and
-	// Name is the fallback key.
+	// the symbols it did not touch, so this is routinely one edit stale — and
+	// stale here does not mean it stops resolving, it means it resolves to a
+	// neighbour. It is therefore consulted only when there is no Name to check
+	// it against.
 	Symbol string `json:"symbol,omitempty"`
-	// Name is the symbol's current name. Sent for every kind, so that a stale
-	// view is reported rather than silently applied to a neighbour. A comment
-	// hangs on an address rather than on a symbol, so for decomp.comment this
-	// carries the function's name and is used only to describe the edit.
+	// Name is the symbol's current name, and it is the key: it is what the
+	// caller pointed at, and unlike an id it does not silently become somebody
+	// else. A name that is not in the function any more is refused rather than
+	// applied to whatever the id now addresses, and the refusal lists what the
+	// function does have, so a client working from a stale view can recover
+	// without decompiling again to find out. A comment hangs on an address
+	// rather than on a symbol, so for decomp.comment this carries the
+	// function's name and is used only to describe the edit.
 	Name string `json:"name,omitempty"`
 	// Address locates a DecompEditGlobal or a DecompEditLine, runtime.
 	Address string `json:"address,omitempty"`

@@ -242,12 +242,14 @@ type Edit struct {
 	// Function is the entry address of the function on screen, in Ghidra's
 	// coordinates.
 	Function string
-	// Symbol is Var.ID. Optional: an edit renumbers the ids of the symbols it
-	// did not touch, so a caller's id is routinely one edit stale and Name is
-	// the fallback.
+	// Symbol is Var.ID. Optional, and only consulted when Name is empty: an
+	// edit renumbers the ids of the symbols it did not touch, so a caller's id
+	// is routinely one edit stale, and a stale id resolves to a neighbour
+	// rather than to nothing.
 	Symbol string
-	// Name is the symbol's current name, both as a fallback key and so a
-	// mismatch can be reported instead of guessed at.
+	// Name is the symbol's current name, and the key an edit is resolved by. A
+	// name the function no longer has is a stale view, and is reported as one
+	// rather than guessed at.
 	Name string
 	// Address locates an EditGlobal, in Ghidra's coordinates.
 	Address string

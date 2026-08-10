@@ -238,14 +238,19 @@ belongs to the consumer: `ANALYSIS` covers an agent's guess and Ghidra's own
 demangler alike, and this document should not decide which of those a reader is
 told about. See finding 40.
 
-`id` is Ghidra's symbol id, and it is what addresses a variable for a rename or
-a retype. It is a string rather than a number because a symbol the decompiler
-invented — one with no database entry, `lVar1` above — gets an id around 4.6e18,
-which a JavaScript number cannot hold exactly. Nothing does arithmetic on it.
+`id` identifies a variable to Ghidra. It is a string rather than a number
+because a symbol the decompiler invented — one with no database entry, `lVar1`
+above — gets an id around 4.6e18, which a JavaScript number cannot hold exactly.
+Nothing does arithmetic on it.
 
 An id is stable only while the function is unchanged: editing one symbol
-renumbers the others. A consumer holding ids across an edit must refresh them,
-and a producer asked to act on a stale one must refuse rather than guess.
+renumbers the others, and densely, so an id held across an edit typically
+resolves to a *neighbour* rather than to nothing. It is therefore not what an
+edit is resolved by. `name` is: it is what the caller pointed at, and it is the
+key that does not quietly become somebody else. An edit that sends both is
+resolved by the name alone, and a name the function no longer has is refused —
+with the names it does have, since a consumer in that position is about to ask
+for exactly that. Send `id` when there is no name to send.
 
 ### `globals`
 

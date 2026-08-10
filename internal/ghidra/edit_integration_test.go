@@ -588,6 +588,97 @@ func TestAStaleSymbolIsRefused(t *testing.T) {
 	}
 }
 
+// TestAStaleIDIsNotObeyedOverALiveName is the dangerous half of finding 34.
+//
+// A stale id usually does not fail to resolve — it resolves to somebody else,
+// because an edit renumbers the whole function. So the case that matters is not
+// an id nothing answers to but an id that disagrees with the name beside it,
+// and the name is what the caller pointed at: the text on screen, or the
+// recovered C an agent read. Obeying the id here renames a variable nobody
+// chose, reports success, and leaves the caller's own target untouched.
+func TestAStaleIDIsNotObeyedOverALiveName(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	target := findOther(fn.Variables, "")
+	if target == nil {
+		t.Fatal("no addressable variable to rename")
+	}
+	decoy := findOther(fn.Variables, target.Name)
+	if decoy == nil {
+		t.Skip("accumulate has only one addressable variable, so no id can disagree")
+	}
+
+	// The name of one, the id of the other. Only the name was chosen by anyone.
+	res, err := c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   decoy.ID,
+		Name:     target.Name,
+		Value:    "chosen",
+	})
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if res.Was != target.Name {
+		t.Errorf("renamed %q, but the caller named %q — the id decided", res.Was, target.Name)
+	}
+	if !hasVar(res.Function.Variables, decoy.Name) {
+		t.Errorf("%s is gone from %v; the id's holder was renamed instead",
+			decoy.Name, names(res.Function.Variables))
+	}
+}
+
+// TestAVanishedNameIsRefusedEvenWhenTheIDStillResolves is the same bug from the
+// other side, and the one the busybox session walked into.
+//
+// Typing a global as an array reshapes the body around it. Names an agent wrote
+// before that are gone from the view it is still holding, while the ids it
+// collected go on resolving — to whatever inherited them. An edit sent from
+// that view must be refused rather than landing somewhere, and the refusal is
+// worth more if it says what the function has now: that is the whole content of
+// the decompile the caller would otherwise have to make to find out.
+func TestAVanishedNameIsRefusedEvenWhenTheIDStillResolves(t *testing.T) {
+	c, _ := startWritable(t)
+	ctx := context.Background()
+
+	fn, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	live := findOther(fn.Variables, "")
+	if live == nil {
+		t.Fatal("no addressable variable to point at")
+	}
+
+	_, err = c.Rename(ctx, ghidra.Edit{
+		Kind:     ghidra.EditVariable,
+		Function: fn.Entry,
+		Symbol:   live.ID, // resolves, and to the wrong thing
+		Name:     "renamed_out_from_under_us",
+		Value:    "wrong",
+	})
+	if err == nil {
+		t.Fatal("an edit from a stale view was accepted")
+	}
+	if !strings.Contains(err.Error(), live.Name) {
+		t.Errorf("error = %q, which does not say what the function has now, "+
+			"so the caller has to decompile again to find out", err)
+	}
+
+	after, err := c.Decompile(ctx, "accumulate")
+	if err != nil {
+		t.Fatalf("Decompile: %v", err)
+	}
+	if hasVar(after.Variables, "wrong") {
+		t.Errorf("the id's holder was renamed anyway: %v", names(after.Variables))
+	}
+}
+
 // TestReadOnlyClientRefusesEdits is the guard, at the far side of the socket.
 //
 // It matters that this is tested against a *real* Ghidra: -readOnly does not
