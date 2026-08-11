@@ -20,6 +20,42 @@ table of a stripped binary, which needs no debug info.
 Rows that belong to no symbol are left blank. Most of the stack and heap is
 blank, which is accurate rather than missing.
 
+## When only the decompiler has a name
+
+Strip the symbol table and gdb has nothing to put in that column, on the program
+whose hex you most need placing. With [the decompiler](decompilation.md)
+configured, its labels fill it — `DAT_001a08de`, or whatever you renamed it to —
+in the same italics the [call stack](../tour.md) uses, because Ghidra's label is
+a guess and not something the binary says.
+
+![The hex view of a stripped binary, labelled by the decompiler](../images/memory-decomp.png)
+
+Everything about the rule is visible in that screenshot. `DAT_00402000` is
+untyped and names its own row only. The format string a few rows down is typed,
+so it goes on naming rows through its length. `NoteAbiTag_00402178+8` is eight
+bytes into an object whose extent Ghidra knows, and the row below it is
+twenty-four. And the rows in between are blank, because nothing is known about
+them.
+
+A label covers **as far as Ghidra knows it runs, and no further**:
+
+| The label | The column shows |
+|---|---|
+| Typed — an array, a pointer, a struct | The name, then `name+16` through its length |
+| Untyped | The name on its own row, and nothing after it |
+
+That second row is the common case on a fresh import and it is a real limit, not
+an oversight. Ghidra represents a byte nobody has looked at as one undefined
+item however far the data actually runs: busybox's `applet_names` is a
+1954-byte table that reads as a single byte until it is typed. Guessing the
+extent from the next label along would name the padding between them, and a
+column reading `DAT_00104010+2048` over a run of zeroes is worse than a blank
+one.
+
+The fix is the ordinary reverse-engineering gesture: right-click the name in the
+[decompiled view](decompilation.md) and give it a type. `char[1954]` on that
+table, and the column names every row of it from then on.
+
 To change a byte, double-click it. See [changing values](editing.md).
 
 ## Entering an address

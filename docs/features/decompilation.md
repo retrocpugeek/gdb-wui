@@ -243,11 +243,15 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
 - **It does not edit struct fields.** Names, variable types, function
   prototypes and comments, but not the members of a type.
 - **It does not name every pane.** It names the [call stack](#naming-the-call-stack),
-  the [symbol pane](symbols.md), the [breakpoint list](breakpoints.md) and a
-  [watch on an address](variables.md#watching-something-from-the-decompiled-view).
-  The Threads pane shows a frame per thread and leaves gdb's `??` on it, and
-  the [memory viewer](memory.md)'s symbol column is gdb's — on a stripped
-  binary it is blank.
+  the [symbol pane](symbols.md), the [breakpoint list](breakpoints.md), a
+  [watch on an address](variables.md#watching-something-from-the-decompiled-view)
+  and the [memory viewer](memory.md#when-only-the-decompiler-has-a-name)'s
+  symbol column. The Threads pane shows a frame per thread and leaves gdb's
+  `??` on it.
+- **It does not know how far an untyped label runs**, so the memory column names
+  such a label on its own row and nothing after it. Ghidra represents an
+  unexamined byte as one undefined item whatever follows it; giving the label a
+  type is what establishes the extent, and then the whole object is named.
 - **It does not name a frame outside the program.** libc and the dynamic loader
   are not in the binary Ghidra was given, so their frames keep whatever gdb
   says — usually a real symbol, sometimes nothing.
