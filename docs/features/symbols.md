@@ -11,8 +11,9 @@ nav_order: 9
 
 The Symbols pane lists every function and global in the loaded program, taken
 from debug info if there is any and from the ELF symbol table if not. On a
-release build that table is the only map available, and this pane is how you
-read it.
+release build that table is the only map the *program* carries, and this pane is
+how you read it — and when even that is gone, the pane fills from
+[the decompiler](#a-stripped-binary) instead.
 
 The filter box matches substrings. The `fn` and `var` sigils show which kind
 each symbol is, the `all` dropdown narrows the list to one kind, and dimmed rows

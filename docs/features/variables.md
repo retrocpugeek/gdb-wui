@@ -92,12 +92,14 @@ To see the memory behind a value, right-click it.
 
 ![The memory context menu, showing both addresses](../images/hover-menu.png)
 
-The menu offers two things and names the address each would show:
+The menu names the address each entry would show:
 
 - **Show where it is stored** — the address of the variable itself.
 - **Show what it points to** — the address the variable holds.
+- **Watch it** — add the expression to the Variables pane, where it is re-read
+  at every stop. See [watching from the decompiled view](#watching-something-from-the-decompiled-view).
 
-A pointer has both, and they are different addresses. A plain `int` has only the
+A pointer has both addresses, and they are different. A plain `int` has only the
 first. A variable held in a register has only the second, and the first entry is
 omitted rather than shown with a wrong address.
 

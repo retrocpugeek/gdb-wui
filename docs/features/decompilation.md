@@ -74,6 +74,11 @@ Right-click a name in the Decompiled tab:
   right often reshapes the whole function body, which is the point.
 - **Rename the function…** and **Edit the prototype…** — the prototype covers
   the return type, the parameters and the name in one go.
+- **Watch `local_10`** — keep the value in the [Variables pane](variables.md),
+  re-read at every stop. A global is the one to reach for: a fixed address is
+  valid at every program counter, so the watch goes on reading however far you
+  step. It arrives typed as whatever the decompiler believes, which is often
+  `undefined8`, and the pane can [cast it](variables.md#working-with-watches).
 
 Right-clicking a recovered frame in the call stack offers the same rename, which
 is usually where an unhelpful name is first met.
