@@ -58,6 +58,26 @@ and no locals to wait for — and the arguments are still in the registers the
 calling convention put them in, which on that binary is the only place you were
 going to read them.
 
+## What a breakpoint is called
+
+A row names the breakpoint the best way anything can: a file and a line where
+there is debug info, a function name where gdb has one, and otherwise the
+address, which is all a stripped binary offers.
+
+![Two breakpoints, one named by gdb and one by the decompiler](../images/decomp-navigate.png)
+
+With the [decompiler](decompilation.md) configured, an address is no longer the
+end of it. A breakpoint gdb could not name is looked up in Ghidra and the row
+takes that name, with `+0x1c` when it is partway into a function — the same
+treatment, and the same italics, as a recovered frame in the
+[call stack](../tour.md). The address stays in the second column, because that
+number is what you check against the disassembly.
+
+`printf@plt` above is the control: gdb named that one out of the binary's
+dynamic symbol table, and Ghidra calls the thunk there `printf` as well. A row
+gdb can name keeps gdb's name and stays unmarked, because a fact and a
+recovery should not look alike.
+
 ## Pending breakpoints
 
 A breakpoint on a file or symbol that gdb does not yet know about is accepted

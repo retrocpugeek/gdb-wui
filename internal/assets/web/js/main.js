@@ -290,6 +290,10 @@ for (const [pane, resolve] of [
     // temporary, a function nobody can evaluate — are exactly the ones with
     // nothing to show a value for.
     const editable = pane === ui.decomp ? decompEditTarget(ev) : null;
+    // A name in the decompiled text that is none of this function's own
+    // variables. Nearly always a call to another function, which on a stripped
+    // binary is the only place its name is ever written down.
+    const word = pane === ui.decomp && !hit ? decomp.wordAt(ev) : null;
     if (!hit && !editable) return;
     ev.preventDefault();
     hover.hide();
@@ -298,8 +302,10 @@ for (const [pane, resolve] of [
 
     // The value decides half the menu, so it is fetched before the menu opens
     // rather than the menu offering something that cannot work. One round
-    // trip, and the hover has usually just made the same one.
-    evaluateForMenu(hit?.expr).then((res) => {
+    // trip, and the hover has usually just made the same one. The same applies
+    // to the name: what it resolves to decides whether going there is offered
+    // at all, and an item that only ever reports an error teaches nothing.
+    Promise.all([evaluateForMenu(hit?.expr), lookUpName(word)]).then(([res, found]) => {
       const items = [];
       const label = hit?.name ?? hit?.expr ?? editable?.label ?? "";
 
@@ -342,6 +348,31 @@ for (const [pane, resolve] of [
             .catch(reportError),
         });
       }
+
+      // Where that name is, and stopping there. Both go through the same paths
+      // the symbol pane's menu uses, so a decompiler name is resolved by the
+      // server and a name the binary carries is resolved by gdb — which also
+      // means a breakpoint on the latter skips the prologue and one on the
+      // former does not.
+      if (found) {
+        if (found.kind === "function") {
+          items.push({
+            label: `Set breakpoint at ${found.name}`,
+            title: found.from === "decompiler"
+              ? "break at the entry address the decompiler gives this function"
+              : "break by name — gdb skips the prologue, which is where you mean to stop",
+            run: () => setFunctionBreakpoint(found.name),
+          });
+        }
+        items.push({
+          label: `Go to ${found.name}`,
+          title: found.from === "decompiler"
+            ? `${found.address} — the decompiler's, not a symbol; gdb has never heard of this name`
+            : "source, disassembly or memory, depending on what the symbol knows about itself",
+          run: () => jumpToSymbol(found),
+        });
+      }
+
       items.push(...decompEditItems(editable));
 
       if (!items.length) {
@@ -353,6 +384,26 @@ for (const [pane, resolve] of [
       showContextMenu(x, y, label || editable?.fn?.name || "", items);
     });
   });
+}
+
+// lookUpName resolves one name the way the symbol pane would.
+//
+// Through symbols.list rather than through anything new, because that request
+// already answers exactly this question over both populations: the binary's own
+// table, and the names only the decompiler has. Which one answered is in the
+// reply, and it decides how a jump and a breakpoint are made.
+//
+// The match is exact. The filter is a substring — asking about `walk` returns
+// `walk_free` too — and offering to go to a name the user did not point at
+// would be worse than offering nothing.
+function lookUpName(name) {
+  if (!name) return Promise.resolve(null);
+  return send("symbols.list", { filter: name })
+    .then((out) => (out.symbols ?? []).find((s) => s.name === name) ?? null)
+    // Not ready, no program, a decompiler still analysing: all of them mean
+    // there is nothing to offer, which is not a failure worth reporting from a
+    // menu the user has already opened.
+    .catch(() => null);
 }
 
 // decompEditTarget works out what a right-click in the decompiled view is
@@ -865,6 +916,7 @@ function handleEvent(msg) {
       break;
     case "breakpointsChanged":
       breakpoints.set(msg.payload.breakpoints);
+      nameUnknownBreakpoints();
       source.setBreakpoints(msg.payload.breakpoints);
       disasm.setBreakpoints(msg.payload.breakpoints);
       decomp.setBreakpoints(msg.payload.breakpoints);
@@ -874,6 +926,7 @@ function handleEvent(msg) {
       break;
     case "watchesChanged":
       variables.setWatches(msg.payload.watches, msg.payload.stopSeq);
+      nameWatchedAddresses();
       break;
     case "valueWritten":
       applyValueWritten(msg.payload);
@@ -886,6 +939,13 @@ function handleEvent(msg) {
       // now stale, including the function on screen, because a new prototype
       // changes how its callers decompile too.
       nameUnknownFrames();
+      // The other two hold names keyed by address, and an edit is exactly the
+      // thing that makes one of those wrong: dropped and asked again, rather
+      // than left showing the name the function had a moment ago.
+      breakpoints.forgetNames();
+      nameUnknownBreakpoints();
+      variables.forgetNames();
+      nameWatchedAddresses();
       symbols.refresh();
       // What one undo would now reverse. Cheap next to the decompile below, and
       // it is how a tab that did not make the edit learns that an agent has
@@ -912,6 +972,14 @@ function handleEvent(msg) {
       // again now it has: this is the moment a column of "?? ()" can stop
       // being one, and nothing else would trigger it until the next stop.
       nameUnknownFrames();
+      // The breakpoint list and the watches are in the same position: both were
+      // drawn from gdb's answer alone, and a decompiler that has restarted may
+      // be on a different program, so what is held is dropped rather than
+      // merged with.
+      breakpoints.forgetNames();
+      nameUnknownBreakpoints();
+      variables.forgetNames();
+      nameWatchedAddresses();
       // And the same moment a stripped binary's symbol pane can stop being
       // empty. Analysis takes minutes on firmware, so nobody is going to be
       // looking when it finishes; the pane fills itself instead.
@@ -990,6 +1058,7 @@ function applySnapshot(hello) {
   applyRemote(hello.remote);
 
   breakpoints.set(hello.breakpoints ?? []);
+  nameUnknownBreakpoints();
   source.setBreakpoints(hello.breakpoints ?? []);
   decomp.setBreakpoints(hello.breakpoints ?? []);
 
@@ -1007,7 +1076,10 @@ function applySnapshot(hello) {
   registers.onStop(hello.stopSeq ?? 0);
   if (hello.runState === "stopped") {
     send("watch.list", {})
-      .then((out) => variables.setWatches(out.watches, out.stopSeq))
+      .then((out) => {
+        variables.setWatches(out.watches, out.stopSeq);
+        nameWatchedAddresses();
+      })
       .catch(() => {});
   }
 
@@ -1154,26 +1226,44 @@ function applyValueWritten(payload) {
     .catch(() => {});
 }
 
-// nameUnknownFrames fills in the frames gdb has no symbol for.
+// Naming what gdb cannot, in the three panels that show bare addresses.
 //
-// gdb reports "??" for every frame of a stripped binary, and the decompiler
-// knows what is there. Asked rather than pushed, for the reason mem.symbols is:
-// it is a handful of addresses per stop, and asking on the stop path would put
-// a Ghidra round trip in front of the stack appearing at all.
+// gdb reports "??" for every frame of a stripped binary, `*0x4011d6` for a
+// breakpoint in one, and a watch there is an address with a cast in front of
+// it. The decompiler knows what is at all three. Asked rather than pushed, for
+// the reason mem.symbols is: it is a handful of addresses, and asking on the
+// stop path would put a Ghidra round trip in front of the stack appearing.
 //
 // The decompiler's state is not checked first. The server answers an empty
 // list when it has nothing, and asking is also what starts it — so a user who
 // configured -ghidra and never opened the Decompiled tab still gets a named
 // stack.
+//
+// A failure is swallowed everywhere. What each panel was already showing is
+// what gdb said, which is the status quo rather than something worth a message
+// in the status bar on every stop.
+function decompNamesFor(addresses, data = false) {
+  if (!addresses.length) return Promise.resolve([]);
+  return send("decomp.names", { addresses, data, stopSeq: store.get("session.stopSeq") })
+    .then((out) => out.names ?? [])
+    .catch(() => []);
+}
+
 function nameUnknownFrames() {
-  const addresses = stack.unnamed();
-  if (!addresses.length) return;
-  send("decomp.names", { addresses, stopSeq: store.get("session.stopSeq") })
-    .then((out) => stack.setNames(out.names ?? []))
-    .catch(() => {
-      // A stack that stays as gdb reported it is the status quo, not a
-      // failure worth a message on every stop.
-    });
+  decompNamesFor(stack.unnamed()).then((names) => stack.setNames(names));
+}
+
+function nameUnknownBreakpoints() {
+  decompNamesFor(breakpoints.unnamed()).then((names) => breakpoints.setNames(names));
+}
+
+// data: true, because a watch is the one of the three that is about data. A
+// global is in no function, so the function manager — which answers the other
+// two — has nothing to say about it, and DAT_001a08de comes from the name index
+// instead.
+function nameWatchedAddresses() {
+  decompNamesFor(variables.unnamedWatches(), true)
+    .then((names) => variables.setNames(names));
 }
 
 function describeStop(stopped) {
@@ -2288,12 +2378,20 @@ function localsToNodes(locals) {
   }));
 }
 
-// Tabs. Hidden panels do no work: registers only fetch once shown, which is
-// what keeps a stop from costing a register read nobody asked for.
-for (const tab of document.querySelectorAll(".tab")) {
+// The right pane's tabs. Hidden panels do no work: registers only fetch once
+// shown, which is what keeps a stop from costing a register read nobody asked
+// for.
+//
+// Scoped to [data-tab], like the other two groups. Unscoped it ran for the
+// centre and bottom tabs as well, where dataset.tab is undefined and no panel
+// matches it — so clicking Disassembly, Decompiled, Memory or Log hid the
+// Variables pane and left the right-hand panel blank until something was
+// clicked over there. Found by a screenshot scene that switched to the
+// decompiled view and then tried to photograph a watch.
+for (const tab of document.querySelectorAll(".tab[data-tab]")) {
   tab.addEventListener("click", () => {
     const name = tab.dataset.tab;
-    for (const other of document.querySelectorAll(".tab")) {
+    for (const other of document.querySelectorAll(".tab[data-tab]")) {
       other.classList.toggle("is-active", other === tab);
     }
     for (const panel of document.querySelectorAll("[data-panel]")) {

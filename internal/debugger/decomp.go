@@ -116,14 +116,19 @@ type decomp struct {
 	biasAddr uint64
 	// index is every name the decompiler knows — its functions and its
 	// module-scope labels — in Ghidra's coordinates, with indexBy mapping a
-	// name to its position. indexFor is the client it was read from, which is
-	// what makes a restarted decompiler rebuild rather than answer from a
-	// previous program's names. See decompindex.go.
+	// name to its position, indexAt mapping a label's address to it, and
+	// indexOrder listing the labels that have a known extent, in address order,
+	// for the searches that ask what an address falls inside. indexFor is the
+	// client it was read from,
+	// which is what makes a restarted decompiler rebuild rather than answer
+	// from a previous program's names. See decompindex.go.
 	//
 	// Actor-only, like the journal: built and read on the request path.
-	index    []decompEntry
-	indexBy  map[string]int
-	indexFor *ghidra.Client
+	index      []decompEntry
+	indexBy    map[string]int
+	indexAt    map[uint64]int
+	indexOrder []int
+	indexFor   *ghidra.Client
 }
 
 // decompStatus answers what the pane can offer right now, and starts the
@@ -1284,6 +1289,11 @@ const maxNameAddresses = 128
 // column of "?? ()" — it has no symbol for any of it, and the decompiler is the
 // only thing here that knows otherwise. This does not decompile: the sidecar
 // answers from Ghidra's function manager, so a whole stack is one round trip.
+// The breakpoint list asks the same question about the same kind of address.
+//
+// With Data set it also names the module-scope labels, for the panes that show
+// data rather than code: a watch on a decompiler global is an address and
+// nothing else, and DAT_001a08de is the only name it has.
 //
 // An unready decompiler is an empty answer rather than an error. The caller is
 // a panel that has already drawn gdb's "??" and is asking whether it can do
@@ -1364,6 +1374,7 @@ func (s *Session) decompNames(r *request) (any, *wire.Error) {
 			Signature: n.Signature,
 			Entry:     shiftAddr(n.Entry, bias),
 			Thunk:     n.Thunk,
+			Kind:      wire.SymbolFunction,
 		}
 		if entry, err := parseAddress(name.Entry); err == nil {
 			if at, err := parseAddress(asked); err == nil && at >= entry {
@@ -1371,6 +1382,37 @@ func (s *Session) decompNames(r *request) (any, *wire.Error) {
 			}
 		}
 		out.Names = append(out.Names, name)
+		delete(back, n.Addr)
+	}
+
+	// What is left is in no function, which for a watch is the ordinary case
+	// rather than the failure: a global is data, and data is exactly what
+	// Ghidra's function manager answers "no" for. The labels come from the name
+	// index instead — the same one the symbol pane and the go-to box read — so
+	// this costs a map lookup once the index is warm.
+	if req.Data {
+		// Over the addresses asked about rather than over what is left in the
+		// map, so the reply keeps the order of the request instead of a map's.
+		for _, key := range wanted {
+			asked, ok := back[key]
+			if !ok {
+				continue // a function claimed it above
+			}
+			at, err := parseAddress(key)
+			if err != nil {
+				continue
+			}
+			e, ok := s.decompDataAt(r, at)
+			if !ok {
+				continue
+			}
+			out.Names = append(out.Names, wire.DecompName{
+				Addr:  asked,
+				Name:  e.Name,
+				Entry: asked,
+				Kind:  wire.SymbolVariable,
+			})
+		}
 	}
 	return out, nil
 }

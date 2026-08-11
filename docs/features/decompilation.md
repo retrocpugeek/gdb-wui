@@ -57,6 +57,31 @@ Renaming a function shows your name here, which is what makes working through
 unfamiliar firmware get easier rather than staying equally hard — and you can
 rename it from the stack row itself, without leaving gdb-wui.
 
+## Following a call, and stopping in one
+
+The body of a recovered function is full of names that exist nowhere else:
+`FUN_004011d6` for the function it calls, `DAT_00404040` for the global it
+reads. Right-click one and the menu offers what to do with it:
+
+- **Set breakpoint at `FUN_004011d6`** — the breakpoint appears in the
+  [Breakpoints pane](breakpoints.md) named the same way rather than as a bare
+  address.
+- **Go to `FUN_004011d6`** — the disassembly for a function, the
+  [memory viewer](memory.md) for a global.
+
+![A breakpoint set from a name in the decompiled text](../images/decomp-navigate.png)
+
+The name is resolved before the menu opens, so an item appears only where there
+is somewhere to go: a type name or a keyword under the pointer offers nothing.
+A name the binary itself carries is resolved by gdb, which means a breakpoint on
+one skips the prologue; a name only Ghidra has is resolved through the
+decompiler and breaks at the entry instruction. See
+[breaking by name and breaking at an address](breakpoints.md#breaking-by-name-and-breaking-at-an-address).
+
+The address is not the digits in the name. Those are where Ghidra found the
+function at link time, and a position-independent executable is somewhere else
+entirely once it is running.
+
 ## Renaming what the decompiler guessed
 
 `FUN_00401154`, `local_10` and `undefined8` are not wrong: they are what can be
@@ -217,10 +242,16 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
   renaming works only in the project gdb-wui imports for itself.
 - **It does not edit struct fields.** Names, variable types, function
   prototypes and comments, but not the members of a type.
-- **It does not name anything but the call stack** and the
-  [symbol pane](symbols.md), where its functions and globals are listed so a
-  stripped binary has something to search. The Threads pane shows a frame per
-  thread and leaves gdb's `??` on it.
+- **It does not name every pane.** It names the [call stack](#naming-the-call-stack),
+  the [symbol pane](symbols.md), the [breakpoint list](breakpoints.md), a
+  [watch on an address](variables.md#watching-something-from-the-decompiled-view)
+  and the [memory viewer](memory.md#when-only-the-decompiler-has-a-name)'s
+  symbol column. The Threads pane shows a frame per thread and leaves gdb's
+  `??` on it.
+- **It does not know how far an untyped label runs**, so the memory column names
+  such a label on its own row and nothing after it. Ghidra represents an
+  unexamined byte as one undefined item whatever follows it; giving the label a
+  type is what establishes the extent, and then the whole object is named.
 - **It does not name a frame outside the program.** libc and the dynamic loader
   are not in the binary Ghidra was given, so their frames keep whatever gdb
   says — usually a real symbol, sometimes nothing.

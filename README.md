@@ -82,6 +82,7 @@ breakpoints are kept.
 | Hover a variable or register for its value | Hovering a call — it would run the function |
 | Decompiled C from Ghidra, with the PC marked | Reproducing the source — recovered C is a model |
 | A stripped binary's call stack, named by Ghidra | Naming the Threads pane's frames the same way |
+| Ghidra's names in the symbol list, the go-to box, breakpoints and watches | Teaching them to gdb — the server resolves each one to an address |
 | Renaming, retyping and commenting what the decompiler guessed | Editing a Ghidra project of your own — that stays read-only |
 | An MCP bridge, so an agent can drive the debugger and annotate | Bringing a model: gdb-wui makes no network requests of its own |
 | Double-click to edit a variable, register or byte | Editing an array, struct or union — gdb refuses |

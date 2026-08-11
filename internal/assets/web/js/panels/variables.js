@@ -30,6 +30,11 @@ export function createVariables({
   let list = null;
   let stopSeq = 0;
   let pending = new Set();
+  // recovered maps an address to the decompiler's name for what is there, for
+  // the watches that are nothing but an address. `*(undefined8 *)0x555555619250`
+  // says where to read and never what it is; DAT_001a08de is the only name that
+  // global has, and without it a column of watches on one is unreadable.
+  let recovered = new Map();
   // Paths written by hand since the last stop.
   //
   // gdb's change tracking runs off -var-update, which compares against the
@@ -51,6 +56,7 @@ export function createVariables({
           row.innerHTML =
             '<span class="var-twisty"></span>' +
             '<span class="var-name"></span>' +
+            '<span class="var-recovered"></span>' +
             '<span class="var-value"></span>' +
             '<span class="var-type"></span>' +
             '<span class="var-remove"></span>';
@@ -79,6 +85,17 @@ export function createVariables({
           el.querySelector(".var-name").textContent = row.node.name;
           el.querySelector(".var-value").textContent = valueText(row.node);
           el.querySelector(".var-type").textContent = row.node.type ?? "";
+
+          // The decompiler's name for what the address holds, beside the
+          // address rather than instead of it: the expression is what is being
+          // read and is the thing a cast or a removal acts on, and replacing it
+          // with a name would hide which of two labels at nearby addresses this
+          // watch is actually on.
+          const name = nameFor(row);
+          const recov = el.querySelector(".var-recovered");
+          recov.textContent = name ? name.name : "";
+          if (name) recov.title = "the decompiler's name for this address, not a symbol";
+          else recov.removeAttribute("title");
 
           // A watch is the only row a user put there, so it is the only one
           // they can take away. Locals arrive and leave with the frame.
@@ -130,6 +147,22 @@ export function createVariables({
   // remove or to re-express.
   function isWatchRoot(row) {
     return row?.kind === "watch" && row.depth === 0;
+  }
+
+  // addressIn is the address a watch expression names outright, if it names
+  // one. Exactly one literal, or nothing: `*(int *)0x4041a0` is an address with
+  // a type in front of it, while `buf[i] + 0x10` is arithmetic and `head->next`
+  // is an address the expression computes rather than states. Guessing at those
+  // would put a label on a row whose address the label does not describe.
+  function addressIn(expr) {
+    const found = typeof expr === "string" ? expr.match(/0x[0-9a-fA-F]+/g) : null;
+    return found?.length === 1 ? found[0] : "";
+  }
+
+  function nameFor(row) {
+    if (!isWatchRoot(row)) return null;
+    const addr = addressIn(row.node.expr);
+    return addr ? (recovered.get(normaliseAddr(addr)) ?? null) : null;
   }
 
   // flatten walks the visible tree into the array the virtual list indexes.
@@ -338,6 +371,32 @@ export function createVariables({
       watches = next ?? [];
       render();
     },
+    // unnamedWatches lists the addresses of watches that are an address and
+    // nothing else, and that nothing has named yet. The caller asks the
+    // decompiler; a program with symbols never produces one of these, because
+    // a watch there is spelled with a name in the first place.
+    unnamedWatches() {
+      const out = [];
+      for (const w of watches) {
+        const addr = addressIn(w.expr);
+        if (addr && !recovered.has(normaliseAddr(addr))) out.push(addr);
+      }
+      return out;
+    },
+    setNames(names) {
+      if (!names?.length) return;
+      for (const n of names) {
+        if (n.addr && n.name) recovered.set(normaliseAddr(n.addr), n);
+      }
+      render();
+    },
+    // forgetNames drops them after a rename in the decompiler, or a decompiler
+    // that has restarted on a different program.
+    forgetNames() {
+      if (recovered.size === 0) return;
+      recovered = new Map();
+      render();
+    },
     // onStop is the per-stop refresh: values arrive with the stop, and open
     // subtrees are re-fetched because their contents may have changed.
     async onStop(nextLocals, seq) {
@@ -374,4 +433,13 @@ export function createVariables({
       return [...expanded];
     },
   };
+}
+
+// normaliseAddr makes two spellings of one address compare equal. gdb pads to
+// the pointer width, the decompiler does not, and a watch expression holds
+// whatever was typed.
+function normaliseAddr(addr) {
+  if (typeof addr !== "string") return "";
+  const m = /^0x0*([0-9a-f]+)$/i.exec(addr.trim());
+  return m ? m[1].toLowerCase() : "";
 }

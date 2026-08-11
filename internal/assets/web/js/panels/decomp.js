@@ -189,6 +189,29 @@ export function createDecomp({ element, onGutterClick }) {
     };
   }
 
+  // wordAt is the identifier under the pointer, whatever it turns out to be.
+  //
+  // symbolAt answers only for the function's own variables, which is right for
+  // renaming and retyping: those act through the decompiler's symbol table and
+  // nothing else is in it. But the names that are *not* in it are the ones this
+  // is for — a call to FUN_004011d6 is another function, and asking where it is
+  // or breaking on it is the obvious thing to want from a body full of calls to
+  // names nothing else in the debugger has heard of.
+  //
+  // Bare identifiers only. Whoever gets this has to look the word up before
+  // offering anything, so a keyword or a type name simply resolves to nothing.
+  function wordAt(ev) {
+    const code = ev.target?.closest?.(".dec-code");
+    if (!code) return null;
+    const caret = caretAt(ev.clientX, ev.clientY);
+    if (!caret || caret.node?.nodeType !== Node.TEXT_NODE) return null;
+    if (caret.node.parentElement !== code) return null;
+    const found = parseExpression(caret.node.data, caret.offset);
+    if (!found || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(found.expr)) return null;
+    if (vars.has(found.expr)) return null;
+    return found.expr;
+  }
+
   // expressionAt answers the hover controller and the value menu, which both
   // need something gdb can evaluate. That is the one difference from symbolAt.
   function expressionAt(ev) {
@@ -273,6 +296,7 @@ export function createDecomp({ element, onGutterClick }) {
   return {
     expressionAt,
     symbolAt,
+    wordAt,
     commentTarget,
     functionComment,
     shown,

@@ -58,6 +58,22 @@ current frame. A register-backed variable is offered with a warning in the
 tooltip, because the decompiler's expression for one is only valid near the
 program counter it was recovered at — the register gets reused.
 
+![A watch on a decompiler global, with the name Ghidra gives it](../images/decomp-navigate-watch.png)
+
+The name comes with it. A watch made this way reads
+`*(int *)0x404040`, which says where to look and nothing about what is there, so
+the decompiler's name for that address is shown beside it — `DAT_00404040`, or
+whatever you have renamed it to in Ghidra. It is in the same italics the
+[call stack](../tour.md) uses, for the same reason: Ghidra's label is not a
+symbol the binary carries.
+
+Beside the expression rather than instead of it. The expression is what is being
+read, and it is what a cast or a removal acts on; a row showing only the name
+would leave you unable to tell which of two labels at neighbouring addresses the
+watch is actually on. Anything you type yourself is labelled the same way, as
+long as it names one address outright — `*(int *)0x404040` does, `head->next`
+does not, because that address is computed rather than stated.
+
 ## Reading a value by hovering
 
 To read a value, rest the pointer on it for 300 ms.

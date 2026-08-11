@@ -34,6 +34,19 @@ export default {
     // stripping, and printf did, in .dynsym. Same handle stack-names uses, for
     // the same reason.
     await page.fill("#symbols-search", "printf");
+    // Wait for the filter to have been applied, not merely for a row to exist:
+    // one always does, and until the query comes back the pane is still showing
+    // the whole table. Without this the breakpoint below lands on whichever
+    // function the program happens to start with — __stack_chk_fail@plt, which
+    // is never called — and the scene fails three steps later at "the program
+    // did not stop".
+    await page.waitUntil(
+      () => {
+        const rows = [...document.querySelectorAll(".sym-row .list-main")];
+        return rows.length > 0 && rows.every((r) => r.textContent.includes("printf"));
+      },
+      { what: "the symbol list filtered to printf" },
+    );
     // The function row, not merely the first match. A filter on "printf" also
     // turns up data symbols, and Set breakpoint is offered only where breaking
     // means something — so the menu on one of those has a single entry and the
@@ -49,7 +62,17 @@ export default {
     // with the compiler, and a scene that guessed would fail as a claim about
     // the feature when it was only wrong about the fixture.
     await page.fill("#symbols-search", "FUN_");
-    await page.waitFor(".sym-row.is-decomp", { what: "the FUN_ labels" });
+    // Again: the rows on screen are the previous filter's until the query comes
+    // back, and a decompiler row was among them — PTR_printf_00404008 matches
+    // "printf" and is is-decomp, so waiting for one of those found a stale row
+    // and read the wrong list.
+    await page.waitUntil(
+      () => {
+        const rows = [...document.querySelectorAll(".sym-row .list-main")];
+        return rows.length > 0 && rows.every((r) => r.textContent.includes("FUN_"));
+      },
+      { what: "the symbol list filtered to the FUN_ labels" },
+    );
     const target = await page.evaluate(() => {
       const rows = [...document.querySelectorAll(".sym-row.is-decomp")]
         .filter((r) => r.querySelector(".sym-kind")?.dataset.kind === "function")

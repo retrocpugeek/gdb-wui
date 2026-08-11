@@ -3,6 +3,8 @@
 package debugger_test
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +22,15 @@ import (
 func namesOf(t *testing.T, do func(string, any) any, addrs ...string) wire.DecompNames {
 	t.Helper()
 	return do(wire.TypeDecompNames, wire.DecompNamesRequest{Addresses: addrs}).(wire.DecompNames)
+}
+
+// dataNamesOf is the same question asked by a pane that shows data rather than
+// code — the watch list, whose rows on a stripped binary are an address and a
+// cast and nothing else.
+func dataNamesOf(t *testing.T, do func(string, any) any, addrs ...string) wire.DecompNames {
+	t.Helper()
+	return do(wire.TypeDecompNames,
+		wire.DecompNamesRequest{Addresses: addrs, Data: true}).(wire.DecompNames)
 }
 
 // TestNameAFrameAddress is the whole feature in one assertion: an address gdb
@@ -69,6 +80,106 @@ func TestNameAFrameAddress(t *testing.T) {
 	}
 	if first.Entry == "" {
 		t.Error("no entry address, so a client cannot show the offset into the function")
+	}
+	// Which of the two populations answered. A client renders a place in code
+	// and a piece of data differently — "+0x1c" means something for one and
+	// nothing for the other — and the name alone cannot say which this is,
+	// since either may have been renamed to anything.
+	if first.Kind != wire.SymbolFunction {
+		t.Errorf("kind = %q, want %q", first.Kind, wire.SymbolFunction)
+	}
+}
+
+// TestNameADataAddress is the watch list's question: this address is all I have,
+// what is here?
+//
+// Ghidra's function manager — which answers every other test in this file —
+// says "no function" for a global, correctly and unhelpfully. The name index
+// answers instead, and the address goes in and comes back through the load
+// bias, which is what makes this worth a running program rather than a static
+// lookup: a PIE's globals move exactly as much as its code does.
+func TestNameADataAddress(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "stripped"})
+	waitReady(t, do)
+
+	// Relocated first, then read: the addresses in the pane are runtime ones
+	// from here on, and a lookup that quietly compared them against Ghidra's
+	// link-time coordinates would find nothing.
+	do(wire.TypeExecRun, wire.ExecRequest{StopAtEntry: true})
+	waitStopped(t, do, 30*time.Second)
+
+	out := decompSymbols(t, do, "DAT_")
+	g := firstFrom(out.Symbols, wire.SymbolFromDecompiler, wire.SymbolVariable)
+	if g == nil {
+		t.Fatal("the decompiler lists no global to ask about")
+	}
+
+	named := dataNamesOf(t, do, g.Address)
+	if len(named.Names) != 1 {
+		t.Fatalf("got %d names for %s, where the pane says %s is",
+			len(named.Names), g.Address, g.Name)
+	}
+	if named.Names[0].Name != g.Name {
+		t.Errorf("%s is named %q, want %q", g.Address, named.Names[0].Name, g.Name)
+	}
+	if named.Names[0].Kind != wire.SymbolVariable {
+		t.Errorf("kind = %q, want %q — a client that read this as code would "+
+			"offer to disassemble a global", named.Names[0].Kind, wire.SymbolVariable)
+	}
+}
+
+// TestDataNamesAreOptional. The call stack asks this question on every stop and
+// has no use for the labels: a frame address is in a function or in code the
+// decompiler was never given. Answering them costs the whole name index, so the
+// flag has to be what decides it rather than the address.
+func TestDataNamesAreOptional(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "stripped"})
+	waitReady(t, do)
+
+	out := decompSymbols(t, do, "DAT_")
+	g := firstFrom(out.Symbols, wire.SymbolFromDecompiler, wire.SymbolVariable)
+	if g == nil {
+		t.Fatal("the decompiler lists no global to ask about")
+	}
+
+	if got := namesOf(t, do, g.Address); len(got.Names) != 0 {
+		t.Errorf("%s was named %q without asking for data", g.Address, got.Names[0].Name)
+	}
+	if got := dataNamesOf(t, do, g.Address); len(got.Names) != 1 {
+		t.Errorf("the same address asked with data got %d names, want 1", len(got.Names))
+	}
+}
+
+// TestNamesRefusesANearMiss. The index holds where each label starts and not
+// how far it runs, so an address a few bytes in is not something it can name.
+// Answering with the preceding label would turn "this is DAT_001a08de" into
+// "this is somewhere at or after DAT_001a08de", which is a weaker claim than
+// the one a watch row would then be making.
+func TestNamesRefusesANearMiss(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "stripped"})
+	waitReady(t, do)
+
+	out := decompSymbols(t, do, "DAT_")
+	g := firstFrom(out.Symbols, wire.SymbolFromDecompiler, wire.SymbolVariable)
+	if g == nil {
+		t.Fatal("the decompiler lists no global to ask about")
+	}
+	at, err := strconv.ParseUint(strings.TrimPrefix(g.Address, "0x"), 16, 64)
+	if err != nil {
+		t.Fatalf("unparseable address %q: %v", g.Address, err)
+	}
+
+	inside := fmt.Sprintf("0x%x", at+1)
+	got := dataNamesOf(t, do, inside)
+	for _, n := range got.Names {
+		t.Errorf("%s was named %q; the index knows where %s starts and not how "+
+			"far it runs", inside, n.Name, g.Name)
 	}
 }
 
