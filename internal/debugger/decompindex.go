@@ -2,6 +2,7 @@ package debugger
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
@@ -45,6 +46,25 @@ type decompEntry struct {
 	// empty for a function: a prototype is worth showing but costs a
 	// decompilation per row, which is the thing the index exists not to do.
 	Type string
+	// Size is how far a global runs, and is zero when Ghidra has no answer —
+	// which is the ordinary state of a label nobody has typed. Zero is not one:
+	// an unanalysed byte is one undefined item in Ghidra whatever follows it, so
+	// treating that as a length would have applet_names, a 1954-byte table,
+	// claiming to cover its first byte and nothing else as a matter of fact
+	// rather than of ignorance.
+	Size uint64
+}
+
+// covers reports whether an address falls inside this entry.
+//
+// A label with no size covers its own address and nothing more. That is the
+// weaker claim and the true one: Ghidra knows where the label starts, and until
+// somebody types the data it does not know where it ends.
+func (e decompEntry) covers(addr uint64) bool {
+	if addr == e.Addr {
+		return true
+	}
+	return e.Size > 0 && addr > e.Addr && addr-e.Addr < e.Size
 }
 
 // decompNamed finds one entry by its exact name.
@@ -83,6 +103,52 @@ func (s *Session) decompDataAt(r *request, addr uint64) (decompEntry, bool) {
 		return decompEntry{}, false
 	}
 	return entries[at], true
+}
+
+// decompDataCovering names the global an address falls inside, and how far in.
+//
+// This is the question a symbol column asks, and it is not the one decompDataAt
+// answers: a row of hex is at whatever address the view lands on, and what a
+// reader wants beside it is "you are 16 bytes into install_dir". So it takes
+// the nearest label at or below the address and then asks whether that label
+// actually reaches — which for an untyped one means only its own byte.
+//
+// Bounding an untyped label by the *next* one instead would name every byte of
+// the padding and the alignment between them, and a column that says
+// install_dir+2048 for a run of zeroes is worse than a blank one: it reads like
+// knowledge.
+func (s *Session) decompDataCovering(r *request, addr uint64) (decompEntry, uint64, bool) {
+	entries, byName := s.decompIndex(r)
+	if byName == nil {
+		return decompEntry{}, 0, false
+	}
+	// A label at exactly this address wins, whether or not it has an extent.
+	// It is the most specific thing that can be said, and it is the only thing
+	// that can be said about an untyped one.
+	if at, ok := s.decomp.indexAt[addr]; ok {
+		return entries[at], 0, true
+	}
+
+	// Otherwise the nearest *sized* label at or below. Only sized ones are in
+	// this list, and that matters rather than being an optimisation: typing a
+	// global as char[16] leaves Ghidra's generated labels for the addresses
+	// inside it — a pointer something referenced at +8, say — and those come
+	// back with no extent, because getDataAt answers nothing for an address in
+	// the middle of an array. Searching over every label would find one of
+	// those, see that it covers nothing, and stop; the enclosing object it sits
+	// inside is the answer.
+	order := s.decomp.indexOrder
+	at := sort.Search(len(order), func(i int) bool {
+		return entries[order[i]].Addr > addr
+	})
+	if at == 0 {
+		return decompEntry{}, 0, false
+	}
+	e := entries[order[at-1]]
+	if !e.covers(addr) {
+		return decompEntry{}, 0, false
+	}
+	return e, addr - e.Addr, true
 }
 
 // decompIndex returns the index, building it if this is the first ask.
@@ -142,8 +208,13 @@ func (s *Session) decompIndex(r *request) ([]decompEntry, map[string]int) {
 			if err != nil {
 				continue
 			}
+			size := uint64(0)
+			if d.Length > 0 {
+				size = uint64(d.Length)
+			}
 			entries = append(entries, decompEntry{
-				Name: d.Name, Addr: addr, Kind: wire.SymbolVariable, Type: d.Type,
+				Name: d.Name, Addr: addr, Kind: wire.SymbolVariable,
+				Type: d.Type, Size: size,
 			})
 		}
 		if offset+len(list.Data) >= list.Total || len(list.Data) == 0 {
@@ -153,6 +224,7 @@ func (s *Session) decompIndex(r *request) ([]decompEntry, map[string]int) {
 
 	byName := make(map[string]int, len(entries))
 	byAddr := make(map[uint64]int, len(entries))
+	order := make([]int, 0, len(entries))
 	for i, e := range entries {
 		// First wins. Ghidra permits two symbols with one name (finding 35),
 		// and the alternative to picking one is refusing to resolve a name the
@@ -160,19 +232,33 @@ func (s *Session) decompIndex(r *request) ([]decompEntry, map[string]int) {
 		if _, seen := byName[e.Name]; !seen {
 			byName[e.Name] = i
 		}
-		// Data only, and the reverse map is deliberately not built for
-		// functions: containment is what an address in code needs, and Ghidra
-		// answers that itself. An entry-address map would name only the one
-		// instruction in each function that happens to be its first.
+		// Data only, in both of the address structures, and deliberately not
+		// functions: containment in code is what Ghidra's own function manager
+		// answers, through decomp.names. An entry-address map would name only
+		// the one instruction in each function that happens to be its first.
 		if e.Kind != wire.SymbolVariable {
 			continue
 		}
 		if _, seen := byAddr[e.Addr]; !seen {
 			byAddr[e.Addr] = i
 		}
+		// Only the labels that claim a span go into the ordered list: it is
+		// searched for what *contains* an address, and a label with no extent
+		// contains nothing but itself, which the map above already answers.
+		if e.Size > 0 {
+			order = append(order, i)
+		}
 	}
+	// Sorted here rather than trusted from the sidecar. listData does sort by
+	// address, but the index is paged, and an ordering that a binary search
+	// depends on should be established where the search is.
+	sort.Slice(order, func(i, j int) bool {
+		return entries[order[i]].Addr < entries[order[j]].Addr
+	})
+
 	s.decomp.index, s.decomp.indexBy = entries, byName
-	s.decomp.indexAt, s.decomp.indexFor = byAddr, client
+	s.decomp.indexAt, s.decomp.indexOrder = byAddr, order
+	s.decomp.indexFor = client
 	return entries, byName
 }
 
@@ -185,7 +271,8 @@ func (s *Session) decompIndex(r *request) ([]decompEntry, map[string]int) {
 // takes a moment to come back.
 func (s *Session) forgetDecompIndex() {
 	s.decomp.index, s.decomp.indexBy = nil, nil
-	s.decomp.indexAt, s.decomp.indexFor = nil, nil
+	s.decomp.indexAt, s.decomp.indexOrder = nil, nil
+	s.decomp.indexFor = nil
 }
 
 // decompSymbols is the decompiler's contribution to the symbol pane.

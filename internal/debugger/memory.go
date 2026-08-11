@@ -202,6 +202,12 @@ const maxSymbolAddresses = 128
 // answer that stays right across relocation and across shared libraries, each
 // of which has its own load bias: gdb knows all of them and a table built from
 // `-symbol-info-*` link-time addresses would not.
+//
+// What gdb cannot name, the decompiler is asked about. On a stripped binary
+// that is every row, and the labels are the only names the program has —
+// applet_names is a name you can read in the recovered C, go to, and then find
+// nothing beside it in the one pane that shows you the bytes. A label answers
+// for the span Ghidra says it covers and no further; see decompDataCovering.
 func (s *Session) memSymbols(r *request) (any, *wire.Error) {
 	req, werr := decode[wire.MemSymbolsRequest](r.req.Payload)
 	if werr != nil {
@@ -212,6 +218,12 @@ func (s *Session) memSymbols(r *request) (any, *wire.Error) {
 	}
 
 	out := wire.MemSymbols{}
+	// The bias, worked out at most once for the screenful rather than per row:
+	// establishing it costs gdb round trips, and a hex view asks about forty
+	// addresses at a time. Deferred until something actually goes unnamed, so a
+	// program with symbols never pays for it at all.
+	bias, biasKnown, biasTried := int64(0), false, false
+
 	for i, a := range req.Addresses {
 		if i >= maxSymbolAddresses {
 			break
@@ -228,7 +240,32 @@ func (s *Session) memSymbols(r *request) (any, *wire.Error) {
 		}
 		if name := symbolFromValue(rec.Results.Str("value")); name != "" {
 			out.Symbols = append(out.Symbols, wire.MemSymbol{Addr: a, Name: name})
+			continue
 		}
+
+		// gdb had nothing, which on a stripped binary is every row. The
+		// decompiler's labels are the only names this program has, and the
+		// column is where a reader is looking when they want them: it is the
+		// difference between a screen of hex and "you are 16 bytes into
+		// install_dir".
+		if !biasTried {
+			bias, biasKnown = s.decompRuntimeBias(r)
+			biasTried = true
+		}
+		if !biasKnown {
+			continue
+		}
+		e, off, ok := s.decompDataCovering(r, uint64(int64(n)-bias))
+		if !ok {
+			continue
+		}
+		name := e.Name
+		if off != 0 {
+			name = fmt.Sprintf("%s+%d", name, off)
+		}
+		out.Symbols = append(out.Symbols, wire.MemSymbol{
+			Addr: a, Name: name, From: wire.SymbolFromDecompiler,
+		})
 	}
 	return out, nil
 }

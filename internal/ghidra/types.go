@@ -214,6 +214,12 @@ type DataRef struct {
 	// still undefined — which is the ordinary state of a global nobody has
 	// looked at yet, and not a failure.
 	Type string `json:"type,omitempty"`
+	// Length is how far the label runs, in bytes, and is zero when the bytes
+	// are undefined. Zero means "this address, and nothing known about what
+	// follows it" rather than one byte: Ghidra represents an unanalysed byte as
+	// one undefined item, so a 1954-byte table nobody has typed yet would
+	// otherwise claim to be a single byte.
+	Length int `json:"length,omitempty"`
 }
 
 // FunctionName is one address and the function Ghidra says it falls in.
