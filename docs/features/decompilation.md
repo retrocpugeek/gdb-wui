@@ -242,10 +242,12 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
   renaming works only in the project gdb-wui imports for itself.
 - **It does not edit struct fields.** Names, variable types, function
   prototypes and comments, but not the members of a type.
-- **It does not name anything but the call stack** and the
-  [symbol pane](symbols.md), where its functions and globals are listed so a
-  stripped binary has something to search. The Threads pane shows a frame per
-  thread and leaves gdb's `??` on it.
+- **It does not name every pane.** It names the [call stack](#naming-the-call-stack),
+  the [symbol pane](symbols.md), the [breakpoint list](breakpoints.md) and a
+  [watch on an address](variables.md#watching-something-from-the-decompiled-view).
+  The Threads pane shows a frame per thread and leaves gdb's `??` on it, and
+  the [memory viewer](memory.md)'s symbol column is gdb's — on a stripped
+  binary it is blank.
 - **It does not name a frame outside the program.** libc and the dynamic loader
   are not in the binary Ghidra was given, so their frames keep whatever gdb
   says — usually a real symbol, sometimes nothing.

@@ -54,7 +54,8 @@ binary's wins and appears once.
 
 Everything else works the same. Double-clicking goes to the disassembly or the
 memory viewer, right-clicking sets a breakpoint, and the name can be typed into
-the go-to box. gdb has never heard of any of them, so the server resolves the
+the go-to box — or right-clicked where you found it, in the
+[decompiled text](decompilation.md#following-a-call-and-stopping-in-one). gdb has never heard of any of them, so the server resolves the
 name through Ghidra and translates the address — which is not the number spelled
 out in the name, since a position-independent executable is somewhere else
 entirely by the time it is running.
