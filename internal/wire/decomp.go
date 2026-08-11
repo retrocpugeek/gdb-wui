@@ -196,10 +196,16 @@ type DecompFunction struct {
 type DecompNamesRequest struct {
 	// Addresses are runtime addresses, hex. Capped server-side.
 	Addresses []string `json:"addresses"`
-	StopSeq   uint64   `json:"stopSeq,omitempty"`
+	// Data asks for the module-scope labels too, so that an address in no
+	// function can still be named — DAT_001a08de for a global something
+	// references. Off by default because answering it needs the whole name
+	// index, which the call stack has no use for: a frame address is either in
+	// a function or in code the decompiler was never given.
+	Data    bool   `json:"data,omitempty"`
+	StopSeq uint64 `json:"stopSeq,omitempty"`
 }
 
-// DecompName is one address and the function the decompiler puts it in.
+// DecompName is one address and what the decompiler calls it.
 type DecompName struct {
 	// Addr echoes the address asked about.
 	Addr string `json:"addr"`
@@ -216,6 +222,11 @@ type DecompName struct {
 	// rather than a name that is equally true of a hundred instructions.
 	Offset int  `json:"offset,omitempty"`
 	Thunk  bool `json:"thunk,omitempty"`
+	// Kind is SymbolFunction or SymbolVariable. A client renders the two
+	// differently — "FUN_0010d2b0+0x1c" is a place in some code and
+	// "DAT_001a08de" is a thing — and cannot tell them apart from the name,
+	// since either may have been renamed to anything.
+	Kind string `json:"kind,omitempty"`
 }
 
 // DecompNames is the reply to decomp.names.

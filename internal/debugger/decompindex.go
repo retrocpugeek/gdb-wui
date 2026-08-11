@@ -64,6 +64,27 @@ func (s *Session) decompNamed(r *request, name string) (decompEntry, bool) {
 	return entries[at], true
 }
 
+// decompDataAt names the global at exactly this Ghidra address.
+//
+// Exact, not containing. The index holds where each label starts and not how
+// far it runs — a size would be another decompilation per entry — so an
+// address four bytes into a struct is not claimed by it. That suits what asks:
+// a watch made from the decompiled view holds the address Ghidra printed,
+// which is the label's own. Answering a near miss with the preceding name
+// would turn "this is DAT_001a08de" into "this is somewhere at or after
+// DAT_001a08de", which is a different and much weaker claim.
+func (s *Session) decompDataAt(r *request, addr uint64) (decompEntry, bool) {
+	entries, byName := s.decompIndex(r)
+	if byName == nil {
+		return decompEntry{}, false
+	}
+	at, ok := s.decomp.indexAt[addr]
+	if !ok {
+		return decompEntry{}, false
+	}
+	return entries[at], true
+}
+
 // decompIndex returns the index, building it if this is the first ask.
 //
 // A nil map means there is nothing to look in — no decompiler, or one that is
@@ -131,6 +152,7 @@ func (s *Session) decompIndex(r *request) ([]decompEntry, map[string]int) {
 	}
 
 	byName := make(map[string]int, len(entries))
+	byAddr := make(map[uint64]int, len(entries))
 	for i, e := range entries {
 		// First wins. Ghidra permits two symbols with one name (finding 35),
 		// and the alternative to picking one is refusing to resolve a name the
@@ -138,8 +160,19 @@ func (s *Session) decompIndex(r *request) ([]decompEntry, map[string]int) {
 		if _, seen := byName[e.Name]; !seen {
 			byName[e.Name] = i
 		}
+		// Data only, and the reverse map is deliberately not built for
+		// functions: containment is what an address in code needs, and Ghidra
+		// answers that itself. An entry-address map would name only the one
+		// instruction in each function that happens to be its first.
+		if e.Kind != wire.SymbolVariable {
+			continue
+		}
+		if _, seen := byAddr[e.Addr]; !seen {
+			byAddr[e.Addr] = i
+		}
 	}
-	s.decomp.index, s.decomp.indexBy, s.decomp.indexFor = entries, byName, client
+	s.decomp.index, s.decomp.indexBy = entries, byName
+	s.decomp.indexAt, s.decomp.indexFor = byAddr, client
 	return entries, byName
 }
 
@@ -151,7 +184,8 @@ func (s *Session) decompIndex(r *request) ([]decompEntry, map[string]int) {
 // to a warm sidecar, and an index that lies about a name is worse than one that
 // takes a moment to come back.
 func (s *Session) forgetDecompIndex() {
-	s.decomp.index, s.decomp.indexBy, s.decomp.indexFor = nil, nil, nil
+	s.decomp.index, s.decomp.indexBy = nil, nil
+	s.decomp.indexAt, s.decomp.indexFor = nil, nil
 }
 
 // decompSymbols is the decompiler's contribution to the symbol pane.
