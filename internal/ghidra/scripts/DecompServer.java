@@ -1043,6 +1043,19 @@ public class DecompServer extends GhidraScript {
 				at != null && at.isDefined() && at.getDataType() != null
 					? at.getDataType().getDisplayName()
 					: ""));
+			// How far the label runs, for a caller that has an address and wants
+			// the name it falls inside — a memory viewer's symbol column, which
+			// is the same question gdb answers with <name+off>.
+			//
+			// Zero when the bytes are undefined, and that is not the same as a
+			// length of one. getLength() answers 1 for an unanalysed byte, which
+			// is a fact about how Ghidra represents it rather than about the
+			// program: applet_names is a 1954-byte table and Ghidra calls it one
+			// undefined byte until somebody types it. Reporting 0 lets the
+			// caller say "this address, and nothing about what follows it"
+			// instead of claiming the label covers exactly one byte.
+			b.append(",\"length\":").append(
+				at != null && at.isDefined() ? at.getLength() : 0);
 			b.append("}");
 		}
 		b.append("]}");

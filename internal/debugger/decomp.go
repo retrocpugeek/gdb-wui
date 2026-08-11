@@ -116,16 +116,19 @@ type decomp struct {
 	biasAddr uint64
 	// index is every name the decompiler knows — its functions and its
 	// module-scope labels — in Ghidra's coordinates, with indexBy mapping a
-	// name to its position and indexAt mapping a label's address to it.
-	// indexFor is the client it was read from, which is what makes a restarted
-	// decompiler rebuild rather than answer from a previous program's names.
-	// See decompindex.go.
+	// name to its position, indexAt mapping a label's address to it, and
+	// indexOrder listing the labels that have a known extent, in address order,
+	// for the searches that ask what an address falls inside. indexFor is the
+	// client it was read from,
+	// which is what makes a restarted decompiler rebuild rather than answer
+	// from a previous program's names. See decompindex.go.
 	//
 	// Actor-only, like the journal: built and read on the request path.
-	index    []decompEntry
-	indexBy  map[string]int
-	indexAt  map[uint64]int
-	indexFor *ghidra.Client
+	index      []decompEntry
+	indexBy    map[string]int
+	indexAt    map[uint64]int
+	indexOrder []int
+	indexFor   *ghidra.Client
 }
 
 // decompStatus answers what the pane can offer right now, and starts the

@@ -95,6 +95,12 @@ type MemSymbol struct {
 	// address is in no symbol at all, which is the ordinary case for the stack
 	// and the heap.
 	Name string `json:"name,omitempty"`
+	// From is SymbolFromBinary — the empty string — for a name gdb produced,
+	// and SymbolFromDecompiler for one only Ghidra has. A client must mark the
+	// second: DAT_001a08de is plainly a guess, but a label somebody renamed is
+	// not, and a column that showed the two alike would be presenting a
+	// recovery as something the binary says.
+	From string `json:"from,omitempty"`
 }
 
 // MemSymbols is the reply to mem.symbols. Addresses with no symbol are
