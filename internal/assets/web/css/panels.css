@@ -1028,6 +1028,11 @@
   max-width: 28ch;
 }
 
+/* A name only the decompiler has. Italic, as everywhere else that shows one —
+ * the colour is already this column's, so the slant is what separates Ghidra's
+ * guess from the symbol gdb read out of the binary. */
+.mem-sym.is-recovered { font-style: italic; }
+
 /* --- editing a value ------------------------------------------------------ */
 
 /* An editable cell says so on hover and nowhere else. A permanent mark on

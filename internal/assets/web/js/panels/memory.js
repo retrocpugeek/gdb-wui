@@ -63,8 +63,10 @@ export function createMemory({ element, onRead, onSymbols, onWrite, onError }) {
   }
 
   // symbols maps a row address (as a decimal string, since BigInt is not a
-  // usable Map key across values) to gdb's name for it. Null records "asked,
-  // and there is none", so a stack row is not asked about repeatedly.
+  // usable Map key across values) to the answer for it — a {name, from} pair,
+  // where from says whether gdb produced the name or the decompiler did. Null
+  // records "asked, and there is none", so a stack row is not asked about
+  // repeatedly.
   let symbols = new Map();
   let symbolTimer = 0;
 
@@ -90,7 +92,8 @@ export function createMemory({ element, onRead, onSymbols, onWrite, onError }) {
         // Everything asked for is now answered: a name, or null for none.
         for (const a of wanted) symbols.set(BigInt(a).toString(), null);
         for (const s of res.symbols ?? []) {
-          symbols.set(BigInt(s.addr).toString(), s.name);
+          if (!s.name) continue;
+          symbols.set(BigInt(s.addr).toString(), { name: s.name, from: s.from ?? "" });
         }
         list?.refresh();
       })
@@ -257,8 +260,21 @@ export function createMemory({ element, onRead, onSymbols, onWrite, onError }) {
           el.querySelector(".mem-ascii").textContent = ascii;
           el.classList.toggle("has-holes", missing);
 
+          // The symbol column. A name only the decompiler has is marked, the
+          // same way the call stack and the symbol list mark theirs: on a
+          // stripped binary every name in this column is Ghidra's, and a column
+          // that presented them as the binary's would be the one place claiming
+          // the program says something it does not.
           const sym = symbols.get(rowAddr.toString());
-          el.querySelector(".mem-sym").textContent = sym ? sym : "";
+          const symCell = el.querySelector(".mem-sym");
+          symCell.textContent = sym?.name ?? "";
+          const recovered = sym?.from === "decompiler";
+          symCell.classList.toggle("is-recovered", recovered);
+          if (recovered) {
+            symCell.title = "the decompiler's name for this address, not a symbol";
+          } else {
+            symCell.removeAttribute("title");
+          }
 
           // Fetch what this row needs. One request per chunk, deduplicated, so
           // a render pass over twenty rows in the same chunk asks once.
