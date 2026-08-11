@@ -69,7 +69,14 @@ part. These are:
   installed the [Decompiled tab](features/decompilation.md) shows recovered C
   with the program counter marked in it. Ghidra also
   [names the call stack](features/decompilation.md#naming-the-call-stack),
-  which gdb otherwise reports as a column of `?? ()`, and you can
+  which gdb otherwise reports as a column of `?? ()`. Its names are things you
+  can act on rather than text: `FUN_0010e2dc` and `DAT_001a08de` fill the
+  [symbol pane](features/symbols.md#a-stripped-binary) of a binary that has no
+  symbols, resolve in the [go-to box](features/source.md#going-somewhere) and as
+  [breakpoint locations](features/breakpoints.md), and label the
+  [breakpoint](features/breakpoints.md#what-a-breakpoint-is-called) and
+  [watch](features/variables.md#watching-something-from-the-decompiled-view)
+  rows that would otherwise be bare addresses. And you can
   [rename and retype](features/decompilation.md#renaming-what-the-decompiler-guessed)
   what it guessed and
   [comment](features/decompilation.md#writing-down-what-you-worked-out) what you
