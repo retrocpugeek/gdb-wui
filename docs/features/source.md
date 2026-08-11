@@ -99,6 +99,12 @@ refused, so a real symbol always wins. The address it resolves to is *not* the
 number in the name: those digits are where the function was linked, and a
 position-independent executable is somewhere else entirely once it is running.
 
+![A decompiler name in the go-to box, and a breakpoint on the same name](../images/goto-decomp.png)
+
+The same name works as a [breakpoint](breakpoints.md) location, which is the
+other half of being able to reach somewhere. Both rows in the Breakpoints pane
+above are resolved rather than pending.
+
 **It acts on the focused view, and only that one.** In the screenshot the
 disassembly is focused, so `walk` sent it to that function and left the source
 pane beside it where it was. The same word typed with the source focused opens

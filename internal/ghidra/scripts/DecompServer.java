@@ -94,6 +94,7 @@ import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Variable;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.program.model.pcode.HighSymbol;
@@ -1056,6 +1057,17 @@ public class DecompServer extends GhidraScript {
 	// decompiled text is the one that has to be findable here.
 	private void collectData(List<Symbol> into, Set<Address> seen, Address at, String needle) {
 		if (at == null || !at.isMemoryAddress() || !seen.add(at)) {
+			return;
+		}
+		// Only what the loader actually maps. Ghidra parses an ELF's own headers
+		// into blocks of their own and labels them — Elf64_Phdr_ARRAY,
+		// DAT_.shstrtab, ElfComment — and those are a description of the file
+		// rather than anything in the running program. They are not at any
+		// address gdb can read, they answer to no name a reader has seen, and
+		// there are enough of them to push the real globals off the first
+		// screenful of a search.
+		MemoryBlock block = currentProgram.getMemory().getBlock(at);
+		if (block == null || !block.isLoaded()) {
 			return;
 		}
 		if (currentProgram.getFunctionManager().getFunctionContaining(at) != null) {

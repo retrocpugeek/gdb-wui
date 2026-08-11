@@ -36,6 +36,8 @@ Strip the symbol table and this pane has nothing to show, which is the program
 you most needed it for. With [the decompiler](decompilation.md) configured it
 fills up anyway, from Ghidra's names:
 
+![Functions and globals recovered by the decompiler, on a stripped binary](../images/symbols-decomp.png)
+
 - **`FUN_0010e2dc`** for every function Ghidra recovered, listed as `fn`.
 - **`DAT_001a08de`** for every global something references, listed as `var`,
   with its type when one has been applied.
