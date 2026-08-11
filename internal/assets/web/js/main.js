@@ -865,6 +865,7 @@ function handleEvent(msg) {
       break;
     case "breakpointsChanged":
       breakpoints.set(msg.payload.breakpoints);
+      nameUnknownBreakpoints();
       source.setBreakpoints(msg.payload.breakpoints);
       disasm.setBreakpoints(msg.payload.breakpoints);
       decomp.setBreakpoints(msg.payload.breakpoints);
@@ -874,6 +875,7 @@ function handleEvent(msg) {
       break;
     case "watchesChanged":
       variables.setWatches(msg.payload.watches, msg.payload.stopSeq);
+      nameWatchedAddresses();
       break;
     case "valueWritten":
       applyValueWritten(msg.payload);
@@ -886,6 +888,13 @@ function handleEvent(msg) {
       // now stale, including the function on screen, because a new prototype
       // changes how its callers decompile too.
       nameUnknownFrames();
+      // The other two hold names keyed by address, and an edit is exactly the
+      // thing that makes one of those wrong: dropped and asked again, rather
+      // than left showing the name the function had a moment ago.
+      breakpoints.forgetNames();
+      nameUnknownBreakpoints();
+      variables.forgetNames();
+      nameWatchedAddresses();
       symbols.refresh();
       // What one undo would now reverse. Cheap next to the decompile below, and
       // it is how a tab that did not make the edit learns that an agent has
@@ -912,6 +921,14 @@ function handleEvent(msg) {
       // again now it has: this is the moment a column of "?? ()" can stop
       // being one, and nothing else would trigger it until the next stop.
       nameUnknownFrames();
+      // The breakpoint list and the watches are in the same position: both were
+      // drawn from gdb's answer alone, and a decompiler that has restarted may
+      // be on a different program, so what is held is dropped rather than
+      // merged with.
+      breakpoints.forgetNames();
+      nameUnknownBreakpoints();
+      variables.forgetNames();
+      nameWatchedAddresses();
       // And the same moment a stripped binary's symbol pane can stop being
       // empty. Analysis takes minutes on firmware, so nobody is going to be
       // looking when it finishes; the pane fills itself instead.
@@ -990,6 +1007,7 @@ function applySnapshot(hello) {
   applyRemote(hello.remote);
 
   breakpoints.set(hello.breakpoints ?? []);
+  nameUnknownBreakpoints();
   source.setBreakpoints(hello.breakpoints ?? []);
   decomp.setBreakpoints(hello.breakpoints ?? []);
 
@@ -1007,7 +1025,10 @@ function applySnapshot(hello) {
   registers.onStop(hello.stopSeq ?? 0);
   if (hello.runState === "stopped") {
     send("watch.list", {})
-      .then((out) => variables.setWatches(out.watches, out.stopSeq))
+      .then((out) => {
+        variables.setWatches(out.watches, out.stopSeq);
+        nameWatchedAddresses();
+      })
       .catch(() => {});
   }
 
@@ -1154,26 +1175,44 @@ function applyValueWritten(payload) {
     .catch(() => {});
 }
 
-// nameUnknownFrames fills in the frames gdb has no symbol for.
+// Naming what gdb cannot, in the three panels that show bare addresses.
 //
-// gdb reports "??" for every frame of a stripped binary, and the decompiler
-// knows what is there. Asked rather than pushed, for the reason mem.symbols is:
-// it is a handful of addresses per stop, and asking on the stop path would put
-// a Ghidra round trip in front of the stack appearing at all.
+// gdb reports "??" for every frame of a stripped binary, `*0x4011d6` for a
+// breakpoint in one, and a watch there is an address with a cast in front of
+// it. The decompiler knows what is at all three. Asked rather than pushed, for
+// the reason mem.symbols is: it is a handful of addresses, and asking on the
+// stop path would put a Ghidra round trip in front of the stack appearing.
 //
 // The decompiler's state is not checked first. The server answers an empty
 // list when it has nothing, and asking is also what starts it — so a user who
 // configured -ghidra and never opened the Decompiled tab still gets a named
 // stack.
+//
+// A failure is swallowed everywhere. What each panel was already showing is
+// what gdb said, which is the status quo rather than something worth a message
+// in the status bar on every stop.
+function decompNamesFor(addresses, data = false) {
+  if (!addresses.length) return Promise.resolve([]);
+  return send("decomp.names", { addresses, data, stopSeq: store.get("session.stopSeq") })
+    .then((out) => out.names ?? [])
+    .catch(() => []);
+}
+
 function nameUnknownFrames() {
-  const addresses = stack.unnamed();
-  if (!addresses.length) return;
-  send("decomp.names", { addresses, stopSeq: store.get("session.stopSeq") })
-    .then((out) => stack.setNames(out.names ?? []))
-    .catch(() => {
-      // A stack that stays as gdb reported it is the status quo, not a
-      // failure worth a message on every stop.
-    });
+  decompNamesFor(stack.unnamed()).then((names) => stack.setNames(names));
+}
+
+function nameUnknownBreakpoints() {
+  decompNamesFor(breakpoints.unnamed()).then((names) => breakpoints.setNames(names));
+}
+
+// data: true, because a watch is the one of the three that is about data. A
+// global is in no function, so the function manager — which answers the other
+// two — has nothing to say about it, and DAT_001a08de comes from the name index
+// instead.
+function nameWatchedAddresses() {
+  decompNamesFor(variables.unnamedWatches(), true)
+    .then((names) => variables.setNames(names));
 }
 
 function describeStop(stopped) {
