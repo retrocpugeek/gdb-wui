@@ -394,3 +394,32 @@ implementing:
     globals; letting them through buries the twenty names somebody wants under
     two thousand nobody does. And a `FUNCTION` symbol is not data — it has its
     own list, and a merged pane would show every function twice.
+
+42. **An unanalysed byte is one undefined item, whatever follows it, and typing
+    it renames the label.** Two things about `Listing.getDataAt`, both of which
+    decide what a symbol column may claim.
+
+    `getLength()` answers 1 for undefined bytes. That is a fact about how Ghidra
+    represents an address nobody has looked at, not about the program: busybox's
+    `applet_names` is a 1954-byte table and reads as one undefined byte until
+    somebody types it. So a length is only worth reporting when `isDefined()`,
+    and the honest value otherwise is zero — "this address, and nothing about
+    what follows it" — which is a different claim from a length of one and the
+    only one available. `getDataAt` also answers *nothing* for an address in the
+    middle of a defined array, so a label generated inside one comes back with
+    no extent: an index that searched every label for what contains an address
+    would find that one, see it covers nothing, and stop short of the object it
+    sits inside. Only the labels that have an extent belong in that search.
+
+    And applying a type regenerates the label. `DAT_00104000` typed as
+    `char[16]` comes back as `s__00104000`, because the generated name describes
+    the data and the data has changed. Anything holding the old name across a
+    retype is holding a name the program no longer uses — the same staleness as
+    finding 34, from the other direction. Verified by
+    `TestTheMemoryColumnStopsWhereTheTypeStops`, which reads the name back
+    rather than assuming it survived the edit.
+
+    A related refusal: Ghidra will not define data that does not fit its memory
+    block. `char[16]` at the last address of a block answers "Insufficent memory
+    at address 00102000 (length: 16 bytes)" — spelling Ghidra's, and an ordinary
+    outcome rather than a failure worth reporting as one.

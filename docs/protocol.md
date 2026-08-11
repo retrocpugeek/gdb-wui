@@ -109,7 +109,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `exec.nexti` | `{thread?, stopSeq?}` | [`ExecAck`](#execack) | One instruction, over calls. |
 | `exec.stepLine` | `{lines?, bodyStart?, bodyEnd?, over?, thread?, stopSeq?}` | [`ExecAck`](#execack) | Step until the pc reaches a different decompiled line. For views with no line table. |
 | `mem.read` | `{address, offset?, count, stopSeq?}` | [`Memory`](#memory) | `address` is any gdb expression. Capped at 64 KiB per read. |
-| `mem.symbols` | `{addresses, stopSeq?}` | `{symbols}` | Which symbol each address falls in. Capped at 128 per request. |
+| `mem.symbols` | `{addresses, stopSeq?}` | `{symbols}` | Which symbol each address falls in, gdb's or the decompiler's. Capped at 128 per request. |
 | `mem.write` | `{address, offset?, dataHex, stopSeq?}` | `{stopSeq, addr, count}` | `dataHex` is two hex digits per byte. Capped at 4 KiB. Empty and odd-length are refused. |
 | `eval.expr` | `{expr, thread?, frame?, stopSeq?}` | `{expr, value, addr}` | `addr` is set when the value looks like an address. Also the hover evaluator, which is why the client debounces it. |
 | `goto.locate` | `{target, thread?, frame?, stopSeq?}` | [`GotoLocation`](#gotolocation) | Where a symbol, address, expression or `FILE:LINE` is. Needs a program, not a running one. |
@@ -562,7 +562,9 @@ full one.
 `cfg+0x10` rather than as a bare number.
 
 ```json
-{"symbols": [{"addr": "0x5555555551f9", "name": "inspect+16"}]}
+{"symbols": [{"addr": "0x5555555551f9", "name": "inspect+16"},
+             {"addr": "0x555555558010", "name": "DAT_00104010",
+              "from": "decompiler"}]}
 ```
 
 An address in no symbol is omitted rather than returned empty, which is the
@@ -574,6 +576,22 @@ with its symbol when it prints one: `0x5555555551f9 <inspect+16>`. That needs no
 console command, and it stays correct across relocation and across shared
 libraries, each of which has its own load bias. A table built from
 `-symbol-info-*` would not, because those addresses are link-time.
+
+What gdb cannot name, [the decompiler](#decompilation) is asked about, and those
+answers carry `from: "decompiler"`. On a stripped binary that is the whole
+column. A client must mark them: `DAT_001a08de` is plainly a guess, but a label
+somebody renamed is not, and a column showing the two alike would present a
+recovery as something the binary says.
+
+A decompiler label answers for **the span Ghidra says it covers and no
+further**. A typed one has a real extent, so an address inside it comes back as
+`name+16`; an untyped one covers its own address only, because Ghidra represents
+an unanalysed byte as one undefined item whatever follows it — busybox's
+`applet_names` is a 1954-byte table and reads as one byte until somebody types
+it. Bounding an untyped label by the next label instead would name every byte of
+the padding between them, and a column reading `DAT_00104010+2048` over a run of
+zeroes is worse than a blank one: it reads like knowledge. See
+[finding 42](findings.md).
 
 The client sends the addresses it is showing rather than a range. The memory
 view is virtual over a 4 KiB chunk, so symbolising a whole chunk would mean 256
