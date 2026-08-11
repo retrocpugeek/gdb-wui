@@ -457,7 +457,15 @@
  *
  * Dim until pointed at, because a column of red crosses down the panel would
  * be the loudest thing in a pane whose job is to show values. */
-.var-remove {
+/* Hidden rather than merely empty on the rows that have no watch to remove.
+ * An empty flex child still occupies its width and still earns the row's gap,
+ * which put an 18px dead gutter down a pane that most of the time holds no
+ * watches at all — measured by regenerating the screenshots, where every type
+ * column had shifted left. */
+.var-remove { display: none; }
+
+.var-row.is-watch-root .var-remove {
+  display: block;
   flex: 0 0 auto;
   width: 12px;
   text-align: center;
@@ -466,7 +474,7 @@
   cursor: pointer;
 }
 
-.var-remove:hover {
+.var-row.is-watch-root .var-remove:hover {
   color: var(--danger);
   opacity: 1;
 }
