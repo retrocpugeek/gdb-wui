@@ -433,6 +433,25 @@
 .var-name { color: var(--fg-0); flex: 0 0 auto; }
 .var-row.is-arg .var-name { font-style: italic; }
 
+/* The decompiler's name for a watched address. Hidden when there is none, for
+ * the reason the remove cell is: an empty flex child still takes its width and
+ * its gap, and every locals row would carry a dead gutter for a column that
+ * only watches on a stripped binary ever fill.
+ *
+ * Same italic and same colour as a recovered frame in the call stack, because
+ * it is the same kind of claim: Ghidra's guess about what is at an address,
+ * not a symbol the binary carries. */
+.var-recovered:empty { display: none; }
+
+.var-recovered {
+  color: var(--tok-func);
+  font-style: italic;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+
 .var-value {
   color: var(--tok-number);
   overflow: hidden;
