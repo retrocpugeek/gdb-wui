@@ -90,6 +90,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `vars.expand` | `{path, id?, expr?, thread?, frame?, from?, to?, stopSeq?}` | `{path, id, children, hasMore, numChild}` | Creates a varobj on first expansion. Pages 200 children at a time. |
 | `watch.add` | `{expr}` | [`WatchList`](#watches) | Floating varobj; a gdb error is returned as `gdb_error`. |
 | `watch.remove` | `{path}` | [`WatchList`](#watches) | Allowed while running. |
+| `watch.setExpr` | `{path, expr}` | [`WatchList`](#watches) | Replaces a watch's expression in place. A refusal leaves the old one working. |
 | `watch.list` | — | [`WatchList`](#watches) | Allowed while running. |
 | `vars.assign` | `{path, id?, expr?, value, thread?, frame?, stopSeq?}` | `{path, id, value, stopSeq}` | Writes a variable. `value` is a gdb expression. The reply carries the value read back, not the one sent. |
 | `regs.names` | — | `{names}` | Cached per program. **Empty entries are preserved.** |
@@ -350,6 +351,19 @@ rather than staying pinned to the frame that was selected when the expression
 was typed. The expressions are stored independently of the varobjs behind them:
 a re-run deletes every varobj, and the watches are recreated at the next stop.
 
+`watch.setExpr` replaces one expression where it stands, rather than by removing
+and re-adding. The user-visible difference is that the row keeps its place in
+the list and keeps its `path`, which is what a client's expansion state is keyed
+on — a watch being corrected is the same watch. The motivating case is a cast:
+a decompiled global reaches the panel as `*(undefined8 *)0x555555619250`, which
+is what is at the address rather than what it means, and `(char **)` is the
+correction.
+
+The new varobj is created under a scratch path and moved onto the real one only
+once gdb has accepted it, so an expression gdb refuses leaves the existing watch
+untouched and working. Replacing a working expression with an error would be a
+worse answer than saying no.
+
 ### Registers
 
 ```jsonc
@@ -505,7 +519,17 @@ whichever centre view has focus.
 }
 ```
 
-`target` is a symbol, an address, any gdb expression, or `FILE:LINE`.
+`target` is a symbol, an address, any gdb expression, `FILE:LINE`, or a name
+from the decompiler.
+
+That last one is asked second and only after gdb has refused, so a real symbol
+always wins and gdb stays in charge of what it knows. `FUN_0010e2dc` and
+`DAT_001a08de` are the only names a stripped binary has, and they are resolved
+through Ghidra's index and biased into runtime addresses — *not* by reading the
+digits back out of the name. Those digits are the link-time address, which is
+where the code is until the moment a PIE is loaded and never afterwards. `func`
+comes back as the name that was typed, since gdb has no symbol there to name it
+with.
 
 One resolver rather than one per view, because the views want different facts
 about the same place: the source view needs a file and a line, the disassembly
@@ -1078,14 +1102,18 @@ case-insensitive substring match on the name, `kind` is `function` or
     {"name": "main", "kind": "function", "type": "int (int, char **)",
      "file": "src/hello.c", "gdbPath": "/build/src/hello.c", "line": 9,
      "debug": true},
-    {"name": "_start", "kind": "function", "address": "0x1060"}
+    {"name": "_start", "kind": "function", "address": "0x1060"},
+    {"name": "FUN_0010e2dc", "kind": "function", "address": "0x5555555612dc",
+     "from": "decompiler"},
+    {"name": "DAT_001a08de", "kind": "variable", "address": "0x5555555f38de",
+     "type": "byte", "from": "decompiler"}
   ],
-  "matched": 2,
+  "matched": 4,
   "available": 148
 }
 ```
 
-The list holds two kinds of symbol, which behave differently:
+The list holds three kinds of entry, which behave differently:
 
 - **`debug: true`** — from DWARF. Carries `gdbPath` and `line`, and also `file`
   when the source resolves inside the project. Only these can be jumped to in
@@ -1095,6 +1123,20 @@ The list holds two kinds of symbol, which behave differently:
   evaluated. A function goes to the disassembly, and a variable goes to the
   memory viewer, because disassembling data produces output that looks like
   code.
+- **`from: "decompiler"`** — not a symbol at all. `FUN_0010e2dc` is what Ghidra
+  called a function it recovered and `DAT_001a08de` is what it called a global
+  something referenced; a name written over one in the Ghidra project appears
+  here too, and is no more a symbol for having been chosen by a person. These
+  exist only for a session with a decompiler, and only for names the binary does
+  not already carry — where both know a name, the binary's is the one listed,
+  because that one is recorded rather than recovered. A client must show them
+  differently. `address` is a runtime address like every other on this protocol,
+  biased from Ghidra's link-time one, so it is *not* the number spelled out in
+  the name.
+
+`analysing: true` on the reply means the decompiler is still importing or
+analysing and more names are coming. It is the difference between "this program
+has no symbols" and "not yet", which on firmware is minutes apart.
 
 `mem.read` and `disasm.function` both accept a symbol name where they accept
 an address. Resolution tries the expression, then `&(expression)` — a typeless

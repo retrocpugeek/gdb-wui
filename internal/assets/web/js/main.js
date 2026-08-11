@@ -178,6 +178,10 @@ const variables = createVariables({
   element: ui.variables,
   onExpand: (req) => send("vars.expand", req),
   onRemoveWatch: (path) => send("watch.remove", { path }).catch(reportError),
+  // The reply is the whole list, and the server broadcasts it too, so nothing
+  // is repainted here: setWatches arrives through watchesChanged either way.
+  onSetWatchExpr: (path, expr) => send("watch.setExpr", { path, expr })
+    .then(() => setStatus(`watching ${expr}`)),
   onAssign: (req) => send("vars.assign", {
     ...req,
     thread: store.get("selection.thread"),
@@ -319,6 +323,24 @@ for (const [pane, resolve] of [
             run: () => showAtAddress(res.addr, `*${label}`),
           });
         }
+        // Watching it. The decompiler's globals are the ones this is really
+        // for: `*(undefined8 *)0x555555619250` is a fixed address, valid at
+        // every pc and needing no frame, so a watch on one keeps reading
+        // correctly while you step through anything. It is offered for the
+        // others too — the expression is already the test of whether a value
+        // can be formed at all, and a stack slot's floats with the frame.
+        items.push({
+          label: `Watch ${label}`,
+          title: hit.storage === "register"
+            ? "the expression is only valid near this pc, because the register is reused"
+            : `add ${hit.expr} to the Variables panel`,
+          run: () => send("watch.add", { expr: hit.expr })
+            .then((out) => {
+              variables.setWatches(out.watches, out.stopSeq);
+              setStatus(`watching ${hit.expr}`);
+            })
+            .catch(reportError),
+        });
       }
       items.push(...decompEditItems(editable));
 
@@ -890,6 +912,10 @@ function handleEvent(msg) {
       // again now it has: this is the moment a column of "?? ()" can stop
       // being one, and nothing else would trigger it until the next stop.
       nameUnknownFrames();
+      // And the same moment a stripped binary's symbol pane can stop being
+      // empty. Analysis takes minutes on firmware, so nobody is going to be
+      // looking when it finishes; the pane fills itself instead.
+      symbols.refresh();
       refreshDecompStatus().then((st) => {
         if (st?.state === "ready" && centre.isVisible("decomp")) {
           refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address);
@@ -1751,7 +1777,13 @@ ui.symbols.addEventListener("contextmenu", (ev) => {
   if (sym.kind === "function") {
     items.push({
       label: "Set breakpoint",
-      title: "break by name — gdb skips the prologue, which is where you mean to stop",
+      title: sym.from === "decompiler"
+        // No prologue skip for this one: gdb does not know the name, so the
+        // server resolves it and breaks on the entry address. Which is arguably
+        // the better place on a stripped binary — the arguments are still in
+        // the registers the ABI put them in, before anything spills them.
+        ? "break at the entry address the decompiler gives this function"
+        : "break by name — gdb skips the prologue, which is where you mean to stop",
       run: () => setFunctionBreakpoint(sym.name),
     });
   }
@@ -2188,7 +2220,11 @@ function jumpToSymbol(sym) {
   if (sym.kind === "variable") {
     disasmPin = null;
     showCenter("memory");
-    const expr = `&(${sym.name})`;
+    // A decompiler name goes by address instead. gdb has never heard of
+    // DAT_001a08de, so &(DAT_001a08de) is not an expression it can evaluate —
+    // the server resolved the name to an address to build this row, and that
+    // address is the thing to ask about.
+    const expr = sym.from === "decompiler" ? sym.address : `&(${sym.name})`;
     send("mem.read", {
       address: expr,
       count: 64,
@@ -2209,8 +2245,9 @@ function jumpToSymbol(sym) {
     return;
   }
   if (sym.address) {
-    // Pin the name, not the address, for the reason in showDisasmAt.
-    disasmPin = sym.name;
+    // Pin the name, not the address, for the reason in showDisasmAt — unless
+    // the name is the decompiler's, which gdb cannot resolve at all.
+    disasmPin = sym.from === "decompiler" ? sym.address : sym.name;
     disasmPinExplicit = true;
     const alreadyShowing = centre.isVisible("disasm");
     showCenter("disasm");
@@ -2372,6 +2409,25 @@ el("btn-add-watch").addEventListener("click", () => {
       .then((out) => variables.setWatches(out.watches, out.stopSeq)),
     onError: reportError,
   });
+});
+
+// Right-clicking a watch. The × on the row is the quick way out and this is the
+// discoverable one — a menu is where you find out that casting is possible at
+// all, which a double-click on the type cell never tells anybody.
+ui.variables.addEventListener("contextmenu", (ev) => {
+  const node = variables.watchAt(ev.target);
+  if (!node) return;
+  ev.preventDefault();
+  showContextMenu(ev.clientX, ev.clientY, node.name, [{
+    label: "Cast to…",
+    title: "read the same address as a different type — undefined8 is what is " +
+      "there, not what it means",
+    run: () => variables.castWatch(node.path),
+  }, {
+    label: "Remove watch",
+    title: "stop watching this expression",
+    run: () => send("watch.remove", { path: node.path }).catch(reportError),
+  }]);
 });
 
 // --- rendering -------------------------------------------------------------

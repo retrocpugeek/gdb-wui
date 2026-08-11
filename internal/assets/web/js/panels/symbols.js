@@ -37,6 +37,12 @@ export function createSymbols({ element, input, kindSelect, countEl, onQuery, on
       row.dataset.index = String(i);
       row.title = describeFully(sym);
       if (!sym.debug) row.classList.add("is-nondebug");
+      // A decompiler name is not a symbol. FUN_0010e2dc is what Ghidra called
+      // a function it found, and install_dir is what somebody called one of
+      // its globals afterwards; neither is recorded anywhere in the program.
+      // Same row, same jump, different colour — the list says which without
+      // making you read the name to work it out.
+      if (sym.from === "decompiler") row.classList.add("is-decomp");
       if (i === selected) row.setAttribute("aria-selected", "true");
 
       const kind = document.createElement("span");
@@ -82,7 +88,11 @@ export function createSymbols({ element, input, kindSelect, countEl, onQuery, on
     const parts = [sym.type ? `${sym.type} ${sym.name}` : sym.name];
     if (sym.gdbPath) parts.push(`${sym.gdbPath}:${sym.line}`);
     if (sym.address) parts.push(sym.address);
-    if (!sym.debug) parts.push("no debug info — jumps to disassembly");
+    if (sym.from === "decompiler") {
+      parts.push("the decompiler's name, not a symbol — jumps to disassembly");
+    } else if (!sym.debug) {
+      parts.push("no debug info — jumps to disassembly");
+    }
     return parts.join("\n");
   }
 
@@ -111,7 +121,12 @@ export function createSymbols({ element, input, kindSelect, countEl, onQuery, on
         selected = -1;
         lastNote = filter
           ? `No symbol matches "${filter}".`
-          : "This program has no symbols.";
+          : reply.analysing
+            // A stripped binary genuinely has no symbols, and saying so while
+            // Ghidra is still working would be a true sentence that leaves the
+            // reader thinking there is nothing to wait for.
+            ? "The decompiler is still analysing. Its names will appear here."
+            : "This program has no symbols.";
         setCount(reply);
         render();
       })

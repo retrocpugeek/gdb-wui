@@ -38,6 +38,11 @@ const FIXTURES = {
 
   // Nothing at all: no DWARF, no symbol table. Disassembly is the only view.
   nodebug: { cflags: ["-O0"], strip: true },
+
+  // Stripped, but of a program that has globals. nodebug.c has none, so it
+  // yields no DAT_ labels at all — and those are half of what the symbol index
+  // is for, being the only handle anyone has on a stripped binary's data.
+  "globals-stripped": { from: "globals", cflags: ["-O0"], strip: true },
 };
 
 /** fixtureNames lists what a scene may ask for, for the error message. */

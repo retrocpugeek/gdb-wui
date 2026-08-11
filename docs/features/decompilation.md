@@ -74,6 +74,11 @@ Right-click a name in the Decompiled tab:
   right often reshapes the whole function body, which is the point.
 - **Rename the function…** and **Edit the prototype…** — the prototype covers
   the return type, the parameters and the name in one go.
+- **Watch `local_10`** — keep the value in the [Variables pane](variables.md),
+  re-read at every stop. A global is the one to reach for: a fixed address is
+  valid at every program counter, so the watch goes on reading however far you
+  step. It arrives typed as whatever the decompiler believes, which is often
+  `undefined8`, and the pane can [cast it](variables.md#working-with-watches).
 
 Right-clicking a recovered frame in the call stack offers the same rename, which
 is usually where an unhelpful name is first met.
@@ -212,8 +217,10 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
   renaming works only in the project gdb-wui imports for itself.
 - **It does not edit struct fields.** Names, variable types, function
   prototypes and comments, but not the members of a type.
-- **It does not name anything but the call stack.** The Threads pane shows a
-  frame per thread and leaves gdb's `??` on it.
+- **It does not name anything but the call stack** and the
+  [symbol pane](symbols.md), where its functions and globals are listed so a
+  stripped binary has something to search. The Threads pane shows a frame per
+  thread and leaves gdb's `??` on it.
 - **It does not name a frame outside the program.** libc and the dynamic loader
   are not in the binary Ghidra was given, so their frames keep whatever gdb
   says — usually a real symbol, sometimes nothing.

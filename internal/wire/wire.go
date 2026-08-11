@@ -142,6 +142,7 @@ var RequestTypes = []string{
 
 	TypeWatchAdd,
 	TypeWatchRemove,
+	TypeWatchSetExpr,
 	TypeWatchList,
 
 	TypeRegsNames,

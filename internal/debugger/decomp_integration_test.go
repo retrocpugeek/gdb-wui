@@ -54,6 +54,9 @@ func decompHarnessWith(t *testing.T, adjust func(*debugger.DecompConfig)) decomp
 
 	dir := t.TempDir()
 	src := filepath.Join(dir, "demo.c")
+	// hits is a module-scope global, which the stripped build below turns into
+	// a DAT_ label — the only name anything has for it once the symbol table is
+	// gone, and what the symbol index has to be able to list.
 	const body = `
 #include <stdio.h>
 int accumulate(int n) {
@@ -80,6 +83,34 @@ int main(void) { printf("%d\n", accumulate(7)); return 0; }
 		CombinedOutput()
 	if err != nil {
 		t.Fatalf("gcc (nodebug): %v\n%s", err, out)
+	}
+	// And a third with nothing at all: no debug info and no symbol table. This
+	// is the binary the decompiled view exists for, and the only one where the
+	// names under test — FUN_00101149, DAT_00104010 — are the names there are.
+	//
+	// Its own source rather than the one above, and deliberately so. Every line
+	// number in demo.c is load-bearing somewhere in this file, and it has no
+	// global to become a DAT_ label; adding one moved every breakpoint in the
+	// package down a line. A second file costs a compile and nothing else.
+	stripSrc := filepath.Join(dir, "stripped.c")
+	const stripBody = `
+#include <stdio.h>
+int hits;
+int tally(int n) {
+	int total = 0;
+	hits++;
+	for (int i = 0; i < n; i++) total += i * 3;
+	return total;
+}
+int main(void) { printf("%d %d\n", tally(7), hits); return 0; }
+`
+	if err := os.WriteFile(stripSrc, []byte(stripBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = exec.Command("gcc", "-O0", "-s", "-o", filepath.Join(dir, "stripped"), stripSrc).
+		CombinedOutput()
+	if err != nil {
+		t.Fatalf("gcc (stripped): %v\n%s", err, out)
 	}
 
 	files, err := srcfs.Open(dir)

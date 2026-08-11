@@ -173,6 +173,23 @@ func (r *varRegistry) evictRoot(root string) {
 	}
 }
 
+// rename moves a root varobj from one path to another.
+//
+// It exists for the one operation that has to build a replacement before it can
+// take down what it is replacing: a watch whose expression is being corrected
+// is created under a scratch path, so that a gdb refusal costs nothing, and
+// then moved onto the path the panel is already showing. Only the root moves —
+// nothing is expanded under a varobj that was created a moment ago.
+func (r *varRegistry) rename(from, to string) {
+	v, ok := r.byPath[from]
+	if !ok {
+		return
+	}
+	delete(r.byPath, from)
+	v.path = to
+	r.byPath[to] = v
+}
+
 func (r *varRegistry) roots() []string {
 	return append([]string(nil), r.lruRoots...)
 }

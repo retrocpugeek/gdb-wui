@@ -450,6 +450,43 @@
   max-width: 40%;
 }
 
+/* The way out of a watch. Present on every watch row rather than on hover
+ * only: a control that appears when you are already pointing at it cannot be
+ * found by someone wondering whether removal is possible, and this list is
+ * the one place in the panel holding things the user put there by hand.
+ *
+ * Dim until pointed at, because a column of red crosses down the panel would
+ * be the loudest thing in a pane whose job is to show values. */
+/* Hidden rather than merely empty on the rows that have no watch to remove.
+ * An empty flex child still occupies its width and still earns the row's gap,
+ * which put an 18px dead gutter down a pane that most of the time holds no
+ * watches at all — measured by regenerating the screenshots, where every type
+ * column had shifted left. */
+.var-remove { display: none; }
+
+.var-row.is-watch-root .var-remove {
+  display: block;
+  flex: 0 0 auto;
+  width: 12px;
+  text-align: center;
+  color: var(--fg-2);
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.var-row.is-watch-root .var-remove:hover {
+  color: var(--danger);
+  opacity: 1;
+}
+
+/* The type of a watch is a control, not a label: it is where a cast is typed.
+ * Nothing marks it until the pointer is over it, for the same reason the value
+ * cell does not shout about being editable. */
+.var-row.is-watch-root .var-type:hover {
+  color: var(--fg-0);
+  cursor: text;
+}
+
 /* A value that just changed is the thing the user is watching for, so it is
  * the loudest thing in the panel. */
 .var-row.is-changed .var-value {
@@ -725,6 +762,23 @@
  * wondering why. */
 .sym-row.is-nondebug .list-main { color: var(--fg-1); }
 .sym-row.is-nondebug .sym-kind { opacity: 0.55; }
+
+/* A name from the Ghidra project rather than from the program. The same
+ * treatment the call stack gives a recovered frame, deliberately: FUN_0010e2dc
+ * and DAT_001a08de are guesses, a name someone wrote over one is still not a
+ * symbol, and a list that showed them like the binary's own would be claiming
+ * something the binary does not say. After the is-nondebug rule, which they
+ * also match — a decompiler name never has debug info. */
+.sym-row.is-decomp .list-main {
+  color: var(--tok-func);
+  font-style: italic;
+}
+.sym-row.is-decomp .sym-kind {
+  opacity: 1;
+  background: transparent;
+  color: var(--tok-func);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
 
 .sym-row .list-sub {
   flex: 0 0 auto;

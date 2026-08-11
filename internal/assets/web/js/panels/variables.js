@@ -18,7 +18,7 @@ import { createVirtualList, measureRowHeight } from "../core/virtual.js";
 const REEXPAND_CONCURRENCY = 4;
 
 export function createVariables({
-  element, onExpand, onAddWatch, onRemoveWatch, onAssign, onError,
+  element, onExpand, onAddWatch, onRemoveWatch, onSetWatchExpr, onAssign, onError,
 }) {
   // expanded holds paths, so it survives every id churn underneath.
   const expanded = new Set();
@@ -52,7 +52,8 @@ export function createVariables({
             '<span class="var-twisty"></span>' +
             '<span class="var-name"></span>' +
             '<span class="var-value"></span>' +
-            '<span class="var-type"></span>';
+            '<span class="var-type"></span>' +
+            '<span class="var-remove"></span>';
           return row;
         },
         update(el, index) {
@@ -70,6 +71,7 @@ export function createVariables({
           el.classList.toggle("is-arg", Boolean(row.node.arg));
           el.classList.toggle("is-header", row.kind === "header");
           el.classList.toggle("is-editable", editable(row));
+          el.classList.toggle("is-watch-root", isWatchRoot(row));
 
           el.querySelector(".var-twisty").textContent = row.node.expandable
             ? (expanded.has(row.node.path) ? "▾" : "▸")
@@ -77,6 +79,21 @@ export function createVariables({
           el.querySelector(".var-name").textContent = row.node.name;
           el.querySelector(".var-value").textContent = valueText(row.node);
           el.querySelector(".var-type").textContent = row.node.type ?? "";
+
+          // A watch is the only row a user put there, so it is the only one
+          // they can take away. Locals arrive and leave with the frame.
+          const remove = el.querySelector(".var-remove");
+          if (isWatchRoot(row)) {
+            remove.textContent = "×";
+            remove.title = `stop watching ${row.node.name}`;
+            remove.setAttribute("role", "button");
+            remove.setAttribute("aria-label", `stop watching ${row.node.name}`);
+          } else {
+            remove.textContent = "";
+            remove.removeAttribute("title");
+            remove.removeAttribute("role");
+            remove.removeAttribute("aria-label");
+          }
           el.title = row.node.type ? `${row.node.name}: ${row.node.type}` : row.node.name;
         },
       },
@@ -106,6 +123,13 @@ export function createVariables({
   function editable(row) {
     return Boolean(onAssign) && row.kind !== "header" && row.kind !== "note"
       && Boolean(row.node.editable);
+  }
+
+  // isWatchRoot is "the user typed this one in". Only a root: a field inside a
+  // watched struct is part of what was asked for, not a separate thing to
+  // remove or to re-express.
+  function isWatchRoot(row) {
+    return row?.kind === "watch" && row.depth === 0;
   }
 
   // flatten walks the visible tree into the array the virtual list indexes.
@@ -230,9 +254,16 @@ export function createVariables({
   element.addEventListener("dblclick", (ev) => {
     const el = ev.target.closest?.(".var-row");
     const cell = ev.target.closest?.(".var-value");
-    if (!el || !cell) return;
+    if (!el) return;
     const row = rows.find((r) => r.node.path === el.dataset.path);
-    if (!row || !editable(row)) return;
+    // The type cell of a watch is a cast. Same gesture as editing a value, on
+    // the cell that names what is being changed.
+    if (!cell && ev.target.closest?.(".var-type") && isWatchRoot(row)) {
+      ev.preventDefault();
+      castWatch(row);
+      return;
+    }
+    if (!cell || !row || !editable(row)) return;
     // A double-click on an expandable row would otherwise also have toggled
     // it twice via the click handler, leaving the tree flapping under the
     // editor. Stopping here is enough: the click handler ignores .var-value.
@@ -259,11 +290,48 @@ export function createVariables({
     });
   });
 
+  // castWatch reinterprets a watch without disturbing it.
+  //
+  // The gesture is the type cell, because the type is what is being changed:
+  // `*(undefined8 *)0x555555619250` says what is at the address and not what it
+  // means, and `char **` is the correction. The expression is wrapped rather
+  // than replaced, so the address the user found stays exactly as they found
+  // it — and the cast is visible in the row afterwards, which matters when the
+  // number on screen depends on a decision that was made once and forgotten.
+  function castWatch(row) {
+    if (!onSetWatchExpr || !isWatchRoot(row)) return;
+    const el = element.querySelector(`.var-row[data-path="${CSS.escape(row.node.path)}"]`);
+    const cell = el?.querySelector(".var-type");
+    if (!cell) return;
+    editCell({
+      cell,
+      value: row.node.type ?? "",
+      title: `${row.node.name} — a C type to read it as, Enter to apply`,
+      onError,
+      commit: (typed) => {
+        const want = typed.trim();
+        if (!want) return Promise.resolve();
+        return onSetWatchExpr(row.node.path, `(${want})(${row.node.expr})`);
+      },
+    });
+  }
+
   return {
     setLocals(next, seq) {
       stopSeq = seq ?? stopSeq;
       locals = next ?? [];
       render();
+    },
+    // watchAt answers the context menu: which watch, if any, is under a click.
+    watchAt(target) {
+      const el = target?.closest?.(".var-row");
+      if (!el) return null;
+      const row = rows.find((r) => r.node.path === el.dataset.path);
+      return isWatchRoot(row) ? row.node : null;
+    },
+    castWatch(path) {
+      const row = rows.find((r) => r.node.path === path);
+      if (row) castWatch(row);
     },
     setWatches(next, seq) {
       stopSeq = seq ?? stopSeq;

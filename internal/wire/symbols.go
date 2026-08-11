@@ -43,6 +43,25 @@ const (
 	SymbolVariable = "variable"
 )
 
+// Where an entry in the list came from.
+//
+// The two are not the same kind of thing and a client must not present them
+// alike. A binary symbol is a fact recorded by whoever built the program; a
+// decompiler name is a guess — FUN_0010e2dc, DAT_001a08de — or somebody's
+// correction of one, and it exists only in the Ghidra project beside the
+// binary. Everything else in the pane behaves the same for both, which is the
+// point: a name you can see is a name you can go to.
+const (
+	// SymbolFromBinary is the program's own symbol table or its debug info. The
+	// empty string, so a client written before this field existed reads every
+	// entry it understands as what it always was.
+	SymbolFromBinary = ""
+	// SymbolFromDecompiler is a name Ghidra recovered or that was written into
+	// the Ghidra project. Present only for a session with a decompiler, and
+	// only for names the binary does not already have.
+	SymbolFromDecompiler = "decompiler"
+)
+
 // Symbol is one entry from the program's symbol tables.
 //
 // Two populations end up here and they are not interchangeable. A symbol with
@@ -69,6 +88,10 @@ type Symbol struct {
 	Address string `json:"address,omitempty"`
 	// Debug distinguishes the two populations described above.
 	Debug bool `json:"debug,omitempty"`
+	// From is SymbolFromBinary or SymbolFromDecompiler. A decompiler entry
+	// never has Debug, a File or a Line: Ghidra recovered it from machine code,
+	// which is the situation that produced it in the first place.
+	From string `json:"from,omitempty"`
 }
 
 // SymbolsListRequest asks for symbols matching a filter.
@@ -121,4 +144,9 @@ type SymbolsList struct {
 	Available int `json:"available"`
 	// Truncated reports that Limit cut the reply short.
 	Truncated bool `json:"truncated,omitempty"`
+	// Analysing reports that the decompiler is still importing or analysing,
+	// so more names are coming. It is the difference between "this program has
+	// no symbols" and "not yet": a stripped binary answers the first one truly
+	// and the second one usefully, and on firmware the wait is minutes.
+	Analysing bool `json:"analysing,omitempty"`
 }

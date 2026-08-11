@@ -261,6 +261,73 @@ func TestWatchRemove(t *testing.T) {
 	}
 }
 
+// TestCastAWatchKeepsItsPlace is the point of editing an expression rather than
+// removing and re-adding one.
+//
+// The path is what a client keys expansion state on and the position is what
+// the user is looking at, so a watch being corrected has to stay the same
+// watch. Remove-then-add would compute the same value and move the row to the
+// bottom under a new path.
+func TestCastAWatchKeepsItsPlace(t *testing.T) {
+	h := stopInStructs(t)
+	first := h.mustDo(wire.TypeWatchAdd, wire.WatchAddRequest{Expr: "cfg.count"}).(wire.WatchList)
+	h.mustDo(wire.TypeWatchAdd, wire.WatchAddRequest{Expr: "cfg.label"})
+	path := first.Watches[0].Path
+
+	out := h.mustDo(wire.TypeWatchSetExpr, wire.WatchSetExprRequest{
+		Path: path, Expr: "(char)(cfg.count)",
+	}).(wire.WatchList)
+
+	if len(out.Watches) != 2 {
+		t.Fatalf("%d watches after a cast, want 2", len(out.Watches))
+	}
+	if out.Watches[0].Path != path {
+		t.Errorf("path = %q, want %q — the row lost its identity", out.Watches[0].Path, path)
+	}
+	if out.Watches[0].Expr != "(char)(cfg.count)" {
+		t.Errorf("expr = %q, want the cast", out.Watches[0].Expr)
+	}
+	if out.Watches[1].Expr != "cfg.label" {
+		t.Errorf("the second watch became %q; the cast disturbed its neighbour",
+			out.Watches[1].Expr)
+	}
+	// One varobj per watch. The replaced one has to be deleted, or gdb keeps it
+	// for the life of the session.
+	if n := h.sess.VarobjCount(); n != 2 {
+		t.Errorf("%d varobjs for 2 watches; the replaced one was leaked", n)
+	}
+}
+
+// TestARefusedCastLeavesTheWatchWorking. The expression is the user's, and the
+// one thing worse than refusing it is accepting it over something that worked.
+func TestARefusedCastLeavesTheWatchWorking(t *testing.T) {
+	h := stopInStructs(t)
+	added := h.mustDo(wire.TypeWatchAdd, wire.WatchAddRequest{Expr: "cfg.count"}).(wire.WatchList)
+	path := added.Watches[0].Path
+	was := added.Watches[0].Value
+
+	if _, werr := h.do(wire.TypeWatchSetExpr, wire.WatchSetExprRequest{
+		Path: path, Expr: "(struct nonesuch_xyz *)(cfg.count)",
+	}); werr == nil {
+		t.Fatal("a cast to a type gdb does not know was accepted")
+	}
+
+	out := h.mustDo(wire.TypeWatchList, nil).(wire.WatchList)
+	if len(out.Watches) != 1 {
+		t.Fatalf("%d watches after a refused cast, want 1", len(out.Watches))
+	}
+	if out.Watches[0].Expr != "cfg.count" {
+		t.Errorf("expr = %q, want cfg.count — the refusal took the watch with it",
+			out.Watches[0].Expr)
+	}
+	if out.Watches[0].Value != was {
+		t.Errorf("value = %q, want %q; the watch stopped reading", out.Watches[0].Value, was)
+	}
+	if n := h.sess.VarobjCount(); n != 1 {
+		t.Errorf("%d varobjs for 1 watch; the failed attempt left one behind", n)
+	}
+}
+
 // TestOptimizedOutIsHonest is the -O2 criterion: the value gdb gives is shown
 // rather than hidden or replaced.
 func TestOptimizedOutIsHonest(t *testing.T) {

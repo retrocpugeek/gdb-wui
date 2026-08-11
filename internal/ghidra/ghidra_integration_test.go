@@ -287,6 +287,49 @@ func TestFunctionsListsWithoutDecompiling(t *testing.T) {
 	}
 }
 
+// TestDataListsGlobalsAndNotCode is the other half of the browsable index.
+//
+// The list has to be the program's module-scope data and nothing else. Ghidra's
+// symbol table also holds a LAB_ for every jump target it found, and there are
+// far more of those than there are globals; letting them in would bury the
+// twenty names somebody is looking for under two thousand nobody is.
+func TestDataListsGlobalsAndNotCode(t *testing.T) {
+	c := start(t)
+	list, err := c.Data(context.Background(), 0, 5000, "")
+	if err != nil {
+		t.Fatalf("Data: %v", err)
+	}
+	if list.Total == 0 {
+		t.Fatal("no data symbols listed; the fixture defines names[] and tail[]")
+	}
+
+	byName := map[string]bool{}
+	for _, d := range list.Data {
+		byName[d.Name] = true
+		if d.Address == "" {
+			t.Errorf("%s has no address, which is the only thing a global is good for", d.Name)
+		}
+	}
+	for _, want := range []string{"names", "tail"} {
+		if !byName[want] {
+			t.Errorf("%s missing from %d data symbols", want, len(list.Data))
+		}
+	}
+	// A function is not data. It has its own list, and appearing in both would
+	// show every function twice in a pane that merges them.
+	if byName["accumulate"] || byName["pick"] {
+		t.Error("a function was listed as data")
+	}
+
+	filtered, err := c.Data(context.Background(), 0, 5000, "tail")
+	if err != nil {
+		t.Fatalf("Data filtered: %v", err)
+	}
+	if filtered.Total == 0 || filtered.Total >= list.Total {
+		t.Errorf("filter did nothing: %d of %d", filtered.Total, list.Total)
+	}
+}
+
 // TestCloseStopsTheProcess: a 2 GB JVM outliving the session is not
 // acceptable, and Setpgid plus a group kill is what prevents it.
 //
