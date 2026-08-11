@@ -117,7 +117,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `symbols.load` | `{path, mode?, offset?}` | `{path, mode, available}` | Symbols without an exec file. `mode` is `replace` or `add`. |
 | `decomp.status` | `{}` | [`DecompStatus`](#decompilation) | Answered even with no program loaded: it is how a client learns the feature exists. |
 | `decomp.function` | `{target?, thread?, frame?, stopSeq?}` | [`DecompFunction`](#decompilation) | `target` is a name or any address inside a function; empty follows the selected frame. |
-| `decomp.names` | `{addresses, stopSeq?}` | `{names, state}` | Which function each address falls in, without decompiling. Capped at 128. An empty list is an ordinary answer. |
+| `decomp.names` | `{addresses, data?, stopSeq?}` | `{names, state}` | Which function each address falls in, without decompiling. Capped at 128. `data` also answers the module-scope labels. An empty list is an ordinary answer. |
 | `decomp.rename` | `{kind, function, symbol?, name?, address?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A new name for a function, a local or a global. Refused for a project the user named. |
 | `decomp.retype` | `{kind, function, symbol?, name?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A C type for a local, or a whole prototype for a function. |
 | `decomp.comment` | `{kind, function, address?, name?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A note against a line or a function. An empty `value` removes it. |
@@ -704,9 +704,14 @@ because it has no symbol for any of it.
 ```json
 { "state": "ready",
   "names": [ {"addr": "0x5555555551b3", "name": "FUN_00101154", "offset": 76,
-              "entry": "0x555555555167",
+              "entry": "0x555555555167", "kind": "function",
               "signature": "undefined8 FUN_00101154(void)"} ] }
 ```
+
+`kind` is `function` or `variable`. A client renders the two differently —
+`+0x1c` means something for a place in code and nothing for a piece of data —
+and the name alone cannot say which, since either may have been renamed to
+anything.
 
 It does not decompile: the sidecar answers from Ghidra's function manager, so a
 whole stack is one round trip. That is what makes it usable on the path where a
@@ -729,6 +734,20 @@ client's response to each is the same — leave gdb's `??` alone:
 A name from here is **not a symbol** and a client must not present it as one.
 `FUN_0010d2b0` is obviously a guess, but a function renamed in Ghidra is not,
 and a stack that showed the two alike would claim knowledge it does not have.
+
+Send `data: true` to have the module-scope labels answered as well, for a client
+showing data rather than code: a watch on a decompiler global is an address and
+nothing else, and `DAT_001a08de` is the only name it has. It is off by default
+because answering it needs the whole name index, and the call stack — which asks
+this question on every stop — has no use for the labels: a frame address is
+either in a function or in code the decompiler was never given.
+
+Data is matched **exactly**. The index holds where each label starts and not how
+far it runs, so an address a few bytes into one is not named. Answering with the
+preceding label would turn "this is `DAT_001a08de`" into "this is somewhere at
+or after `DAT_001a08de`", which is a weaker claim than the row would then be
+making. A function, by contrast, is matched by containment, which is why a
+function answer carries `offset` and a data answer does not.
 
 `addrs` is a set rather than a range. A decompiled line's addresses are often
 disjoint, and consecutive lines interleave — a loop's init, increment and test
