@@ -2378,12 +2378,20 @@ function localsToNodes(locals) {
   }));
 }
 
-// Tabs. Hidden panels do no work: registers only fetch once shown, which is
-// what keeps a stop from costing a register read nobody asked for.
-for (const tab of document.querySelectorAll(".tab")) {
+// The right pane's tabs. Hidden panels do no work: registers only fetch once
+// shown, which is what keeps a stop from costing a register read nobody asked
+// for.
+//
+// Scoped to [data-tab], like the other two groups. Unscoped it ran for the
+// centre and bottom tabs as well, where dataset.tab is undefined and no panel
+// matches it — so clicking Disassembly, Decompiled, Memory or Log hid the
+// Variables pane and left the right-hand panel blank until something was
+// clicked over there. Found by a screenshot scene that switched to the
+// decompiled view and then tried to photograph a watch.
+for (const tab of document.querySelectorAll(".tab[data-tab]")) {
   tab.addEventListener("click", () => {
     const name = tab.dataset.tab;
-    for (const other of document.querySelectorAll(".tab")) {
+    for (const other of document.querySelectorAll(".tab[data-tab]")) {
       other.classList.toggle("is-active", other === tab);
     }
     for (const panel of document.querySelectorAll("[data-panel]")) {
