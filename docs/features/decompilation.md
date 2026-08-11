@@ -57,6 +57,31 @@ Renaming a function shows your name here, which is what makes working through
 unfamiliar firmware get easier rather than staying equally hard — and you can
 rename it from the stack row itself, without leaving gdb-wui.
 
+## Following a call, and stopping in one
+
+The body of a recovered function is full of names that exist nowhere else:
+`FUN_004011d6` for the function it calls, `DAT_00404040` for the global it
+reads. Right-click one and the menu offers what to do with it:
+
+- **Set breakpoint at `FUN_004011d6`** — the breakpoint appears in the
+  [Breakpoints pane](breakpoints.md) named the same way rather than as a bare
+  address.
+- **Go to `FUN_004011d6`** — the disassembly for a function, the
+  [memory viewer](memory.md) for a global.
+
+![A breakpoint set from a name in the decompiled text](../images/decomp-navigate.png)
+
+The name is resolved before the menu opens, so an item appears only where there
+is somewhere to go: a type name or a keyword under the pointer offers nothing.
+A name the binary itself carries is resolved by gdb, which means a breakpoint on
+one skips the prologue; a name only Ghidra has is resolved through the
+decompiler and breaks at the entry instruction. See
+[breaking by name and breaking at an address](breakpoints.md#breaking-by-name-and-breaking-at-an-address).
+
+The address is not the digits in the name. Those are where Ghidra found the
+function at link time, and a position-independent executable is somewhere else
+entirely once it is running.
+
 ## Renaming what the decompiler guessed
 
 `FUN_00401154`, `local_10` and `undefined8` are not wrong: they are what can be
