@@ -290,6 +290,10 @@ for (const [pane, resolve] of [
     // temporary, a function nobody can evaluate — are exactly the ones with
     // nothing to show a value for.
     const editable = pane === ui.decomp ? decompEditTarget(ev) : null;
+    // A name in the decompiled text that is none of this function's own
+    // variables. Nearly always a call to another function, which on a stripped
+    // binary is the only place its name is ever written down.
+    const word = pane === ui.decomp && !hit ? decomp.wordAt(ev) : null;
     if (!hit && !editable) return;
     ev.preventDefault();
     hover.hide();
@@ -298,8 +302,10 @@ for (const [pane, resolve] of [
 
     // The value decides half the menu, so it is fetched before the menu opens
     // rather than the menu offering something that cannot work. One round
-    // trip, and the hover has usually just made the same one.
-    evaluateForMenu(hit?.expr).then((res) => {
+    // trip, and the hover has usually just made the same one. The same applies
+    // to the name: what it resolves to decides whether going there is offered
+    // at all, and an item that only ever reports an error teaches nothing.
+    Promise.all([evaluateForMenu(hit?.expr), lookUpName(word)]).then(([res, found]) => {
       const items = [];
       const label = hit?.name ?? hit?.expr ?? editable?.label ?? "";
 
@@ -342,6 +348,31 @@ for (const [pane, resolve] of [
             .catch(reportError),
         });
       }
+
+      // Where that name is, and stopping there. Both go through the same paths
+      // the symbol pane's menu uses, so a decompiler name is resolved by the
+      // server and a name the binary carries is resolved by gdb — which also
+      // means a breakpoint on the latter skips the prologue and one on the
+      // former does not.
+      if (found) {
+        if (found.kind === "function") {
+          items.push({
+            label: `Set breakpoint at ${found.name}`,
+            title: found.from === "decompiler"
+              ? "break at the entry address the decompiler gives this function"
+              : "break by name — gdb skips the prologue, which is where you mean to stop",
+            run: () => setFunctionBreakpoint(found.name),
+          });
+        }
+        items.push({
+          label: `Go to ${found.name}`,
+          title: found.from === "decompiler"
+            ? `${found.address} — the decompiler's, not a symbol; gdb has never heard of this name`
+            : "source, disassembly or memory, depending on what the symbol knows about itself",
+          run: () => jumpToSymbol(found),
+        });
+      }
+
       items.push(...decompEditItems(editable));
 
       if (!items.length) {
@@ -353,6 +384,26 @@ for (const [pane, resolve] of [
       showContextMenu(x, y, label || editable?.fn?.name || "", items);
     });
   });
+}
+
+// lookUpName resolves one name the way the symbol pane would.
+//
+// Through symbols.list rather than through anything new, because that request
+// already answers exactly this question over both populations: the binary's own
+// table, and the names only the decompiler has. Which one answered is in the
+// reply, and it decides how a jump and a breakpoint are made.
+//
+// The match is exact. The filter is a substring — asking about `walk` returns
+// `walk_free` too — and offering to go to a name the user did not point at
+// would be worse than offering nothing.
+function lookUpName(name) {
+  if (!name) return Promise.resolve(null);
+  return send("symbols.list", { filter: name })
+    .then((out) => (out.symbols ?? []).find((s) => s.name === name) ?? null)
+    // Not ready, no program, a decompiler still analysing: all of them mean
+    // there is nothing to offer, which is not a failure worth reporting from a
+    // menu the user has already opened.
+    .catch(() => null);
 }
 
 // decompEditTarget works out what a right-click in the decompiled view is
