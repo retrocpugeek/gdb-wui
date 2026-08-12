@@ -62,8 +62,8 @@ func (s *Session) consoleExec(r *request) (any, *wire.Error) {
 	}, nil
 }
 
-// noteTargetCommand watches for the user connecting to or leaving a remote
-// target.
+// noteTargetCommand watches for the user connecting to or leaving a target
+// this server did not start.
 //
 // Reading the command text is a heuristic, and a deliberate one: there is no MI
 // query that answers "am I attached to something I did not start" without
@@ -81,7 +81,23 @@ func (s *Session) noteTargetCommand(line string, ok bool) {
 		// A failed detach is still worth believing: whatever went wrong, the
 		// connection is not in a state to be trusted, and continuing to think
 		// we are attached would make shutdown act on it.
-		s.st.remoteTarget, s.st.remoteAddr = false, ""
+		s.forgetTarget()
+	case "attach":
+		// `attach` is the one command that hands this server a process it must
+		// not kill: the debuggee belongs to whoever started it, and a browser
+		// tab being closed is not a reason for it to die. Believed only when
+		// gdb accepted it, because a refused attach — ptrace_scope permitting
+		// only descendants is the usual reason — leaves no inferior at all.
+		if len(fields) < 2 || !ok {
+			return
+		}
+		s.st.remoteTarget = true
+		s.st.remoteKind, s.st.remoteAddr = wire.TargetAttach, ""
+		// A pid gdb accepted, so it parsed; atoiSafe yielding 0 means it was
+		// something else — a process name, on the platforms that take one —
+		// which is worth attaching to and not worth reporting a number for.
+		s.st.remotePID = atoiSafe(fields[1])
+		s.logf("attached to %s; shutdown will detach, not kill", s.targetLabel())
 	case "target", "tar":
 		if len(fields) < 2 || !ok {
 			return
@@ -89,6 +105,7 @@ func (s *Session) noteTargetCommand(line string, ok bool) {
 		switch fields[1] {
 		case "remote", "extended-remote":
 			s.st.remoteTarget = true
+			s.st.remoteKind, s.st.remotePID = wire.TargetRemote, 0
 			if len(fields) > 2 {
 				s.st.remoteAddr = fields[2]
 			}
@@ -101,12 +118,39 @@ func (s *Session) noteTargetCommand(line string, ok bool) {
 	}
 }
 
+// forgetTarget clears everything recorded about a target that has been left.
+func (s *Session) forgetTarget() {
+	s.st.remoteTarget = false
+	s.st.remoteKind, s.st.remoteAddr, s.st.remotePID = "", "", 0
+}
+
+// targetLabel names the target for a log line: an address, or a pid.
+func (s *Session) targetLabel() string {
+	if s.st.remoteKind == wire.TargetAttach {
+		if s.st.remotePID == 0 {
+			return "a running process"
+		}
+		return fmt.Sprintf("pid %d", s.st.remotePID)
+	}
+	if s.st.remoteAddr == "" {
+		return "a remote target"
+	}
+	return s.st.remoteAddr
+}
+
+// remoteState is what the browsers are told about the connection.
+func (s *Session) remoteState() *wire.RemoteTarget {
+	return &wire.RemoteTarget{
+		Connected: s.st.remoteTarget,
+		Kind:      s.st.remoteKind,
+		Address:   s.st.remoteAddr,
+		PID:       s.st.remotePID,
+	}
+}
+
 // broadcastRemote tells every browser the connection state changed.
 func (s *Session) broadcastRemote() {
-	s.emit(wire.EventRemoteChanged, wire.RemoteTarget{
-		Connected: s.st.remoteTarget,
-		Address:   s.st.remoteAddr,
-	})
+	s.emit(wire.EventRemoteChanged, s.remoteState())
 }
 
 // symbolCommands are the typed commands that change which symbols gdb has.
