@@ -1655,7 +1655,21 @@ ui.buttons.step.addEventListener("click", () => stepInto());
 ui.buttons.finish.addEventListener("click", () => exec("exec.finish"));
 ui.buttons.stepi.addEventListener("click", () => exec("exec.stepi"));
 ui.buttons.nexti.addEventListener("click", () => exec("exec.nexti"));
-ui.buttons.kill.addEventListener("click", () => exec("exec.kill"));
+ui.buttons.kill.addEventListener("click", () => {
+  // Killing a process gdb-wui started is what this button is for. Killing one
+  // it merely attached to ends somebody else's program, and the button gives
+  // no hint of the difference, so ask.
+  const remote = store.get("session.remote");
+  if (remote?.kind === "attach") {
+    const what = remote.pid ? `pid ${remote.pid}` : "this process";
+    askConfirm(
+      `gdb-wui did not start ${what}, and killing it ends a program that was ` +
+      "running before this session. Detach instead to leave it running.",
+      "kill anyway", () => exec("exec.kill"));
+    return;
+  }
+  exec("exec.kill");
+});
 el("btn-clear-log").addEventListener("click", () => {
   log.clear();
   gdbConsole.clear();
@@ -1968,14 +1982,26 @@ ui.symbolsLoad.addEventListener("keydown", (ev) => {
 // for a connection a console command can also make or break. It also means
 // the console below shows exactly what ran, including gdb's own error text
 // when a stub refuses, which is far more use than a generic failure.
+//
+// An attached process is the same kind of thing as a stub — something this
+// server did not start and must not kill — but it has a pid rather than an
+// address, and it is released with `detach` rather than `disconnect`. The pill
+// and the button follow the server's word on which one this is.
 function applyRemote(remote) {
   const connected = Boolean(remote?.connected);
+  const attached = connected && remote.kind === "attach";
   ui.remoteState.dataset.remote = connected ? "on" : "off";
-  ui.remoteState.textContent = connected
-    ? `remote ${remote.address || "connected"}`
-    : "no target";
+  ui.remoteState.textContent = !connected
+    ? "no target"
+    : attached
+      ? (remote.pid ? `attached pid ${remote.pid}` : "attached")
+      : `remote ${remote.address || "connected"}`;
   ui.remoteConnect.disabled = connected;
   ui.remoteDisconnect.disabled = !connected;
+  ui.remoteDisconnect.textContent = attached ? "detach" : "disconnect";
+  ui.remoteDisconnect.title = attached
+    ? "detach — let the process go and leave it running"
+    : "disconnect — leave the target running";
   if (connected && remote.address) ui.remoteAddr.value = remote.address;
 }
 
@@ -2044,8 +2070,18 @@ ui.remoteConnect.addEventListener("click", () => {
 });
 
 ui.remoteDisconnect.addEventListener("click", () => {
-  // disconnect, not detach: detach resumes the target, and someone who
-  // connected to look at a stopped machine rarely wants it to run on.
+  // For a stub, disconnect rather than detach: detach resumes the target, and
+  // someone who connected to look at a stopped machine rarely wants it to run
+  // on.
+  //
+  // For an attached process it is the other way round, and not merely as a
+  // preference: `disconnect` against a native target answers "A program is
+  // being debugged already. Kill it?", answers itself yes, and ends the
+  // process. Measured on gdb 17.1; see finding 43.
+  if (store.get("session.remote")?.kind === "attach") {
+    runRemoteCommand("detach", "detaching…");
+    return;
+  }
   runRemoteCommand("disconnect", "disconnecting…");
 });
 
