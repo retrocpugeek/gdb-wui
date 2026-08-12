@@ -8,7 +8,9 @@ nav_order: 13
 # Remote targets
 
 gdb-wui can debug anything that speaks the GDB remote protocol: a gdbserver, an
-emulator's stub, or a board on the end of a probe.
+emulator's stub, or a board on the end of a probe. It can also attach to a
+process already running on this machine, which is the same arrangement seen from
+closer up: a target it did not start and must not kill.
 
 ![Attached to a gdbserver](../images/remote.png)
 
@@ -49,6 +51,33 @@ sudo apt install gdb-multiarch
 ./gdb-wui -project . -gdb gdb-multiarch -exe firmware
 ```
 
+## Attaching to a local process
+
+![Attached to a process that was already running](../images/attach.png)
+
+Type `attach <pid>` at the [console](console.md). There is nothing to load
+first: gdb reads the program out of `/proc/<pid>/exe`, symbols and architecture
+together, so the ordering care above applies to stubs and not to this. The pill
+reads `attached pid 1234` and the button beside it becomes **detach**.
+
+Detaching leaves the process running, and so does shutting gdb-wui down — a
+program that was somebody else's before the session stays theirs afterwards.
+The kill button asks first, because killing one ends a program this session did
+not start.
+
+Two things an attached process does not bring with it:
+
+- **No terminal.** It keeps the one it already had, so its output goes there
+  and the terminal pane stays empty.
+- **No decompilation**, until you click its ELF in the file tree. The decompiler
+  works from a file you loaded, and attaching loads nothing.
+
+On Linux, `attach` usually needs permission. The default
+`kernel.yama.ptrace_scope` of 1 allows tracing only a descendant, so attaching
+to an unrelated pid needs `sudo sysctl kernel.yama.ptrace_scope=0`, or a process
+that has called `prctl(PR_SET_PTRACER, …)` for itself. Without it gdb answers
+`ptrace: Operation not permitted.` in the console and nothing is attached.
+
 ## Worked example
 
 A local gdbserver behaves the same way as anything remote, so it is a
@@ -81,7 +110,9 @@ qemu-aarch64 -g 1234 -L /path/to/sysroot ./yourbinary &
   flash a board. Start the far end yourself, then connect to it.
 - **It does not detect the target's architecture.** The architecture comes from
   the ELF you load, which is why the order matters.
-- **It does not attach to a local pid**, and does not open core dumps.
+- **It does not open core dumps.**
+- **There is no attach button.** Attaching is a console command; only the
+  indicator and the detach button know about it.
 - **`extended-remote`, `target sim` and similar are not on the buttons.** Type
   them at the [console](console.md); the pill follows, because it reflects gdb's
   state rather than which button was pressed.

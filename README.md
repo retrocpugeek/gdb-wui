@@ -89,10 +89,11 @@ breakpoints are kept.
 | Go to a symbol, address or `file.c:65` in the focused view | Back and forward through places you have been |
 | Registers, disassembly, and a hex memory view | Reverse debugging, `rr` |
 | A searchable symbol list, functions and globals | Types, macros, and other symbol domains |
-| The gdb console, with tab completion | Core dumps, attach-to-pid |
+| The gdb console, with tab completion | Core dumps |
 | A program with its own terminal | Full terminal emulation for curses programs |
 | Several browser tabs on one session | Multi-user, auth beyond loopback, TLS |
 | Remote targets: connect, disconnect, symbols-only loading | Auto-detecting a foreign target's architecture |
+| `attach <pid>` at the console, and detach without killing | An attach button, or a pid picker |
 | | Follow-fork, multi-inferior |
 | | Windows, macOS |
 
