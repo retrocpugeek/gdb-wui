@@ -842,6 +842,13 @@
 
 .remote-addr { min-width: 16ch; width: 18ch; }
 
+/* Narrower than the address box beside it, which is the clearest signal that
+ * the two take different things — but not so narrow that it clips what it
+ * holds. Linux allows a pid of seven digits by default and more with a raised
+ * pid_max, and the width is border-box: the padding and the border take about
+ * a character and a half of it before any digit is drawn. */
+.attach-pid { min-width: 8ch; width: 12ch; }
+
 .pill[data-remote="off"] { color: var(--fg-2); }
 .pill[data-remote="on"]  { color: var(--ok); border-color: var(--ok); }
 .pill[data-remote="busy"] { color: var(--warn); border-color: var(--warn); }

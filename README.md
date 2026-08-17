@@ -93,7 +93,7 @@ breakpoints are kept.
 | A program with its own terminal | Full terminal emulation for curses programs |
 | Several browser tabs on one session | Multi-user, auth beyond loopback, TLS |
 | Remote targets: connect, disconnect, symbols-only loading | Auto-detecting a foreign target's architecture |
-| `attach <pid>` at the console, and detach without killing | An attach button, or a pid picker |
+| Attach to a running process by pid, and detach without killing | Choosing it from a list of processes |
 | | Follow-fork, multi-inferior |
 | | Windows, macOS |
 

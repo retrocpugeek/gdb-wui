@@ -92,6 +92,8 @@ const ui = {
   remoteAddr: el("remote-addr"),
   remoteConnect: el("remote-connect"),
   remoteDisconnect: el("remote-disconnect"),
+  attachPid: el("attach-pid"),
+  attachConnect: el("attach-connect"),
   buttons: {
     run: el("btn-run"),
     runMain: el("btn-run-main"),
@@ -1997,6 +1999,8 @@ function applyRemote(remote) {
       ? (remote.pid ? `attached pid ${remote.pid}` : "attached")
       : `remote ${remote.address || "connected"}`;
   ui.remoteConnect.disabled = connected;
+  ui.attachConnect.disabled = connected;
+  ui.attachPid.disabled = connected;
   ui.remoteDisconnect.disabled = !connected;
   ui.remoteDisconnect.textContent = attached ? "detach" : "disconnect";
   ui.remoteDisconnect.title = attached
@@ -2016,7 +2020,12 @@ function remoteBusy(text) {
 // remoteChanged event settle the indicator. Nothing here predicts the outcome:
 // on failure the pill goes back to whatever the server still believes, which
 // for a refused connection is "no target".
-function runRemoteCommand(line, pending) {
+//
+// settled is given the state the server ended up in, for a caller with
+// something to say about a command that did not take. It runs after the pill
+// has been repainted, and the event it reads has already arrived: the server
+// broadcasts before it answers, and both travel the same socket in order.
+function runRemoteCommand(line, pending, settled) {
   const before = store.get("session.remote");
   remoteBusy(pending);
   send("console.exec", { line })
@@ -2024,7 +2033,9 @@ function runRemoteCommand(line, pending) {
     .finally(() => {
       // If the command changed anything, remoteChanged has already repainted
       // this and applyRemote below is a no-op on identical state.
-      applyRemote(store.get("session.remote") ?? before);
+      const now = store.get("session.remote") ?? before;
+      applyRemote(now);
+      settled?.(now);
     });
 }
 
@@ -2067,6 +2078,41 @@ ui.remoteConnect.addEventListener("click", () => {
     return;
   }
   connectRemote(addr);
+});
+
+// Attaching is `attach <pid>`, the same command and the same route as the
+// address box beside it. The box takes a bare pid rather than anything gdb
+// would parse: `attach` also accepts a core file and, on some systems, a
+// process name, and a field that quietly forwarded either would make the
+// button's one sentence of explanation false.
+function attachToPid(pid) {
+  runRemoteCommand(`attach ${pid}`, "attaching…", (state) => {
+    if (state?.kind === "attach") return;
+    // gdb's own words are in the console below, which is the point of going
+    // through it; this says where to look and names the usual cause, because
+    // "Operation not permitted" on its own sends people hunting for the wrong
+    // thing.
+    setStatus(`gdb did not attach to pid ${pid} — see the console. On Linux ` +
+      "this is usually kernel.yama.ptrace_scope, which permits attaching only " +
+      "to a descendant.", true);
+  });
+}
+
+ui.attachConnect.addEventListener("click", () => {
+  const pid = ui.attachPid.value.trim();
+  if (!/^[0-9]+$/.test(pid) || Number(pid) <= 0) {
+    setStatus("Enter the process id to attach to, such as 1234.", true);
+    ui.attachPid.focus();
+    return;
+  }
+  attachToPid(pid);
+});
+
+ui.attachPid.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ui.attachConnect.disabled) {
+    ev.preventDefault();
+    ui.attachConnect.click();
+  }
 });
 
 ui.remoteDisconnect.addEventListener("click", () => {

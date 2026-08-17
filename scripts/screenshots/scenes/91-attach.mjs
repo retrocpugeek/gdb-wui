@@ -22,11 +22,12 @@ export default {
     });
     await Promise.race([ready, sleep(3000)]);
 
-    // Typed at the console, because that is the only way in: there is no
-    // attach button, and the picture should not suggest one.
-    await page.click("#gdbconsole");
-    await page.type("#gdbconsole .xterm-helper-textarea", `attach ${tracee.pid}`);
-    await page.key("Enter");
+    // The box in the console's tab bar, which is what a reader will use. It
+    // runs `attach <pid>`, so the console below shows the command and gdb's
+    // answer to it — including the refusal, on a machine that does not permit
+    // this.
+    await page.fill("#attach-pid", String(tracee.pid));
+    await page.click("#attach-connect");
 
     await page.waitFor('#remote-state[data-remote="on"]', {
       what: "gdb to attach to the process",
@@ -38,6 +39,15 @@ export default {
         what: "the pill to name the process",
       },
     );
+    // The box has to show the whole pid. A field that clips its own value puts
+    // a different number next to the pill in this very picture, which is how
+    // the first version of it was caught.
+    const clipped = await page.evaluate(() => {
+      const box = document.querySelector("#attach-pid");
+      return box.scrollWidth > box.clientWidth;
+    });
+    if (clipped) throw new Error("the pid box is too narrow for the pid it holds");
+
     await page.shot(ctx.image(), { clip: [".remote-bar", "#gdbconsole"], pad: 8 });
   },
 };
