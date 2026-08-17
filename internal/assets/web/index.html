@@ -186,6 +186,12 @@
                spellcheck="false" autocomplete="off">
         <button id="remote-connect" class="btn btn-small"
                 title="target remote — connect gdb to a gdbserver or emulator stub">connect</button>
+        <input id="attach-pid" class="addr-input attach-pid" type="text"
+               inputmode="numeric" placeholder="pid"
+               aria-label="Process id to attach to"
+               spellcheck="false" autocomplete="off">
+        <button id="attach-connect" class="btn btn-small"
+                title="attach — debug a process already running on this machine">attach</button>
         <button id="remote-disconnect" class="btn btn-small"
                 title="disconnect — leave the target running">disconnect</button>
       </span>

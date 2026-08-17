@@ -178,11 +178,14 @@ type state struct {
 	sourceDirs    []string
 
 	// remoteTarget records that gdb is attached to something this server did
-	// not start — a gdbserver, an emulator's stub. It changes what shutdown is
-	// allowed to do: killing a target we merely connected to destroys somebody
-	// else's session.
+	// not start — a gdbserver, an emulator's stub, a process it attached to by
+	// pid. It changes what shutdown is allowed to do: killing a target we
+	// merely connected to destroys somebody else's session, or somebody else's
+	// process.
 	remoteTarget bool
+	remoteKind   string
 	remoteAddr   string
+	remotePID    int
 
 	// gdbSelThread is the thread gdb itself currently has selected. Tracked so
 	// -thread-select can be skipped when it would be a no-op: it makes gdb send
@@ -313,16 +316,17 @@ func (s *Session) Close(ctx context.Context) error {
 		<-s.stopped
 		s.closeTerminal()
 
-		// A remote target is somebody else's process. Detach so it survives us,
-		// and stop the client's teardown from killing it — gdb kills a
-		// `target remote` connection on plain quit, not only on an explicit
-		// kill.
+		// A target we did not start is somebody else's process. Detach so it
+		// survives us, and stop the client's teardown from killing it — gdb
+		// kills a `target remote` connection on plain quit, not only on an
+		// explicit kill, and teardown's `kill` would end an attached process
+		// that has nothing to do with this session.
 		if s.st.remoteTarget && s.client.DeadErr() == nil {
 			detach, cancel := context.WithTimeout(ctx, 3*time.Second)
 			if _, werr := s.send(detach, "-target-detach"); werr != nil {
-				s.logf("detaching from %s: %s", s.st.remoteAddr, werr.Message)
+				s.logf("detaching from %s: %s", s.targetLabel(), werr.Message)
 			} else {
-				s.logf("detached from %s", s.st.remoteAddr)
+				s.logf("detached from %s", s.targetLabel())
 			}
 			cancel()
 			s.client.SetKillOnClose(false)
@@ -758,7 +762,7 @@ func (s *Session) buildSnapshot() wire.Hello {
 		h.ProjectRoot = s.files.Abs()
 	}
 	if s.st.remoteTarget {
-		h.Remote = &wire.RemoteTarget{Connected: true, Address: s.st.remoteAddr}
+		h.Remote = s.remoteState()
 	}
 	if s.st.runState == wire.RunStateStopped {
 		h.Frames = append([]wire.Frame(nil), s.st.frames...)

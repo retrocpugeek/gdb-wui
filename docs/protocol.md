@@ -180,7 +180,7 @@ anything. Requesting one now returns `unsupported`.
 | `inferiorOutput` | The debuggee wrote to its terminal. | `{dataB64}` |
 | `threadsChanged` | Threads appeared or disappeared. | [`ThreadsList`](#threads) |
 | `symbolsInvalidated` | The cached symbol table belongs to a program that is no longer loaded. | `{}` |
-| `remoteChanged` | A remote target was connected or disconnected. | `{connected, address?}` |
+| `remoteChanged` | A target this server did not start was connected, attached to, or let go. | `{connected, kind?, address?, pid?}` |
 | `decompChanged` | The decompiler started, died, or now holds a different program. | `{}` |
 | `decompLog` | One line of decompiler activity, for the log pane. | `{text, level?, millis?}` |
 | `decompEdited` | A name or a type in the decompiler's database changed. Refetch whatever shows one. | `{}` |
@@ -1241,26 +1241,33 @@ Shared libraries for an attached process are not covered here. They need
 `set sysroot`, using `target:` when the stub does file transfer and a local copy
 otherwise, which is a console command like any other.
 
-## Remote targets
+## Remote targets and attached processes
 
-`hello` carries `remote: {connected, address}` when gdb is attached to a target
-this server did not start, and `remoteChanged` fires when that changes.
+`hello` carries `remote: {connected, kind, address?, pid?}` when gdb is on a
+target this server did not start, and `remoteChanged` fires when that changes.
+`kind` is `remote` for a stub, with the `address` that was connected to, or
+`attach` for a local process, with its `pid`. An older server sends neither
+field; read a missing `kind` as `remote`.
 
-There is no `target.connect` request. To connect, send `console.exec` with
-`target remote <address>`; to disconnect, send `console.exec` with `disconnect`.
-These are the commands a user would type, so the console shows what ran and
-shows gdb's own error text if a connection is refused. The UI's connect button
-is a shortcut for typing rather than a separate mechanism, which keeps one
-source of truth for a connection that a console command can also make or break.
+There is no `target.connect` or `target.attach` request. To connect, send
+`console.exec` with `target remote <address>`; to attach, send `attach <pid>`;
+to leave, send `disconnect` for a stub and `detach` for a process. These are the
+commands a user would type, so the console shows what ran and shows gdb's own
+error text if a connection is refused or `ptrace` is not permitted. The UI's
+buttons are a shortcut for typing rather than a separate mechanism, which keeps
+one source of truth for a connection that a console command can also make or
+break.
 
 The server recognises those commands by reading the command text. There is no MI
 query for "am I attached to something I did not start" that avoids parsing
-console output. A `target remote` is believed only if gdb accepted it, because
-reporting `connected` after a refused connection would make shutdown try to
-detach from something it never attached to. A `detach` or `disconnect` is
-believed either way, since whatever went wrong, the connection is no longer in a
-state to act on.
+console output. A `target remote` or an `attach` is believed only if gdb
+accepted it, because reporting `connected` after a refused one would make
+shutdown try to detach from something it never attached to — and, for an
+`attach`, would stop it killing a program it did start. A `detach` or
+`disconnect` is believed either way, since whatever went wrong, the connection
+is no longer in a state to act on.
 
-This matters beyond the indicator: shutting down detaches from a remote target
-rather than killing it, because killing a target you connected to would destroy
-someone else's session.
+This matters beyond the indicator: shutting down detaches rather than killing,
+because killing a target you connected to would destroy someone else's session,
+and killing a process you attached to would end a program that was running
+before the session began.

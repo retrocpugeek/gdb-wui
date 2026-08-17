@@ -92,6 +92,8 @@ const ui = {
   remoteAddr: el("remote-addr"),
   remoteConnect: el("remote-connect"),
   remoteDisconnect: el("remote-disconnect"),
+  attachPid: el("attach-pid"),
+  attachConnect: el("attach-connect"),
   buttons: {
     run: el("btn-run"),
     runMain: el("btn-run-main"),
@@ -1655,7 +1657,21 @@ ui.buttons.step.addEventListener("click", () => stepInto());
 ui.buttons.finish.addEventListener("click", () => exec("exec.finish"));
 ui.buttons.stepi.addEventListener("click", () => exec("exec.stepi"));
 ui.buttons.nexti.addEventListener("click", () => exec("exec.nexti"));
-ui.buttons.kill.addEventListener("click", () => exec("exec.kill"));
+ui.buttons.kill.addEventListener("click", () => {
+  // Killing a process gdb-wui started is what this button is for. Killing one
+  // it merely attached to ends somebody else's program, and the button gives
+  // no hint of the difference, so ask.
+  const remote = store.get("session.remote");
+  if (remote?.kind === "attach") {
+    const what = remote.pid ? `pid ${remote.pid}` : "this process";
+    askConfirm(
+      `gdb-wui did not start ${what}, and killing it ends a program that was ` +
+      "running before this session. Detach instead to leave it running.",
+      "kill anyway", () => exec("exec.kill"));
+    return;
+  }
+  exec("exec.kill");
+});
 el("btn-clear-log").addEventListener("click", () => {
   log.clear();
   gdbConsole.clear();
@@ -1968,14 +1984,28 @@ ui.symbolsLoad.addEventListener("keydown", (ev) => {
 // for a connection a console command can also make or break. It also means
 // the console below shows exactly what ran, including gdb's own error text
 // when a stub refuses, which is far more use than a generic failure.
+//
+// An attached process is the same kind of thing as a stub — something this
+// server did not start and must not kill — but it has a pid rather than an
+// address, and it is released with `detach` rather than `disconnect`. The pill
+// and the button follow the server's word on which one this is.
 function applyRemote(remote) {
   const connected = Boolean(remote?.connected);
+  const attached = connected && remote.kind === "attach";
   ui.remoteState.dataset.remote = connected ? "on" : "off";
-  ui.remoteState.textContent = connected
-    ? `remote ${remote.address || "connected"}`
-    : "no target";
+  ui.remoteState.textContent = !connected
+    ? "no target"
+    : attached
+      ? (remote.pid ? `attached pid ${remote.pid}` : "attached")
+      : `remote ${remote.address || "connected"}`;
   ui.remoteConnect.disabled = connected;
+  ui.attachConnect.disabled = connected;
+  ui.attachPid.disabled = connected;
   ui.remoteDisconnect.disabled = !connected;
+  ui.remoteDisconnect.textContent = attached ? "detach" : "disconnect";
+  ui.remoteDisconnect.title = attached
+    ? "detach — let the process go and leave it running"
+    : "disconnect — leave the target running";
   if (connected && remote.address) ui.remoteAddr.value = remote.address;
 }
 
@@ -1990,7 +2020,12 @@ function remoteBusy(text) {
 // remoteChanged event settle the indicator. Nothing here predicts the outcome:
 // on failure the pill goes back to whatever the server still believes, which
 // for a refused connection is "no target".
-function runRemoteCommand(line, pending) {
+//
+// settled is given the state the server ended up in, for a caller with
+// something to say about a command that did not take. It runs after the pill
+// has been repainted, and the event it reads has already arrived: the server
+// broadcasts before it answers, and both travel the same socket in order.
+function runRemoteCommand(line, pending, settled) {
   const before = store.get("session.remote");
   remoteBusy(pending);
   send("console.exec", { line })
@@ -1998,7 +2033,9 @@ function runRemoteCommand(line, pending) {
     .finally(() => {
       // If the command changed anything, remoteChanged has already repainted
       // this and applyRemote below is a no-op on identical state.
-      applyRemote(store.get("session.remote") ?? before);
+      const now = store.get("session.remote") ?? before;
+      applyRemote(now);
+      settled?.(now);
     });
 }
 
@@ -2043,9 +2080,54 @@ ui.remoteConnect.addEventListener("click", () => {
   connectRemote(addr);
 });
 
+// Attaching is `attach <pid>`, the same command and the same route as the
+// address box beside it. The box takes a bare pid rather than anything gdb
+// would parse: `attach` also accepts a core file and, on some systems, a
+// process name, and a field that quietly forwarded either would make the
+// button's one sentence of explanation false.
+function attachToPid(pid) {
+  runRemoteCommand(`attach ${pid}`, "attaching…", (state) => {
+    if (state?.kind === "attach") return;
+    // gdb's own words are in the console below, which is the point of going
+    // through it; this says where to look and names the usual cause, because
+    // "Operation not permitted" on its own sends people hunting for the wrong
+    // thing.
+    setStatus(`gdb did not attach to pid ${pid} — see the console. On Linux ` +
+      "this is usually kernel.yama.ptrace_scope, which permits attaching only " +
+      "to a descendant.", true);
+  });
+}
+
+ui.attachConnect.addEventListener("click", () => {
+  const pid = ui.attachPid.value.trim();
+  if (!/^[0-9]+$/.test(pid) || Number(pid) <= 0) {
+    setStatus("Enter the process id to attach to, such as 1234.", true);
+    ui.attachPid.focus();
+    return;
+  }
+  attachToPid(pid);
+});
+
+ui.attachPid.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ui.attachConnect.disabled) {
+    ev.preventDefault();
+    ui.attachConnect.click();
+  }
+});
+
 ui.remoteDisconnect.addEventListener("click", () => {
-  // disconnect, not detach: detach resumes the target, and someone who
-  // connected to look at a stopped machine rarely wants it to run on.
+  // For a stub, disconnect rather than detach: detach resumes the target, and
+  // someone who connected to look at a stopped machine rarely wants it to run
+  // on.
+  //
+  // For an attached process it is the other way round, and not merely as a
+  // preference: `disconnect` against a native target answers "A program is
+  // being debugged already. Kill it?", answers itself yes, and ends the
+  // process. Measured on gdb 17.1; see finding 43.
+  if (store.get("session.remote")?.kind === "attach") {
+    runRemoteCommand("detach", "detaching…");
+    return;
+  }
   runRemoteCommand("disconnect", "disconnecting…");
 });
 

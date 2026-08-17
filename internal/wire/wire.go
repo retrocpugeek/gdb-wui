@@ -283,16 +283,32 @@ type Hello struct {
 }
 
 // RemoteTarget describes a connection to a debug target this server did not
-// start — a gdbserver, an emulator's stub.
+// start — a gdbserver, an emulator's stub, or a local process it attached to.
 //
 // It is reported by the server rather than inferred by the client from the
 // commands it sent, because the connection can also be made or dropped by a
 // command typed at the console, and two browser tabs must agree about it.
 type RemoteTarget struct {
 	Connected bool `json:"connected"`
+	// Kind is TargetRemote or TargetAttach. Empty from a server written before
+	// attaching was recognised, and read as TargetRemote.
+	Kind string `json:"kind,omitempty"`
 	// Address is what was passed to `target remote`, when it was recorded.
+	// Empty for TargetAttach, which has no address.
 	Address string `json:"address,omitempty"`
+	// PID is the process attached to, for TargetAttach. Zero when the command
+	// named something this server could not read as a number.
+	PID int `json:"pid,omitempty"`
 }
+
+// Target kinds. What is on the other end decides what leaving is called:
+// a remote connection is dropped with `disconnect`, and an attached process is
+// let go with `detach`, which is the difference between leaving a stub
+// connected to a stopped machine and letting somebody's process run on.
+const (
+	TargetRemote = "remote"
+	TargetAttach = "attach"
+)
 
 // Protocol is the current protocol version.
 const Protocol = 1

@@ -423,3 +423,25 @@ implementing:
     block. `char[16]` at the last address of a block answers "Insufficent memory
     at address 00102000 (length: 16 bytes)" — spelling Ghidra's, and an ordinary
     outcome rather than a failure worth reporting as one.
+
+43. **`disconnect` kills a process gdb attached to; `detach` is the only way
+    out.** Measured against gdb 17.1, attaching to a sleeping process with
+    `ptrace_scope=1` and `PR_SET_PTRACER_ANY`.
+
+    Three things, of which the third is the dangerous one. Attaching reports
+    itself in MI exactly like a run does — `=thread-group-started,pid="…"`
+    followed by a `*stopped` with a frame — so the stack, the threads and the
+    pid the terminal needs all arrive by the ordinary path. gdb also reads the
+    program out of `/proc/<pid>/exe` by itself, symbols and architecture
+    together, so none of the load-order care a remote stub needs applies here.
+
+    Quitting is safe: `-gdb-exit` while attached detaches, and the process lives
+    on. An explicit `kill` is not, which is what makes it worth saying — the
+    teardown in `mi.doClose` sends one, so a session that does not know it is
+    attached ends a program it did not start.
+
+    `disconnect` is not the gentle option it is for a stub. Against a native
+    target it answers `A program is being debugged already.  Kill it? (y or n)
+    [answered Y; input not from terminal]`, and the process is gone. `detach`
+    and `-target-detach` both leave it running, and they are the only commands
+    that do.

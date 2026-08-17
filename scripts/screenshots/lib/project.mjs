@@ -25,6 +25,11 @@ const FIXTURES = {
   interactive: { cflags: ["-g", "-O0"] },
   threads: { cflags: ["-g", "-O0", "-pthread"] },
 
+  // A program to attach to rather than run. It admits any tracer, so the
+  // attach picture can be taken on a machine with the default ptrace_scope
+  // instead of asking a reader to loosen theirs before regenerating.
+  tracee: { cflags: ["-g", "-O0"] },
+
   // Optimised: locals vanish and line numbers jump, which is a thing a reader
   // will hit and should see documented rather than discover.
   opt: { cflags: ["-g", "-O2"] },

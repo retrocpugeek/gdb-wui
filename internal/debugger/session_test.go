@@ -1053,6 +1053,80 @@ func TestRefusedRemoteIsNotConnected(t *testing.T) {
 	}
 }
 
+// `attach` hands this server a process it did not start, and teardown must let
+// it go rather than kill it. Closing a browser tab is not a reason for somebody
+// else's program to die, and the process was running before the session began.
+func TestAttachIsATargetWeDidNotStart(t *testing.T) {
+	h := start(t, ``, gdbfake.WithDefaultDone())
+
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "attach 4242"})
+	h.rec.wait(t, wire.EventRemoteChanged)
+
+	snap := h.sess.Snapshot()
+	if snap.Remote == nil || !snap.Remote.Connected {
+		t.Fatalf("Remote = %+v after attaching, want connected", snap.Remote)
+	}
+	if snap.Remote.Kind != wire.TargetAttach {
+		t.Errorf("Kind = %q, want %q", snap.Remote.Kind, wire.TargetAttach)
+	}
+	if snap.Remote.PID != 4242 {
+		t.Errorf("PID = %d, want 4242", snap.Remote.PID)
+	}
+	if snap.Remote.Address != "" {
+		t.Errorf("Address = %q, want empty: an attached process has no address",
+			snap.Remote.Address)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = h.sess.Close(ctx)
+
+	var detached bool
+	for _, cmd := range h.fake.Received() {
+		if cmd == "-target-detach" {
+			detached = true
+		}
+		if strings.Contains(cmd, `console "kill"`) {
+			t.Error("killed a process gdb-wui attached to rather than detaching")
+		}
+	}
+	if !detached {
+		t.Error("shut down without detaching from the attached process")
+	}
+}
+
+// An attach gdb refused leaves no inferior at all, and ptrace_scope permitting
+// only descendants makes that the common case rather than an unlikely one.
+// Reporting it as attached would stop teardown killing a program gdb-wui did
+// start, which is the opposite of what this is for.
+func TestRefusedAttachIsNotConnected(t *testing.T) {
+	h := start(t, `
+> -interpreter-exec console "attach 4242"
+< ^error,msg="ptrace: Operation not permitted."
+> -break-list
+< ^done,BreakpointTable={nr_rows="0",nr_cols="6",body=[]}
+`)
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "attach 4242"})
+
+	if snap := h.sess.Snapshot(); snap.Remote != nil {
+		t.Errorf("Remote = %+v after a refused attach, want nil", snap.Remote)
+	}
+}
+
+// Detaching gives the process back, and the indicator has to say so — a pill
+// still reading "attached pid 4242" would offer a detach that errors.
+func TestDetachClearsTheTarget(t *testing.T) {
+	h := start(t, ``, gdbfake.WithDefaultDone())
+
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "attach 4242"})
+	h.rec.wait(t, wire.EventRemoteChanged)
+	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "detach"})
+
+	if snap := h.sess.Snapshot(); snap.Remote != nil {
+		t.Errorf("Remote = %+v after detaching, want nil", snap.Remote)
+	}
+}
+
 // Connecting twice must not emit a second remoteChanged: the indicator is
 // already right, and a UI that repaints on every console command would flicker.
 func TestRemoteChangedOnlyOnChange(t *testing.T) {
