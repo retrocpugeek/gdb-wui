@@ -88,6 +88,7 @@ you can tell an unresolved breakpoint from one that will be hit.
 ## Worked example
 
 ```sh
+mkdir -p /tmp/tour
 gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
 ./gdb-wui -project /tmp/tour -exe globals
 ```

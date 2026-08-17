@@ -55,26 +55,27 @@ pane's **+ load** button says so, and why loading symbols against the wrong
 architecture leaves you with correct-looking names over disassembly that is not
 meaningful.
 
-## 'LogType' has unknown type; cast it to its declared type
+## 'counter' has unknown type; cast it to its declared type
 
 gdb knows where the symbol is but not what type it is. This is normal for a
 release build: no DWARF, but an intact ELF symbol table.
 
-To read the value, cast it:
+To read the value, cast it. Against `globals-nodebug`, which the
+[Symbols page](features/symbols.md#worked-example) builds:
 
 ```
-(gdb) p LogType
-'LogType' has unknown type; cast it to its declared type
-(gdb) p (int)LogType
+(gdb) p counter
+'counter' has unknown type; cast it to its declared type
+(gdb) p (int)counter
 $1 = 7
-(gdb) p (char *)&LogBuffer
-$2 = 0x404060 <LogBuffer> "ready"
+(gdb) p (char *)&banner
+$2 = 0x404060 <banner> "gdb-wui"
 ```
 
-Take the *address* of anything that is not a scalar. `p (char *)LogBuffer` casts
+Take the *address* of anything that is not a scalar. `p (char *)banner` casts
 the array's first eight bytes to a pointer and dereferences those, which gives
-`Cannot access memory at address 0x7964616572` — the characters of `ready` read
-as an address.
+`Cannot access memory at address 0x6975772d626467` — the characters of
+`gdb-wui` read as an address.
 
 Hovering such a symbol shows its address rather than a value, for the same
 reason. The [memory viewer](features/memory.md) needs no type at all and will
@@ -99,8 +100,14 @@ but nothing is named.
 This is what a fully stripped binary looks like. To confirm:
 
 ```sh
-readelf -S ./yourbinary | grep symtab   # no output means stripped
+readelf -S ./yourprogram | grep symtab   # no output means stripped
 ```
+
+`nodebug` in `testdata/fixtures` is built this way on purpose, so it is
+something to compare against: the [disassembly
+page](features/disassembly.md#worked-example) builds it, and the same command
+against `globals-nodebug` from the [Symbols
+page](features/symbols.md#worked-example) prints a `.symtab` line.
 
 If you have an unstripped copy or a separate symbol file, load it with the
 Symbols pane's **+ load**, using *Add symbols…* with an offset if the image does

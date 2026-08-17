@@ -19,8 +19,14 @@ Start gdb-wui as usual first — the bridge joins a session, it does not create
 one:
 
 ```sh
-./gdb-wui -project . -exe firmware -ghidra ~/ghidra
+mkdir -p /tmp/tour
+gcc -O0 -no-pie -o /tmp/tour/nodebug testdata/fixtures/nodebug.c && strip /tmp/tour/nodebug
+./gdb-wui -project /tmp/tour -exe nodebug -ghidra ~/ghidra_12.1.2_PUBLIC
 ```
+
+That is the binary in the screenshot below: `nodebug.c` with no debug info and
+no symbol table, which is the case an agent is actually useful for. Point it at
+your own program the same way.
 
 ![An agent's comment and name, arriving in an open browser](../images/agent-annotations.png)
 

@@ -83,6 +83,7 @@ misleading exactly when you are trying to find out whether a pointer is valid.
 ## Worked example
 
 ```sh
+mkdir -p /tmp/tour
 gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
 ./gdb-wui -project /tmp/tour -exe globals
 ```

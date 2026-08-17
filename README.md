@@ -15,6 +15,11 @@ gdb-wui prints a URL and opens a browser at it. To start debugging, pick an
 executable from the file tree, click a line number to set a breakpoint, and
 step.
 
+Nothing to hand? `testdata/fixtures` holds the small programs the documentation
+is written against — a stripped one, a threaded one, one to attach to — and the
+[guided first session](https://retrocpugeek.github.io/gdb-wui/tour.html) builds
+one of them and walks through it.
+
 Arguments you use every time can go in a `gdb-wui.json` in the working
 directory or in `~/.config/gdb-wui/`; see
 [the config file page](https://retrocpugeek.github.io/gdb-wui/reference/config.html).

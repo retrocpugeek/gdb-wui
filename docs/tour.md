@@ -133,16 +133,24 @@ at. See [going somewhere](features/source.md#going-somewhere).
 
 ## Change a value
 
-Double-click a value in the Locals pane — `i`, say — type a new one, and press
-Enter. It is written through gdb, so continuing from here uses what you typed.
-The same works on a register and on a byte in the hex view. See
-[changing values](features/editing.md).
+Double-click a value in the Locals pane, type a new one, and press Enter. It is
+written through gdb, so the program goes on with what you typed. The same works
+on a register and on a byte in the hex view.
+
+To watch that change the program's output, the
+[editing page](features/editing.md#worked-example) breaks on line 65 instead,
+sets `s.visited` to 7, and the `printf` on that line prints `visited=7` rather
+than the 2 it counted.
 
 ## Next
 
 - Try the same program with the debug info removed, to see what the
   [Symbols pane](features/symbols.md) and the
   [Decompiled tab](features/decompilation.md) are for.
+- Attach to a program that is already running: `testdata/fixtures/tracee.c` is
+  there to be attached to, and
+  [remote targets](features/remote.md#attaching-to-a-local-process) walks
+  through it.
 - Read [remote targets](features/remote.md) if the program you want to debug is
   not on this machine, or is for another architecture.
 - Look up [the keyboard shortcuts](reference/keys.md).

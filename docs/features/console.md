@@ -59,12 +59,20 @@ asked and actually answered.
 
 ## Worked example
 
-Break anywhere in the tour's program, then at the console:
+```sh
+mkdir -p /tmp/tour
+gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+./gdb-wui -project /tmp/tour -exe globals
+```
+
+Set a breakpoint on `walk` and press Run, then at the console:
 
 ```
 (gdb) info frame
 (gdb) p ratios
+$1 = {1.5, 2.5, 3.5, 4.5}
 (gdb) watch counter
+Hardware watchpoint 2: counter
 ```
 
 The watchpoint has no UI in gdb-wui, and it still appears in the Breakpoints
