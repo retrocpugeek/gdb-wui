@@ -149,14 +149,16 @@ EOF
 ```
 
 Then, in a project that always debugs the same binary, add a local file that
-takes precedence:
+takes precedence. Using the directory the documentation's examples are built in:
 
 ```sh
-cd ~/src/firmware
+mkdir -p /tmp/tour
+gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+cd /tmp/tour
 cat > gdb-wui.json <<'EOF'
 {
   "gdb": "gdb-multiarch",
-  "exe": "build/firmware.elf",
+  "exe": "globals",
   "open": false
 }
 EOF

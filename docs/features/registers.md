@@ -28,9 +28,17 @@ address.
 
 ## Worked example
 
-Break anywhere, switch to the Registers tab, then step one instruction at a time
-with `Alt+F11`. `rip` advances, and marks appear against whatever the
-instruction touched.
+```sh
+mkdir -p /tmp/tour
+gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+./gdb-wui -project /tmp/tour -exe globals
+```
+
+Break on `walk` and press Run. `rip` reads `0x401162` — twelve bytes into
+`walk`, past the prologue the breakpoint skipped. Switch to the Registers tab
+and step one instruction with `Alt+F11`: the instruction is
+`lea 0x2f67(%rip),%eax`, so `rip` advances to `0x401169` and `rax` is marked
+beside it. Nothing else in the list moves, which is the point of the marks.
 
 On a foreign target debugged with a suitable gdb, the same pane shows that
 architecture's registers, because the list comes from gdb rather than from

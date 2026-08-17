@@ -133,6 +133,30 @@ is on a machine you do not have, and one from a stripped binary with no file at
 all — and clicking between them changes which, if any, there is anything to
 offer.
 
+## Worked example
+
+```sh
+mkdir -p /tmp/tour
+gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+./gdb-wui -project /tmp/tour
+```
+
+No `-exe` this time, so the first thing to do is what the tree is for: click
+`globals`, which has the `ELF` badge, and it becomes the program.
+
+Open `globals.c`, click the gutter at line 49 — `out->visited++;` — and press
+Run. The green bar lands there, and the call stack has two frames.
+
+Click `#1 main()`. The blue bar appears on line 64, the `walk(&s);` that got you
+here, and the green bar stays on 49: two frames, two markers, and the Variables
+pane now showing `main`'s locals rather than `walk`'s.
+
+Now type `walk` into the go-to box with the source focused, and it opens at line
+42 — the function's own line, not the address the breakpoint sits at. Press
+`F7`, click the disassembly that opens beside it, and type `walk` again: the
+same word, resolved to the same place, shown as instructions in one pane and as
+source in the other.
+
 ## What the source view does not do
 
 - **It does not edit.** There is no save.

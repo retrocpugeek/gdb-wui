@@ -220,9 +220,15 @@ say so. gdb-wui only edits
 the project it imported itself. `-ghidra-program` is required, because a Ghidra
 project usually holds several programs.
 
+To see it work without a project of your own, the [decompilation
+reference](https://github.com/retrocpugeek/gdb-wui/blob/master/docs/decompilation.md)
+builds one with `analyzeHeadless` from an example program and points gdb-wui at
+that.
+
 ## Worked example
 
 ```sh
+mkdir -p /tmp/tour
 gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug testdata/fixtures/globals.c
 objcopy --strip-debug /tmp/tour/globals-nodebug
 ./gdb-wui -project /tmp/tour -exe globals-nodebug -ghidra ~/ghidra

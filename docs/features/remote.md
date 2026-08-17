@@ -83,12 +83,40 @@ to an unrelated pid needs `sudo sysctl kernel.yama.ptrace_scope=0`, or a process
 that has called `prctl(PR_SET_PTRACER, …)` for itself. Without it gdb answers
 `ptrace: Operation not permitted.` in the console and nothing is attached.
 
+### Try it
+
+`tracee.c` is here to be attached to: it asks for any tracer with
+`prctl(PR_SET_PTRACER, …)`, so this works without touching the sysctl above.
+
+```sh
+mkdir -p /tmp/tour
+gcc -g -O0 -no-pie -o /tmp/tour/tracee testdata/fixtures/tracee.c
+/tmp/tour/tracee & echo "pid $!"
+./gdb-wui -project /tmp/tour
+```
+
+It prints `ready` once it can be attached to, and exits by itself after a
+minute — start it again if you take longer.
+
+Put the pid the shell printed into the box, press **attach**, and the pill turns
+green. The program is stopped in whatever it was doing, which is `sleep`, so the
+[call stack](threads.md) shows libc's `nanosleep` frames under `main`. Press
+**continue**, then **pause**, and it stops somewhere else in the same loop.
+
+`counter` is a global it increments every second, so the
+[Variables pane](variables.md) has something to watch: add `counter`, continue,
+pause again, and it has moved. Click `tracee` in the file tree first if you want
+[decompilation](decompilation.md) as well — attaching loads no file of its own.
+
+Press **detach** when you are done, and the process carries on without you.
+
 ## Worked example
 
 A local gdbserver behaves the same way as anything remote, so it is a
 convenient thing to try first:
 
 ```sh
+mkdir -p /tmp/tour
 gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
 gdbserver 127.0.0.1:41234 /tmp/tour/globals &
 ./gdb-wui -project /tmp/tour
@@ -102,12 +130,27 @@ To see the guard, try it in the wrong order: connect before loading anything and
 gdb-wui shows the warning above instead of connecting with the wrong
 architecture.
 
-For qemu in user mode the shape is the same:
+For qemu in user mode the shape is the same, and it is worth doing once on a
+program you can rebuild, because it is where the architecture rule above stops
+being theoretical:
 
 ```sh
-qemu-aarch64 -g 1234 -L /path/to/sysroot ./yourbinary &
-./gdb-wui -project . -gdb gdb-multiarch -exe yourbinary
+sudo apt install gcc-arm-linux-gnueabihf qemu-user gdb-multiarch
+mkdir -p /tmp/tour
+arm-linux-gnueabihf-gcc -g -O0 -static -o /tmp/tour/hello-arm testdata/fixtures/hello.c
+qemu-arm -g 1234 /tmp/tour/hello-arm &
+./gdb-wui -project /tmp/tour -gdb gdb-multiarch -exe hello-arm
 ```
+
+Statically linked so that qemu needs no sysroot; `-L /path/to/sysroot` is the
+alternative if you would rather link against the target's libraries. qemu waits
+for a debugger before running anything, so nothing is missed by connecting late.
+
+Connect to `localhost:1234` and the program stops at `_start`, with `pc` at
+`0x10254`. Type `show architecture` at the console and gdb answers `The target
+architecture is set to "auto" (currently "armv7")` — read out of the ELF you
+loaded, not out of qemu. Load nothing first and gdb reads the stub's registers
+as x86-64 instead, which is the failure the warning above exists to prevent.
 
 ## What remote targets do not do
 

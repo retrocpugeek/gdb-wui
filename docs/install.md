@@ -54,8 +54,12 @@ release from [ghidra-sre.org](https://ghidra-sre.org/), unpack it, and either
 set `GHIDRA_INSTALL_DIR` or pass the `-ghidra` argument:
 
 ```sh
-./gdb-wui -project . -exe firmware -ghidra ~/ghidra_12.1.2_PUBLIC
+./gdb-wui -project /tmp/tour -exe globals-nodebug -ghidra ~/ghidra_12.1.2_PUBLIC
 ```
+
+`globals-nodebug` is one of the example programs in `testdata/fixtures`; the
+[decompilation page](features/decompilation.md#worked-example) has the two lines
+that build it, and something to do with it once it is open.
 
 gdb-wui also looks in `~/ghidra`, `/opt/ghidra`, `/usr/share/ghidra` and the
 version-stamped directories the official zip unpacks to, so if Ghidra is in one
@@ -76,6 +80,11 @@ of those you do not need the argument.
 
 `-project` is the directory gdb-wui serves; no file outside it is readable over
 HTTP. `-exe` is optional, and is relative to `-project`.
+
+If you would rather try it on something before pointing it at your own code, the
+[tour](tour.md) builds one of the example programs in `testdata/fixtures` and
+walks through a session with it. Most feature pages end with a worked example
+built from that same directory.
 
 gdb-wui prints a login link on stdout and opens a browser at it. The link is
 single-use and expires after 60 seconds, because it appears in `argv` where `ps`

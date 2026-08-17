@@ -41,6 +41,25 @@ gdb-wui -ghidra /opt/ghidra_12.1.2_PUBLIC \
 several programs, and in Ghidra's Debugger workflow a number of traces as well.
 `analyzeHeadless` with no `-process` pattern would process all of them.
 
+To try that without a project of your own, make one from an example program.
+`analyzeHeadless` needs the project directory to exist already; it does not
+create it, and says only that it could not create the project if it is missing:
+
+```sh
+mkdir -p /tmp/tour/ghidra-proj
+gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug testdata/fixtures/globals.c
+objcopy --strip-debug /tmp/tour/globals-nodebug
+$GHIDRA_INSTALL_DIR/support/analyzeHeadless /tmp/tour/ghidra-proj globals \
+    -import /tmp/tour/globals-nodebug
+
+gdb-wui -project /tmp/tour -exe globals-nodebug \
+        -ghidra-project /tmp/tour/ghidra-proj/globals.gpr \
+        -ghidra-program globals-nodebug
+```
+
+`globals` there is the project's name and `globals-nodebug` the program's: the
+name a file has inside the project is the name of the file that was imported.
+
 Use `-decomp-dir` to move the cache, which a read-only or network-mounted
 project needs.
 
@@ -62,7 +81,8 @@ messages.
 ## Producing a sidecar by hand
 
 ```sh
-analyzeHeadless /tmp/proj decomp -import ./firmware.elf \
+mkdir -p /tmp/proj
+analyzeHeadless /tmp/proj decomp -import /tmp/tour/globals-nodebug \
     -scriptPath internal/ghidra/scripts -postScript ExportDecomp.java out.json \
     -deleteProject
 ```
@@ -85,10 +105,14 @@ applies to either.
 `scripts/ghidra/show-decomp.py` prints a sidecar in a form you can look at:
 
 ```sh
-scripts/ghidra/show-decomp.py out.json      # functions, most ambiguous first
-show-decomp.py out.json FUN_001028c0        # one function, annotated
-show-decomp.py out.json main --bias 0x555555554000
+scripts/ghidra/show-decomp.py out.json           # functions, most ambiguous first
+scripts/ghidra/show-decomp.py out.json walk      # one function, annotated
+scripts/ghidra/show-decomp.py out.json main --bias 0x555555554000
 ```
+
+From the sidecar built above, the first prints ten functions with `main` and
+`walk` at the top and a `FUN_00401020` among them — the head of the PLT, which
+no symbol names even in a binary whose symbol table is intact.
 
 `--bias` shifts every address into the running program's coordinates, so that
 the output lines up with what gdb shows. Lines marked `!` share an address with
