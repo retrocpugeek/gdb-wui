@@ -113,6 +113,36 @@ If you have an unstripped copy or a separate symbol file, load it with the
 Symbols pane's **+ load**, using *Add symbols…* with an offset if the image does
 not run where it was linked.
 
+## No source file named /tmp/tour/hello.c.
+
+The path you asked for is not the path the binary records. A compiler writes
+down the file exactly as it was given on the command line, together with the
+directory it was run in, and gdb knows the file by those two and nothing else:
+
+```sh
+cd ~/src/gdb-wui
+gcc -g -o /tmp/tour/hello testdata/fixtures/hello.c
+readelf --debug-dump=info /tmp/tour/hello | grep -m2 -E 'DW_AT_(name|comp_dir)'
+#    DW_AT_name     : testdata/fixtures/hello.c
+#    DW_AT_comp_dir : /home/you/src/gdb-wui
+```
+
+So the program in `/tmp/tour` has no `hello.c` beside it, the file tree has
+nothing to click, and a breakpoint asked for as `/tmp/tour/hello.c:14` is
+refused — gdb has never heard that name. Meanwhile gdb-wui serves only what is
+under `-project`, so even the copy gdb *can* find, back in the source tree, is
+not one it may show you.
+
+Two ways out:
+
+- **Build from a copy inside the project**, which is what every example in this
+  documentation does: `cp testdata/fixtures/hello.c /tmp/tour/` and then compile
+  `/tmp/tour/hello.c`. The recorded path is then the one you are looking at.
+- **Tell gdb where the source is**, if rebuilding is not an option. Put the file
+  in the project and gdb-wui offers it in a bar when it stops in a frame whose
+  file it cannot find; choosing it substitutes the whole directory. See
+  [when the source is not where gdb expects](features/source.md#when-the-source-is-not-where-gdb-expects).
+
 ## globals.c is newer than the program — line numbers may be wrong
 
 The source file on disk has changed since the binary was built, so the line

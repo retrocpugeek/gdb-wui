@@ -51,8 +51,8 @@ table. Otherwise, use `Alt+F11` to step one instruction at a time.
 ## Worked example
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 ./gdb-wui -project /tmp/tour -exe globals
 ```
 

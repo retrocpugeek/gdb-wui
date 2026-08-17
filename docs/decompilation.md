@@ -46,8 +46,8 @@ To try that without a project of your own, make one from an example program.
 create it, and says only that it could not create the project if it is missing:
 
 ```sh
-mkdir -p /tmp/tour/ghidra-proj
-gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug testdata/fixtures/globals.c
+mkdir -p /tmp/tour/ghidra-proj && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug /tmp/tour/globals.c
 objcopy --strip-debug /tmp/tour/globals-nodebug
 $GHIDRA_INSTALL_DIR/support/analyzeHeadless /tmp/tour/ghidra-proj globals \
     -import /tmp/tour/globals-nodebug
