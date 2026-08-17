@@ -21,6 +21,14 @@ mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
 gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 ```
 
+The source is copied into `/tmp/tour` and compiled there, rather than compiled
+where it sits, because a binary records the path its compiler was given. Build
+it from `testdata/fixtures/globals.c` and that is the only name gdb has for the
+file, which is not a path under `-project` — so the file tree has nothing to
+click and a breakpoint on the file you can see is refused. Every example in this
+documentation copies first for that reason; see
+[No source file named …](troubleshooting.md#no-source-file-named-tmptourhelloc).
+
 Build it with `-no-pie` so that the addresses shown below are the ones you will
 see. A position-independent executable is relocated at load time, so its
 addresses differ on every run. gdb-wui handles that, but it makes a tutorial

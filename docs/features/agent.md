@@ -19,8 +19,8 @@ Start gdb-wui as usual first — the bridge joins a session, it does not create
 one:
 
 ```sh
-mkdir -p /tmp/tour
-gcc -O0 -no-pie -o /tmp/tour/nodebug testdata/fixtures/nodebug.c && strip /tmp/tour/nodebug
+mkdir -p /tmp/tour && cp testdata/fixtures/nodebug.c /tmp/tour/
+gcc -O0 -no-pie -o /tmp/tour/nodebug /tmp/tour/nodebug.c && strip /tmp/tour/nodebug
 ./gdb-wui -project /tmp/tour -exe nodebug -ghidra ~/ghidra_12.1.2_PUBLIC
 ```
 

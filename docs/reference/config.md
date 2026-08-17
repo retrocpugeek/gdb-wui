@@ -152,8 +152,8 @@ Then, in a project that always debugs the same binary, add a local file that
 takes precedence. Using the directory the documentation's examples are built in:
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 cd /tmp/tour
 cat > gdb-wui.json <<'EOF'
 {
