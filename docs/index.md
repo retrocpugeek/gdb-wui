@@ -112,5 +112,5 @@ part. These are:
 
 The **?** button in the toolbar shows the version of gdb-wui you are running,
 the gdb it is driving, and where the licence and this documentation live. The
-same on this site, with what is vendored and under which licence: [about
-gdb-wui](about.md).
+same on this site, with what is vendored and under which licence:
+[about gdb-wui](about.md).

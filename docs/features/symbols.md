@@ -44,8 +44,9 @@ fills up anyway, from Ghidra's names:
 - Whatever you have **renamed** either of those to, since that is the name you
   will go looking for.
 
-These rows are drawn differently — the same italic the [call
-stack](../tour.md) uses for a recovered frame — because they are not symbols.
+These rows are drawn differently — the same italic that the
+[call stack](../tour.md) uses for a recovered frame — because they are not
+symbols.
 `FUN_0010e2dc` is a guess about where a function starts, and a name you typed
 over one is a guess you agreed with; neither is recorded anywhere in the
 program, and a list that showed them like the binary's own would be claiming

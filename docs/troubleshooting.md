@@ -104,10 +104,10 @@ readelf -S ./yourprogram | grep symtab   # no output means stripped
 ```
 
 `nodebug` in `testdata/fixtures` is built this way on purpose, so it is
-something to compare against: the [disassembly
-page](features/disassembly.md#worked-example) builds it, and the same command
-against `globals-nodebug` from the [Symbols
-page](features/symbols.md#worked-example) prints a `.symtab` line.
+something to compare against: it is built by the
+[disassembly page](features/disassembly.md#worked-example), and the same
+command against `globals-nodebug` from the
+[Symbols page](features/symbols.md#worked-example) prints a `.symtab` line.
 
 If you have an unstripped copy or a separate symbol file, load it with the
 Symbols pane's **+ load**, using *Add symbols…* with an offset if the image does

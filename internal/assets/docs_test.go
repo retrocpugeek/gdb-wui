@@ -57,6 +57,42 @@ func TestFlagsDocumented(t *testing.T) {
 	}
 }
 
+// TestRelativeLinksAreNotWrapped catches a link the site silently drops.
+//
+// jekyll-relative-links rewrites `[Install](install.md)` with a regex that
+// does not match across a line break, so a link whose text was wrapped —
+//
+//	the same on this site: [about
+//	gdb-wui](about.md)
+//
+// — is left exactly as written, and `href="about.md"` 404s. Nothing else
+// notices: the file is there, so the source check passes, and the *local*
+// build passes too because a newer plugin than the one GitHub Pages runs
+// handles it. Measured: pages.github.com/versions.json pins
+// jekyll-relative-links 0.6.1, and the published site carried a raw
+// href="about.md" while the same source built here rendered /about.html.
+//
+// So the rule is a lint on the source: keep `[text](target.md)` on one line.
+func TestRelativeLinksAreNotWrapped(t *testing.T) {
+	root := repoRoot(t)
+
+	// A relative target only — an absolute URL is not the plugin's business,
+	// and wrapping the text of one is harmless.
+	wrapped := regexp.MustCompile(`\[[^\]]*\n[^\]]*\]\((?:[^):]|:[0-9])+\)`)
+	for _, page := range markdownPages(t, root) {
+		body, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range wrapped.FindAll(body, -1) {
+			rel, _ := filepath.Rel(root, page)
+			t.Errorf("%s: link text is wrapped across lines, so the site will "+
+				"not rewrite it and it will 404: %s",
+				rel, strings.Join(strings.Fields(string(m)), " "))
+		}
+	}
+}
+
 // TestRelativeLinksPluginIsConfigured pins the thing the pages' links rely on.
 //
 // Pages link to each other as `[Install](install.md)`, which is what keeps one
