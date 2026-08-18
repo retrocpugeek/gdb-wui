@@ -85,11 +85,23 @@ and marked pending. It resolves when a shared library loads, or when a program
 is loaded. The Breakpoints pane shows pending breakpoints differently so that
 you can tell an unresolved breakpoint from one that will be hit.
 
+## Temporary breakpoints
+
+[Run to a line](stepping.md#running-to-a-line) puts one in: a breakpoint gdb
+deletes the moment it is hit. It appears in the pane while it lasts, because
+one you cannot see is one you cannot cancel — and if the program never reaches
+it, it stays there to be deleted like any other.
+
+Unlike an ordinary breakpoint, a temporary one is never made pending. A
+location gdb cannot resolve is reported as an error rather than accepted,
+because a run-to that resolves to nothing would run the program to completion
+instead of saying it could not find the place.
+
 ## Worked example
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 ./gdb-wui -project /tmp/tour -exe globals
 ```
 

@@ -114,6 +114,8 @@ The menu names the address each entry would show:
 - **Show what it points to** — the address the variable holds.
 - **Watch it** — add the expression to the Variables pane, where it is re-read
   at every stop. See [watching from the decompiled view](#watching-something-from-the-decompiled-view).
+- **Run to this line** — the line the pointer is on, rather than the value on
+  it. See [running to a line](stepping.md#running-to-a-line).
 
 A pointer has both addresses, and they are different. A plain `int` has only the
 first. A variable held in a register has only the second, and the first entry is
@@ -126,8 +128,8 @@ are not offered as pointers, because that page is never mapped.
 ## Worked example
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 ./gdb-wui -project /tmp/tour -exe globals
 ```
 

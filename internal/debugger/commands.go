@@ -204,6 +204,88 @@ func (s *Session) execKill(r *request) (any, *wire.Error) {
 	return wire.ExecAck{RunState: s.st.runState, StopSeq: s.st.stopSeq}, nil
 }
 
+// execRunTo runs the program until it reaches one place.
+//
+// A temporary breakpoint and a resume. gdb has `until` and `advance`, and
+// neither is this: both stop when the current frame returns, so running to a
+// line in a function that has not been called yet — the ordinary case when
+// reading unfamiliar code — would stop somewhere else and call it done. A
+// breakpoint is reached wherever it is, in whatever frame, which is what the
+// menu item claims.
+//
+// The breakpoint is temporary and it is ours, so it appears in the Breakpoints
+// pane while it lasts and gdb deletes it on the hit. A run that never reaches
+// the place leaves it there, visible and deletable, rather than arming
+// something invisible for the next run.
+func (s *Session) execRunTo(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.ExecRunToRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+	spec, werr := s.runToSpec(r, req)
+	if werr != nil {
+		return nil, werr
+	}
+	// Only meaningful from a stop: the stop the client was looking at is the
+	// one whose frame it means to continue from.
+	if s.st.runState == wire.RunStateStopped {
+		if werr := s.checkStopSeq(req.StopSeq); werr != nil {
+			return nil, werr
+		}
+	}
+
+	bp, werr := s.insertBreakpoint(r, breakpointSpec{location: spec, temporary: true})
+	if werr != nil {
+		return nil, werr
+	}
+
+	// From a stop this is a continue; with nothing running it is a run, which
+	// is what makes this a way to start a session at a line rather than at
+	// main. Both mirror execRun and execResume, including the varobj and
+	// terminal handling a fresh process needs.
+	if s.st.runState == wire.RunStateStopped {
+		thread := s.thread(req.Thread)
+		cmd := fmt.Sprintf("-exec-continue --thread %d", thread)
+		if _, werr := s.send(r.ctx, cmd); werr != nil {
+			s.dropBreakpoint(r, bp.Number)
+			return nil, werr
+		}
+		s.setRunning(thread)
+	} else {
+		s.ensureTerminal(r.ctx)
+		s.deleteAllVarobjs(r.ctx)
+		if _, werr := s.send(r.ctx, "-exec-run"); werr != nil {
+			s.dropBreakpoint(r, bp.Number)
+			return nil, werr
+		}
+		s.setRunning(0)
+	}
+	return wire.ExecAck{RunState: s.st.runState, StopSeq: s.st.stopSeq}, nil
+}
+
+// runToSpec turns the request's place into a location gdb takes.
+func (s *Session) runToSpec(r *request, req wire.ExecRunToRequest) (string, *wire.Error) {
+	loc := strings.TrimSpace(req.Location)
+	if (req.Path == "") == (loc == "") {
+		return "", wire.NewError(wire.CodeBadRequest,
+			"give either a path and a line, or a location")
+	}
+	if loc != "" {
+		return s.locationSpec(r, loc), nil
+	}
+	if req.Line <= 0 {
+		return "", wire.NewError(wire.CodeBadRequest, "a positive line is required")
+	}
+	if s.files == nil {
+		return "", wire.NewError(wire.CodeInternal, "no project is configured")
+	}
+	abs, err := s.files.AbsPath(req.Path)
+	if err != nil {
+		return "", fsError(err)
+	}
+	return fmt.Sprintf("%s:%d", abs, req.Line), nil
+}
+
 func (s *Session) bpSetSource(r *request) (any, *wire.Error) {
 	req, werr := decode[wire.BreakpointRequest](r.req.Payload)
 	if werr != nil {
@@ -220,30 +302,17 @@ func (s *Session) bpSetSource(r *request) (any, *wire.Error) {
 		return nil, fsError(err)
 	}
 
-	// -f makes the breakpoint pending rather than an error when the location
-	// cannot be resolved yet. The address arrives later in a
-	// =breakpoint-modified, which is why the mirror is event-driven.
-	cmd := "-break-insert -f"
-	if req.Temporary {
-		cmd += " -t"
-	}
-	if req.Condition != "" {
-		cmd += " -c " + quote(req.Condition)
-	}
-	cmd += " " + quote(fmt.Sprintf("%s:%d", abs, req.Line))
-
-	rec, werr := s.send(r.ctx, cmd)
+	// Pending, because a line in a shared library that has not loaded yet is a
+	// breakpoint someone means to keep; see insertBreakpoint.
+	bp, werr := s.insertBreakpoint(r, breakpointSpec{
+		location:  fmt.Sprintf("%s:%d", abs, req.Line),
+		temporary: req.Temporary,
+		condition: req.Condition,
+		pending:   true,
+	})
 	if werr != nil {
 		return nil, werr
 	}
-	bkpt, ok := rec.Results.Tuple("bkpt")
-	if !ok {
-		return nil, wire.NewError(wire.CodeInternal, "gdb accepted the breakpoint but reported none")
-	}
-	bp := s.parseBreakpoint(bkpt)
-	s.st.ours[bp.Number] = true
-	s.st.breakpoints[bp.Number] = bp
-	s.broadcastBreakpoints()
 	return bp, nil
 }
 
@@ -543,46 +612,99 @@ func (s *Session) bpSetAddress(r *request) (any, *wire.Error) {
 		return nil, wire.NewError(wire.CodeBadRequest, "location is required")
 	}
 
-	// An address needs the `*` form; a name must not have it.
-	spec := loc
-	if _, err := parseAddress(loc); err == nil {
-		spec = "*" + loc
-	} else if plausibleDecompName(loc) && !s.gdbKnowsSymbol(r, loc) {
-		// A decompiler name — FUN_0010e2dc, or whatever it has been renamed to
-		// — reaches gdb as an unresolvable location, and -f turns that into a
-		// *pending* breakpoint rather than an error. Pending is right for a
-		// shared library that has not loaded yet and wrong here: nothing will
-		// ever define this name, so the breakpoint sits there looking set and
-		// never fires. Resolving it to an address is the difference between
-		// working and quietly not.
-		if addr, ok := s.decompAddressOf(r, loc); ok {
-			spec = fmt.Sprintf("*0x%x", addr)
-		}
-	}
+	spec := s.locationSpec(r, loc)
 
-	// -f for the same reason as bpSetSource: a location that cannot be
-	// resolved yet becomes pending rather than an error, and the address
-	// arrives later in a =breakpoint-modified.
-	cmd := "-break-insert -f"
-	if req.Temporary {
-		cmd += " -t"
-	}
-	if req.Condition != "" {
-		cmd += " -c " + quote(req.Condition)
-	}
-	cmd += " " + quote(spec)
-
-	rec, werr := s.send(r.ctx, cmd)
+	bp, werr := s.insertBreakpoint(r, breakpointSpec{
+		location:  spec,
+		temporary: req.Temporary,
+		condition: req.Condition,
+		pending:   true,
+	})
 	if werr != nil {
 		return nil, werr
 	}
+	return bp, nil
+}
+
+// locationSpec turns an address or a name into something gdb resolves.
+//
+// An address needs the `*` form and a name must not have it. A decompiler name
+// — FUN_0010e2dc, or whatever it has been renamed to — is neither: gdb has
+// never heard of it, so it is resolved to an address here. Left alone it would
+// become a *pending* breakpoint, which is right for a shared library that has
+// not loaded yet and wrong for a name nothing will ever define: the breakpoint
+// would sit there looking set and never fire.
+func (s *Session) locationSpec(r *request, loc string) string {
+	if _, err := parseAddress(loc); err == nil {
+		return "*" + loc
+	}
+	if plausibleDecompName(loc) && !s.gdbKnowsSymbol(r, loc) {
+		if addr, ok := s.decompAddressOf(r, loc); ok {
+			return fmt.Sprintf("*0x%x", addr)
+		}
+	}
+	return loc
+}
+
+// breakpointSpec is one breakpoint to insert.
+type breakpointSpec struct {
+	// location is in gdb's own vocabulary: `file:line`, `*0xaddr`, or a name.
+	location  string
+	temporary bool
+	condition string
+	// pending allows a location gdb cannot resolve yet, which is right for a
+	// breakpoint someone is placing and wrong for one the server is about to
+	// run to: a run-to whose location never resolves would run the program to
+	// completion instead of saying it could not find the place.
+	pending bool
+}
+
+// insertBreakpoint inserts one breakpoint and puts it in the mirror.
+//
+// Shared by the two ways of naming a place and by exec.runTo, so that all three
+// register the breakpoint as ours — which is what keeps a temporary one
+// visible, since the mirror hides temporary breakpoints gdb invented for
+// itself.
+func (s *Session) insertBreakpoint(r *request, spec breakpointSpec) (wire.Breakpoint, *wire.Error) {
+	cmd := "-break-insert"
+	if spec.pending {
+		cmd += " -f"
+	}
+	if spec.temporary {
+		cmd += " -t"
+	}
+	if spec.condition != "" {
+		cmd += " -c " + quote(spec.condition)
+	}
+	cmd += " " + quote(spec.location)
+
+	rec, werr := s.send(r.ctx, cmd)
+	if werr != nil {
+		return wire.Breakpoint{}, werr
+	}
 	bkpt, ok := rec.Results.Tuple("bkpt")
 	if !ok {
-		return nil, wire.NewError(wire.CodeInternal, "gdb accepted the breakpoint but reported none")
+		return wire.Breakpoint{}, wire.NewError(wire.CodeInternal,
+			"gdb accepted the breakpoint but reported none")
 	}
 	bp := s.parseBreakpoint(bkpt)
 	s.st.ours[bp.Number] = true
 	s.st.breakpoints[bp.Number] = bp
 	s.broadcastBreakpoints()
 	return bp, nil
+}
+
+// dropBreakpoint removes one without reporting failure.
+//
+// For the cleanup path: a run-to that could not resume must not leave its
+// temporary breakpoint behind, and the reason the resume failed is what the
+// caller is about to report.
+func (s *Session) dropBreakpoint(r *request, number int) {
+	if _, werr := s.send(r.ctx, fmt.Sprintf("-break-delete %d", number)); werr != nil {
+		s.logf("removing the run-to breakpoint %d: %s", number, werr.Message)
+		return
+	}
+	delete(s.st.breakpoints, number)
+	delete(s.st.ours, number)
+	s.broadcastBreakpoints()
 }

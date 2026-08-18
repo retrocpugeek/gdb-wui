@@ -21,6 +21,14 @@ mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
 gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 ```
 
+The source is copied into `/tmp/tour` and compiled there, rather than compiled
+where it sits, because a binary records the path its compiler was given. Build
+it from `testdata/fixtures/globals.c` and that is the only name gdb has for the
+file, which is not a path under `-project` — so the file tree has nothing to
+click and a breakpoint on the file you can see is refused. Every example in this
+documentation copies first for that reason; see
+[No source file named …](troubleshooting.md#no-source-file-named-tmptourhelloc).
+
 Build it with `-no-pie` so that the addresses shown below are the ones you will
 see. A position-independent executable is relocated at load time, so its
 addresses differ on every run. gdb-wui handles that, but it makes a tutorial
@@ -35,7 +43,7 @@ go build ./cmd/gdb-wui
 
 gdb-wui prints a URL on stdout and opens a browser at it. If no browser opens —
 over SSH, in a container, or with no desktop session — copy the URL into a
-browser yourself. This is a supported way to use gdb-wui, not a fallback.
+browser yourself. The URL works the same however you open it.
 
 The status bar at the bottom of the window should read **connected** and name
 your gdb.
@@ -85,10 +93,15 @@ Right-click the same expression.
 
 ![The memory context menu, showing both addresses](images/hover-menu.png)
 
-The menu offers two different things, and names the address each one would show:
+The two memory entries are different things, and the menu names the address
+each one would show:
 
 - **Show where it is stored** — the address of the pointer variable itself.
 - **Show what it points to** — the address it holds, `0x40200d` here.
+
+The other two are about the line and the expression rather than the memory
+behind them: **Watch** keeps the value in the Variables pane, and
+**Run to line 51** runs the program to this line and stops.
 
 Choose the second. The **Memory** tab opens at that address. Now type
 `&counter` into the address box at the top and press Enter; the box takes an

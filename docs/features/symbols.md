@@ -44,8 +44,9 @@ fills up anyway, from Ghidra's names:
 - Whatever you have **renamed** either of those to, since that is the name you
   will go looking for.
 
-These rows are drawn differently — the same italic the [call
-stack](../tour.md) uses for a recovered frame — because they are not symbols.
+These rows are drawn differently — the same italic that the
+[call stack](../tour.md) uses for a recovered frame — because they are not
+symbols.
 `FUN_0010e2dc` is a guess about where a function starts, and a name you typed
 over one is a guess you agreed with; neither is recorded anywhere in the
 program, and a list that showed them like the binary's own would be claiming
@@ -96,8 +97,8 @@ Build the same program with the debug info removed but the symbol table left
 alone, which is what a release build looks like:
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug testdata/fixtures/globals.c
+mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug /tmp/tour/globals.c
 objcopy --strip-debug /tmp/tour/globals-nodebug
 ./gdb-wui -project /tmp/tour -exe globals-nodebug
 ```

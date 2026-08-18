@@ -83,6 +83,7 @@ breakpoints are kept.
 | Stripped binaries, disassembly-first | Launching `gdbserver` or an emulator for you |
 | Multiple threads, all-stop, thread switching | Non-stop mode, per-thread run control |
 | Breakpoints by source line, address or symbol | Watchpoints, catchpoints, tracepoints |
+| Run to a line, from the right-click menu in any code view | A key for it: there is no cursor in those views to act on |
 | Locals, nested structs, watch expressions | Per-row display formats — use `p/d x` at the console |
 | Hover a variable or register for its value | Hovering a call — it would run the function |
 | Decompiled C from Ghidra, with the PC marked | Reproducing the source — recovered C is a model |

@@ -9,8 +9,8 @@ nav_order: 13
 
 gdb-wui can debug anything that speaks the GDB remote protocol: a gdbserver, an
 emulator's stub, or a board on the end of a probe. It can also attach to a
-process already running on this machine, which is the same arrangement seen from
-closer up: a target it did not start and must not kill.
+process already running on this machine: a target it did not start and must not
+kill.
 
 ![Attached to a gdbserver](../images/remote.png)
 
@@ -89,8 +89,8 @@ that has called `prctl(PR_SET_PTRACER, …)` for itself. Without it gdb answers
 `prctl(PR_SET_PTRACER, …)`, so this works without touching the sysctl above.
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/tracee testdata/fixtures/tracee.c
+mkdir -p /tmp/tour && cp testdata/fixtures/tracee.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/tracee /tmp/tour/tracee.c
 /tmp/tour/tracee & echo "pid $!"
 ./gdb-wui -project /tmp/tour
 ```
@@ -116,8 +116,8 @@ A local gdbserver behaves the same way as anything remote, so it is a
 convenient thing to try first:
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 gdbserver 127.0.0.1:41234 /tmp/tour/globals &
 ./gdb-wui -project /tmp/tour
 ```
@@ -136,8 +136,8 @@ being theoretical:
 
 ```sh
 sudo apt install gcc-arm-linux-gnueabihf qemu-user gdb-multiarch
-mkdir -p /tmp/tour
-arm-linux-gnueabihf-gcc -g -O0 -static -o /tmp/tour/hello-arm testdata/fixtures/hello.c
+mkdir -p /tmp/tour && cp testdata/fixtures/hello.c /tmp/tour/
+arm-linux-gnueabihf-gcc -g -O0 -static -o /tmp/tour/hello-arm /tmp/tour/hello.c
 qemu-arm -g 1234 /tmp/tour/hello-arm &
 ./gdb-wui -project /tmp/tour -gdb gdb-multiarch -exe hello-arm
 ```
@@ -151,6 +151,13 @@ Connect to `localhost:1234` and the program stops at `_start`, with `pc` at
 architecture is set to "auto" (currently "armv7")` — read out of the ELF you
 loaded, not out of qemu. Load nothing first and gdb reads the stub's registers
 as x86-64 instead, which is the failure the warning above exists to prevent.
+
+Source debugging works from here like any other target: open `hello.c` in the
+file tree, click line 14, and the breakpoint resolves to `main` at `0x10380`.
+That is what the `cp` in the first block is for — a binary records the path its
+compiler was given, so one built straight out of `testdata/fixtures` leaves gdb
+with a file name that is nowhere under `-project`. See
+[No source file named …](../troubleshooting.md#no-source-file-named-tmptourhelloc).
 
 ## What remote targets do not do
 

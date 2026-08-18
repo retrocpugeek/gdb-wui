@@ -280,13 +280,17 @@ hover.attach(ui.decomp, (ev) => decomp.expressionAt(ev));
 // they are different addresses; a register has only the second; a plain int
 // has only the first. The menu offers whichever apply and names the address in
 // the label, so the choice is visible rather than inferred from a verb.
-for (const [pane, resolve] of [
-  [ui.source, (ev) => source.expressionAt(ev)],
-  [ui.disasm, (ev) => disasm.expressionAt(ev)],
-  [ui.decomp, (ev) => decomp.expressionAt(ev)],
+for (const [pane, resolve, place] of [
+  [ui.source, (ev) => source.expressionAt(ev), (ev) => source.placeAt(ev)],
+  [ui.disasm, (ev) => disasm.expressionAt(ev), (ev) => disasm.placeAt(ev)],
+  [ui.decomp, (ev) => decomp.expressionAt(ev), (ev) => decomp.placeAt(ev)],
 ]) {
   pane.addEventListener("contextmenu", (ev) => {
     const hit = resolve(ev);
+    // Where the pointer is, as opposed to what is under it: every one of these
+    // views is a list of places the program can be told to run to, whether or
+    // not there is a value on the line.
+    const here = place(ev);
     // The decompiled view has a second menu even where there is no value: its
     // *names* are editable, and the ones most worth changing — a decompiler
     // temporary, a function nobody can evaluate — are exactly the ones with
@@ -296,7 +300,7 @@ for (const [pane, resolve] of [
     // variables. Nearly always a call to another function, which on a stripped
     // binary is the only place its name is ever written down.
     const word = pane === ui.decomp && !hit ? decomp.wordAt(ev) : null;
-    if (!hit && !editable) return;
+    if (!hit && !editable && !here) return;
     ev.preventDefault();
     hover.hide();
     const x = ev.clientX;
@@ -375,6 +379,8 @@ for (const [pane, resolve] of [
         });
       }
 
+      if (here) items.push(runToItem(here));
+
       items.push(...decompEditItems(editable));
 
       if (!items.length) {
@@ -383,9 +389,40 @@ for (const [pane, resolve] of [
           : `${label} has no address to show.`);
         return;
       }
-      showContextMenu(x, y, label || editable?.fn?.name || "", items);
+      showContextMenu(x, y, label || editable?.fn?.name || here?.label || "", items);
     });
   });
+}
+
+// runToItem builds the "run to here" entry for a place in one of the code
+// views.
+//
+// A temporary breakpoint and a resume, both on the server: gdb's `until` and
+// `advance` stop when the current frame returns, which is not what a line in a
+// function that has not been called yet means. From a program that has not
+// started this runs it, so it doubles as a way to begin at a line rather than
+// at main.
+//
+// Disabled rather than hidden when it cannot work, with the reason in the
+// title, because an item that vanishes teaches nothing about why.
+function runToItem(here) {
+  const runState = store.get("session.runState");
+  const loaded = Boolean(store.get("session.exePath"));
+  const disabled = !loaded || runState === "running";
+  return {
+    label: `Run to ${here.label}`,
+    title: !loaded
+      ? "no program is loaded"
+      : runState === "running"
+        ? "the program is running; pause it first"
+        : here.address
+          ? `run until ${here.address}, then stop`
+          : `run until ${here.path}:${here.line}, then stop`,
+    disabled,
+    run: () => exec("exec.runTo", here.address
+      ? { location: here.address }
+      : { path: here.path, line: here.line }),
+  };
 }
 
 // lookUpName resolves one name the way the symbol pane would.

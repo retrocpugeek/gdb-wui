@@ -38,6 +38,37 @@ steppable while the program runs, and nothing is continuable before it starts.
 If a button is grey, typing the equivalent command at the console would produce
 an error.
 
+## Running to a line
+
+Right-click a line and choose **Run to** it. The program runs until it gets
+there, and stops.
+
+![The run-to entry in a source line's menu](../images/run-to-menu.png)
+
+It works in all three code views. In the [source](source.md) and the
+[decompiled C](decompilation.md) the entry names the line; in the
+[disassembly](disassembly.md) it names the address, since that is what a row
+there is. A decompiled line generated from no address — a brace, a declaration
+— is nowhere to run to, and the menu offers nothing for it, the same lines the
+gutter refuses a breakpoint on.
+
+With the program not yet started, this starts it. That makes it a way to begin
+a session at the line you care about rather than at `main`.
+
+![Stopped on the line, with no breakpoint left behind](../images/run-to.png)
+
+Underneath it is a temporary breakpoint and a resume, sent as one request.
+gdb's own `until` and `advance` are not the same thing: both also stop when the
+current frame returns, so running to a line in a function that has not been
+called yet would stop somewhere else and report a stop. A breakpoint is reached
+wherever it is, in whatever frame.
+
+The breakpoint appears in the [Breakpoints pane](breakpoints.md) while it
+lasts, and gdb deletes it when it is hit — the screenshot above is the pane
+after arriving, with nothing in it. A run that never reaches the line leaves it
+there, visible and deletable, rather than arming something invisible for the
+next run.
+
 ## Stepping without a line table
 
 `F10` and `F11` need debug info. Without it, gdb's step range is the whole
@@ -51,8 +82,8 @@ table. Otherwise, use `Alt+F11` to step one instruction at a time.
 ## Worked example
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/globals testdata/fixtures/globals.c
+mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals /tmp/tour/globals.c
 ./gdb-wui -project /tmp/tour -exe globals
 ```
 
@@ -75,3 +106,5 @@ leaves you where you can see rather than several stops further on.
   program at a time.
 - **Running until a condition** has no UI. Put a condition on a breakpoint at
   the [console](console.md) instead.
+- **Run to has no keyboard shortcut.** It is a menu entry on the line the
+  pointer is over, and there is no cursor in these views for a key to act on.

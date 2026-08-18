@@ -19,8 +19,8 @@ Start gdb-wui as usual first — the bridge joins a session, it does not create
 one:
 
 ```sh
-mkdir -p /tmp/tour
-gcc -O0 -no-pie -o /tmp/tour/nodebug testdata/fixtures/nodebug.c && strip /tmp/tour/nodebug
+mkdir -p /tmp/tour && cp testdata/fixtures/nodebug.c /tmp/tour/
+gcc -O0 -no-pie -o /tmp/tour/nodebug /tmp/tour/nodebug.c && strip /tmp/tour/nodebug
 ./gdb-wui -project /tmp/tour -exe nodebug -ghidra ~/ghidra_12.1.2_PUBLIC
 ```
 
@@ -30,9 +30,9 @@ your own program the same way.
 
 ![An agent's comment and name, arriving in an open browser](../images/agent-annotations.png)
 
-That screenshot was taken by a browser that was open the whole time and asked
-for none of it. The name and both comments were written by an agent through the
-bridge, and the pane repainted because an edit is broadcast to every open tab.
+The screenshot above shows live updates to the decompilation made by an agent:
+the function's name and both comments, written through the bridge. The pane
+repainted by itself, as edits are broadcast to open tabs.
 
 ## What makes this different from reading a decompilation
 
@@ -64,8 +64,9 @@ A tool you have not permitted is not offered to the model at all, and is refused
 if it is called anyway.
 
 Four things are absent whatever you pass: writing to the program's memory,
-assigning to a variable, writing a register, and the gdb console. An agent with
-a console has every permission, and the rest would be decoration.
+assigning to a variable, writing a register, and the gdb console. The console
+runs any gdb command, so permitting it would make the other three flags
+meaningless.
 
 {: .warning }
 > `-mcp-run` runs your program with your privileges, on the agent's initiative.
@@ -113,9 +114,8 @@ Everything it writes is marked, in gdb-wui and in Ghidra.
 Rewriting an agent's comment yourself takes it over: what is on the page
 afterwards is yours.
 
-Nothing here is a symbol, and a name an agent chose is no more one than
-`FUN_00401154` was. The call stack keeps showing both in italics for that
-reason.
+Nothing here is a symbol: a name an agent chose is not one the binary carries,
+any more than `FUN_00401154` is, so the call stack shows both in italics.
 
 ## Undoing it
 

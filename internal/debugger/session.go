@@ -460,6 +460,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.execFinish(r)
 	case wire.TypeExecKill:
 		return s.execKill(r)
+	case wire.TypeExecRunTo:
+		return s.execRunTo(r)
 
 	case wire.TypeBpSetSource:
 		return s.bpSetSource(r)
@@ -646,7 +648,12 @@ func (s *Session) gate(typ string) *wire.Error {
 			return wire.NewError(wire.CodeNotReady,
 				"no stopped inferior; load a program and run it first")
 		}
-	case wire.TypeExecRun:
+	case wire.TypeExecRun,
+		// Run-to takes the program from wherever it is to one place, which
+		// includes taking it from not-started: it needs a program and nothing
+		// else. Refused while running by the gate above, like every other way
+		// of placing a breakpoint.
+		wire.TypeExecRunTo:
 		if s.st.exePath == "" {
 			return wire.NewError(wire.CodeNotReady, "no program is loaded")
 		}

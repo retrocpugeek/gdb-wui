@@ -28,8 +28,8 @@ gdb feature that this UI does not model.
 ## Worked example
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -pthread -o /tmp/tour/threads testdata/fixtures/threads.c
+mkdir -p /tmp/tour && cp testdata/fixtures/threads.c /tmp/tour/
+gcc -g -O0 -no-pie -pthread -o /tmp/tour/threads /tmp/tour/threads.c
 ./gdb-wui -project /tmp/tour -exe threads
 ```
 

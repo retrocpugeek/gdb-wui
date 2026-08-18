@@ -45,8 +45,8 @@ and following it is useful again.
 Build a binary with nothing to go on:
 
 ```sh
-mkdir -p /tmp/tour
-gcc -O0 -no-pie -o /tmp/tour/nodebug testdata/fixtures/nodebug.c && strip /tmp/tour/nodebug
+mkdir -p /tmp/tour && cp testdata/fixtures/nodebug.c /tmp/tour/
+gcc -O0 -no-pie -o /tmp/tour/nodebug /tmp/tour/nodebug.c && strip /tmp/tour/nodebug
 ./gdb-wui -project /tmp/tour -exe nodebug
 ```
 

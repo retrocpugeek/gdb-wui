@@ -38,7 +38,7 @@ They are marked because they are not symbols: `FUN_00401154` is obviously a
 guess, but a function you have renamed in Ghidra is not, and a stack that showed
 the two alike would be claiming knowledge it does not have.
 
-Three details in that screenshot are the whole behaviour:
+Three details in that screenshot:
 
 - `#1` and `#4` are the program's own functions. gdb had nothing; these names
   and the `+0x4c` offsets come from Ghidra. The offset matters — every frame
@@ -53,9 +53,9 @@ Names appear when analysis finishes, so the stack changes under you the first
 time you stop in a binary Ghidra has not seen before. Nothing needs to be open
 for this: the Decompiled tab can stay shut, and passing `-ghidra` is the opt-in.
 
-Renaming a function shows your name here, which is what makes working through
-unfamiliar firmware get easier rather than staying equally hard — and you can
-rename it from the stack row itself, without leaving gdb-wui.
+Renaming a function shows your name here, so a stack you have already worked
+through reads in your own names — and you can rename it from the stack row
+itself, without leaving gdb-wui.
 
 ## Following a call, and stopping in one
 
@@ -86,8 +86,7 @@ entirely once it is running.
 
 `FUN_00401154`, `local_10` and `undefined8` are not wrong: they are what can be
 known without a symbol table. But a reader holds a program in their head by its
-names, and a page of invented ones is the single biggest obstacle to reading
-recovered C.
+names, and invented ones give you nothing to hold on to.
 
 ![A decompiler-invented name being replaced](../images/decomp-rename.png)
 
@@ -121,8 +120,8 @@ That is the same stack as the one above, after the rename: `#1` was
 `FUN_00401154+0x4c()`.
 
 A renamed function still shows as *recovered* in the call stack. A name you
-typed is no more a symbol than `FUN_00401154` was; presenting it as one would be
-the same claim in better handwriting.
+typed is still not a symbol the binary carries, so it is still drawn as one the
+decompiler supplied.
 
 The project is keyed on the binary's SHA-256, so **a rebuilt binary starts
 again** with a fresh analysis and none of your names. That is deliberate —
@@ -134,8 +133,7 @@ going to keep.
 
 Renaming corrects what the decompiler guessed. A comment records what you
 understood, and it has nowhere else to go: there is no source file to write it
-in, and the thing you have just spent twenty minutes establishing about a loop
-is exactly what you will have forgotten by tomorrow.
+in, and reading the recovered C a second time will not give it back.
 
 ![A comment written onto recovered C](../images/decomp-comment.png)
 
@@ -228,8 +226,8 @@ that.
 ## Worked example
 
 ```sh
-mkdir -p /tmp/tour
-gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug testdata/fixtures/globals.c
+mkdir -p /tmp/tour && cp testdata/fixtures/globals.c /tmp/tour/
+gcc -g -O0 -no-pie -o /tmp/tour/globals-nodebug /tmp/tour/globals.c
 objcopy --strip-debug /tmp/tour/globals-nodebug
 ./gdb-wui -project /tmp/tour -exe globals-nodebug -ghidra ~/ghidra
 ```
