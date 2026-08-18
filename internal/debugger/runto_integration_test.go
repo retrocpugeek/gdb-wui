@@ -4,6 +4,7 @@ package debugger_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
@@ -33,9 +34,7 @@ func TestRunToStopsThereAndCleansUp(t *testing.T) {
 	// gdb deletes a temporary breakpoint when it is hit, and =breakpoint-deleted
 	// takes it out of the mirror. A run-to that left one behind would put a
 	// marker in the gutter of a line the user was only reading.
-	if bps := h.sess.Snapshot().Breakpoints; len(bps) != 0 {
-		t.Errorf("breakpoints left after the run-to: %+v", bps)
-	}
+	waitForNoBreakpoints(t, h, "the first run-to")
 
 	// And from a stop: this one is a continue rather than a run.
 	h.mustDo(wire.TypeExecRunTo, wire.ExecRunToRequest{
@@ -51,8 +50,28 @@ func TestRunToStopsThereAndCleansUp(t *testing.T) {
 	if got := next.Frames[0].Source.Line; got != lineAddSum {
 		t.Errorf("stopped on line %d, want %d", got, lineAddSum)
 	}
-	if bps := h.sess.Snapshot().Breakpoints; len(bps) != 0 {
-		t.Errorf("breakpoints left after the second run-to: %+v", bps)
+	waitForNoBreakpoints(t, h, "the second run-to")
+}
+
+// waitForNoBreakpoints waits for the mirror to empty.
+//
+// Polled rather than read once: the deletion is a separate =breakpoint-deleted
+// notification, and gdb sends it after the *stopped that reports the hit. CI
+// caught the difference — locally the deletion had always landed by the time
+// the stop was handled, and on a loaded runner it had not.
+func waitForNoBreakpoints(t *testing.T, h *harness, what string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		bps := h.sess.Snapshot().Breakpoints
+		if len(bps) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("breakpoints left after %s: %+v", what, bps)
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
