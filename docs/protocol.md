@@ -79,6 +79,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `exec.finish` | `{thread?, frame?, stopSeq?}` | [`ExecAck`](#execack) | Refused on the outermost frame. |
 | `exec.pause` | — | `{paused}` | Allowed while running. |
 | `exec.kill` | — | [`ExecAck`](#execack) | Allowed while running. |
+| `exec.runTo` | `{path?, line?, location?, thread?, stopSeq?}` | [`ExecAck`](#execack) | Temporary breakpoint, then run or continue. Give a source line or a `location`, not both. |
 | `bp.setSource` | `{path, line, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | |
 | `bp.setAddress` | `{location, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | `location` is an address or a function name. The only way to break in a stripped binary. |
 | `bp.delete` | `{number}` | [`BreakpointList`](#breakpoints-1) | |
@@ -128,6 +129,22 @@ server's actor loop is usually blocked in a gdb round-trip when a user presses
 Pause, so a queued request would arrive only after whatever it was meant to
 interrupt had finished. It goes straight to gdb as `-exec-interrupt`, which is
 also why `mi-async on` is part of the startup handshake.
+
+`exec.runTo` is a temporary breakpoint and a resume, as one request. gdb's
+`until` and `advance` are not this: both also stop when the current frame
+returns, so running to a line in a function that has not been called yet — the
+ordinary case when reading unfamiliar code — would stop somewhere else and
+report a stop. A breakpoint is reached wherever it is, in whatever frame.
+
+The place is named either way a breakpoint is: `path` and `line`, or `location`
+for an address or a symbol. The breakpoint is registered as the server's, so it
+appears in the breakpoint mirror while it lasts and gdb deletes it on the hit;
+a run that never reaches the place leaves it visible rather than arming
+something invisible for the next run. Unlike `bp.setSource` and `bp.setAddress`
+it is not made pending: a location that cannot be resolved is an error, because
+the alternative is running the program to completion instead of saying so. From
+a stop the resume is `-exec-continue`; with nothing running it is `-exec-run`,
+so this is also a way to start a program at a line rather than at `main`.
 
 `exec.kill` is not a passthrough. `-exec-kill` is not an MI3 command: gdb 17.1
 answers `^error,msg="Undefined MI command:

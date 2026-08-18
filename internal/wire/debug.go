@@ -15,6 +15,7 @@ const (
 	TypeExecNext     = "exec.next"
 	TypeExecFinish   = "exec.finish"
 	TypeExecKill     = "exec.kill"
+	TypeExecRunTo    = "exec.runTo"
 
 	TypeBpSetSource  = "bp.setSource"
 	TypeBpSetAddress = "bp.setAddress"
@@ -70,6 +71,31 @@ type ExecRequest struct {
 type ExecAck struct {
 	RunState string `json:"runState"`
 	StopSeq  uint64 `json:"stopSeq"`
+}
+
+// ExecRunToRequest runs the program until it reaches one place, and no
+// further.
+//
+// A temporary breakpoint and a resume, as one request rather than two, because
+// the pair has to be decided together: whether to resume with -exec-run or
+// -exec-continue depends on the run state, and a client that inserted the
+// breakpoint and then failed to resume would leave one behind that nobody
+// asked for.
+//
+// The place is named the same two ways a breakpoint is — a source line, or an
+// address or symbol for everything without source — so the three panes that
+// offer this each pass what they have.
+type ExecRunToRequest struct {
+	// Path is root-relative, and goes with Line.
+	Path string `json:"path,omitempty"`
+	Line int    `json:"line,omitempty"`
+	// Location is an address or a symbol, for a disassembly row or a
+	// decompiled line. Exactly one of Location and Path is expected.
+	Location string `json:"location,omitempty"`
+	Thread   int    `json:"thread,omitempty"`
+	// StopSeq is the stop the client believed it was acting on, as everywhere
+	// else in the exec group.
+	StopSeq uint64 `json:"stopSeq,omitempty"`
 }
 
 // BreakpointRequest sets a breakpoint on a source line.

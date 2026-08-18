@@ -93,10 +93,15 @@ Right-click the same expression.
 
 ![The memory context menu, showing both addresses](images/hover-menu.png)
 
-The menu offers two different things, and names the address each one would show:
+The two memory entries are different things, and the menu names the address
+each one would show:
 
 - **Show where it is stored** — the address of the pointer variable itself.
 - **Show what it points to** — the address it holds, `0x40200d` here.
+
+The other two are about the line and the expression rather than the memory
+behind them: **Watch** keeps the value in the Variables pane, and
+**Run to line 51** runs the program to this line and stops.
 
 Choose the second. The **Memory** tab opens at that address. Now type
 `&counter` into the address box at the top and press Enter; the box takes an

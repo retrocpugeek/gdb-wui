@@ -157,8 +157,16 @@ export function createDisasm({ element, onGutterClick }) {
     list.scrollToRow(index);
   }
 
+  // placeAt is the instruction under the pointer, for "run to here". Every row
+  // has an address, so unlike the other two panes there is nothing to refuse.
+  function placeAt(ev) {
+    const address = ev.target?.closest?.(".asm-row")?.dataset?.address;
+    return address ? { address, label: shortAddress(address) } : null;
+  }
+
   return {
     expressionAt,
+    placeAt,
     set(disasm) {
       instructions = disasm.instructions ?? [];
       pc = disasm.pc ?? "";

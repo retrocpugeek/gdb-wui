@@ -83,9 +83,40 @@ export default {
 
     const at = await page.textRect("#decomp", call);
     await page.rightClick(page.centre(at));
+
+    // The third view's run-to. This click is on the signature line, which was
+    // generated from no address — the same lines the gutter refuses a
+    // breakpoint on — so there is nowhere to run to and the menu says nothing
+    // about it. Asserted after the menu is up, not after the click: the
+    // handler resolves what is under the pointer before it builds anything.
+    await page.waitFor("#ctxmenu:not(.is-hidden)", { what: "the name's menu" });
+    const onSignature = await page.evaluate(
+      () => [...document.querySelectorAll(".ctxmenu-item")]
+        .map((b) => b.textContent).filter((l) => l.startsWith("Run to ")),
+    );
+    if (onSignature.length) {
+      throw new Error(`a line with no address offered ${JSON.stringify(onSignature)}`);
+    }
+
     // Named in the label, because the menu is opened on a word and the reader
     // has to be able to see which word it decided on.
     await menuItem(page, `Set breakpoint at ${call}`);
+
+    // And a line that does have one: exactly one entry, naming the decompiled
+    // line rather than the address, because that is what the reader is looking
+    // at. The lowest address of the line is where it will stop.
+    const mapped = await page.rect(".dec-row.is-mapped .dec-code");
+    await page.rightClick(page.centre(mapped));
+    await page.waitFor("#ctxmenu:not(.is-hidden)", { what: "a mapped line's menu" });
+    const offered = await page.evaluate(
+      () => [...document.querySelectorAll(".ctxmenu-item")]
+        .map((b) => b.textContent).filter((l) => /^Run to line \d+$/.test(l)),
+    );
+    if (offered.length !== 1) {
+      throw new Error(`a mapped decompiled line offers ${JSON.stringify(offered)}, `
+        + "want exactly one run-to entry");
+    }
+    await page.key("Escape");
 
     // The pane, which is the half of this that was invisible before. gdb has no
     // symbol for the address, so the row it draws by itself is `*0x401196` —

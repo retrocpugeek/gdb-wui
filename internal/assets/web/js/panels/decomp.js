@@ -293,8 +293,24 @@ export function createDecomp({ element, onGutterClick }) {
     element.replaceChildren(div);
   }
 
+  // placeAt is the decompiled line under the pointer, for "run to here".
+  //
+  // The lowest address of the line, as the gutter uses: the others are the
+  // rest of the same statement, where stopping would be part way through an
+  // expression. A line generated from no address is nowhere to run to, which
+  // is the same set of lines the gutter refuses a breakpoint on.
+  function placeAt(ev) {
+    const row = ev.target?.closest?.(".dec-row");
+    if (!row) return null;
+    const line = Number(row.dataset.line);
+    const addrs = addrsByLine.get(line);
+    if (!addrs?.length) return null;
+    return { address: addrs[0], line, label: `line ${line}` };
+  }
+
   return {
     expressionAt,
+    placeAt,
     symbolAt,
     wordAt,
     commentTarget,

@@ -248,9 +248,22 @@ export function createSource({ element, pathLabel, metaLabel, onGutterClick }) {
     return { expr: found.expr, rect: range.getBoundingClientRect(), anchor: code };
   }
 
+  // placeAt is the line under the pointer, for "run to here".
+  //
+  // The row rather than the caret: a right-click means the line it landed on,
+  // including in the gutter and past the end of the text, where there is no
+  // character to resolve.
+  function placeAt(ev) {
+    const row = ev.target?.closest?.(".src-row");
+    if (!row || !path) return null;
+    const line = Number(row.dataset.line);
+    return line > 0 ? { path, line, label: `line ${line}` } : null;
+  }
+
   return {
     open,
     expressionAt,
+    placeAt,
     // setLabels retargets the header this view writes to, for when it changes
     // slot, and repaints it from what is already loaded.
     setLabels(nextPath, nextMeta) {

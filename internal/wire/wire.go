@@ -126,6 +126,7 @@ var RequestTypes = []string{
 	TypeExecNext,
 	TypeExecFinish,
 	TypeExecKill,
+	TypeExecRunTo,
 
 	TypeBpSetSource,
 	TypeBpSetAddress,
