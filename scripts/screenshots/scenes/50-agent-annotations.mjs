@@ -2,10 +2,9 @@
 //
 // The scene drives the MCP bridge as a subprocess — the same `gdb-wui -mcp`
 // anybody would point Claude Code at — while a browser sits on the same
-// session. Nothing in the page asks for any of this: the annotations arrive
-// because an edit is broadcast to every open tab, which is the payoff of the
-// bridge being a client of the ordinary protocol rather than something bolted
-// into the server.
+// session. The annotations arrive in that browser because an edit is broadcast
+// to every open tab, which is the payoff of the bridge being a client of the
+// ordinary protocol rather than something bolted into the server.
 //
 // What it proves beyond the photograph:
 //
@@ -158,7 +157,7 @@ export default {
       new_name: "sum_and_print",
     });
 
-    // The browser was open the whole time and asked for none of it.
+    // The pane repaints by itself: nothing below asks the page to reload.
     await centre(page, "decomp");
     await page.waitUntil(
       () => [...document.querySelectorAll(".dec-code")]

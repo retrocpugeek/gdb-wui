@@ -30,9 +30,9 @@ your own program the same way.
 
 ![An agent's comment and name, arriving in an open browser](../images/agent-annotations.png)
 
-That screenshot was taken by a browser that was open the whole time and asked
-for none of it. The name and both comments were written by an agent through the
-bridge, and the pane repainted because an edit is broadcast to every open tab.
+The screenshot above shows live updates to the decompilation made by an agent:
+the function's name and both comments, written through the bridge. The pane
+repainted by itself, as edits are broadcast to open tabs.
 
 ## What makes this different from reading a decompilation
 
