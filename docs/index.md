@@ -61,8 +61,7 @@ neither can gdb-wui.
 
 ## What gdb-wui is good at
 
-Stepping through C or C++ built with `-g` works, and is not the interesting
-part. These are:
+Stepping through C or C++ built with `-g` works. These are what gdb-wui adds:
 
 - **Binaries with no source.** The Symbols pane reads the ELF symbol table, the
   disassembly is a first-class view rather than a fallback, and if Ghidra is

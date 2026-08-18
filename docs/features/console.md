@@ -19,9 +19,9 @@ everything gdb-wui has no buttons for: `watch`, `condition`, `set var`,
 
 Tab completes, and `↑` recalls history.
 
-Commands typed here are not second-class. Setting a breakpoint with `break` puts
-it in the [Breakpoints pane](breakpoints.md), because that pane mirrors gdb
-rather than tracking what the UI did.
+Setting a breakpoint with `break` puts it in the
+[Breakpoints pane](breakpoints.md), because that pane mirrors gdb rather than
+tracking what the UI did.
 
 The console also works while the program is running, so it remains available in
 states the rest of the UI does not model.

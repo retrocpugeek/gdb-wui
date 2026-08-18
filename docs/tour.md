@@ -43,7 +43,7 @@ go build ./cmd/gdb-wui
 
 gdb-wui prints a URL on stdout and opens a browser at it. If no browser opens —
 over SSH, in a container, or with no desktop session — copy the URL into a
-browser yourself. This is a supported way to use gdb-wui, not a fallback.
+browser yourself. The URL works the same however you open it.
 
 The status bar at the bottom of the window should read **connected** and name
 your gdb.

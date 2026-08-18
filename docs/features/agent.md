@@ -64,8 +64,9 @@ A tool you have not permitted is not offered to the model at all, and is refused
 if it is called anyway.
 
 Four things are absent whatever you pass: writing to the program's memory,
-assigning to a variable, writing a register, and the gdb console. An agent with
-a console has every permission, and the rest would be decoration.
+assigning to a variable, writing a register, and the gdb console. The console
+runs any gdb command, so permitting it would make the other three flags
+meaningless.
 
 {: .warning }
 > `-mcp-run` runs your program with your privileges, on the agent's initiative.
@@ -113,9 +114,8 @@ Everything it writes is marked, in gdb-wui and in Ghidra.
 Rewriting an agent's comment yourself takes it over: what is on the page
 afterwards is yours.
 
-Nothing here is a symbol, and a name an agent chose is no more one than
-`FUN_00401154` was. The call stack keeps showing both in italics for that
-reason.
+Nothing here is a symbol: a name an agent chose is not one the binary carries,
+any more than `FUN_00401154` is, so the call stack shows both in italics.
 
 ## Undoing it
 

@@ -30,12 +30,11 @@ a guess and not something the binary says.
 
 ![The hex view of a stripped binary, labelled by the decompiler](../images/memory-decomp.png)
 
-Everything about the rule is visible in that screenshot. `DAT_00402000` is
-untyped and names its own row only. The format string a few rows down is typed,
-so it goes on naming rows through its length. `NoteAbiTag_00402178+8` is eight
-bytes into an object whose extent Ghidra knows, and the row below it is
-twenty-four. And the rows in between are blank, because nothing is known about
-them.
+The screenshot shows each case. `DAT_00402000` is untyped and names its own row
+only. The format string a few rows down is typed, so it goes on naming rows
+through its length. `NoteAbiTag_00402178+8` is eight bytes into an object whose
+extent Ghidra knows, and the row below it is twenty-four. And the rows in
+between are blank, because nothing is known about them.
 
 A label covers **as far as Ghidra knows it runs, and no further**:
 
@@ -52,9 +51,9 @@ extent from the next label along would name the padding between them, and a
 column reading `DAT_00104010+2048` over a run of zeroes is worse than a blank
 one.
 
-The fix is the ordinary reverse-engineering gesture: right-click the name in the
-[decompiled view](decompilation.md) and give it a type. `char[1954]` on that
-table, and the column names every row of it from then on.
+To fix it, right-click the name in the [decompiled view](decompilation.md) and
+give it a type. `char[1954]` on that table, and the column names every row of it
+from then on.
 
 To change a byte, double-click it. See [changing values](editing.md).
 

@@ -9,8 +9,8 @@ nav_order: 13
 
 gdb-wui can debug anything that speaks the GDB remote protocol: a gdbserver, an
 emulator's stub, or a board on the end of a probe. It can also attach to a
-process already running on this machine, which is the same arrangement seen from
-closer up: a target it did not start and must not kill.
+process already running on this machine: a target it did not start and must not
+kill.
 
 ![Attached to a gdbserver](../images/remote.png)
 
