@@ -115,11 +115,13 @@ func TestArmProgramUnderQemu(t *testing.T) {
 
 	// The architecture came out of the ELF rather than out of the stub, which
 	// is the claim the page makes. gdb's own words, since there is no MI query.
+	//
+	// Waited for, not read: console records are events, and they are broadcast
+	// from the actor after the request that produced them has been answered.
+	// Reading the recorder the moment console.exec returns reads what has
+	// arrived so far, which on a loaded runner was nothing at all.
 	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "show architecture"})
-	if !consoleSaid(h, "armv7") {
-		t.Errorf("gdb does not report an ARM architecture; console said:\n%s",
-			consoleText(h))
-	}
+	waitForConsole(t, h, "armv7", "gdb to report an ARM architecture")
 
 	// Registers are ARM's, which is the same fact from the other side: a gdb
 	// reading this stub as x86-64 would answer with rax and rip.
@@ -183,8 +185,21 @@ func consoleText(h *harness) string {
 	return out
 }
 
-func consoleSaid(h *harness, want string) bool {
-	return strings.Contains(consoleText(h), want)
+// waitForConsole waits for gdb to have written want to the console.
+func waitForConsole(t *testing.T, h *harness, want, what string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if strings.Contains(consoleText(h), want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("timed out waiting for %s; the console says:\n%s",
+				what, consoleText(h))
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func hasName(names []string, want string) bool {
