@@ -146,17 +146,18 @@ Statically linked so that qemu needs no sysroot; `-L /path/to/sysroot` is the
 alternative if you would rather link against the target's libraries. qemu waits
 for a debugger before running anything, so nothing is missed by connecting late.
 
-Connect to `localhost:1234` and the program stops at `_start`, with `pc` at
-`0x10254`. Type `show architecture` at the console and gdb answers `The target
-architecture is set to "auto" (currently "armv7")` — read out of the ELF you
-loaded, not out of qemu. Load nothing first and gdb reads the stub's registers
-as x86-64 instead, which is the failure the warning above exists to prevent.
+Connect to `localhost:1234` and the program stops at `_start`. Type
+`show architecture` at the console and gdb answers `The target architecture is
+set to "auto" (currently "armv7")` — read out of the ELF you loaded, not out of
+qemu. Load nothing first and gdb reads the stub's registers as x86-64 instead,
+which is the failure the warning above exists to prevent. The Registers pane is
+another way to see it: `r0` and `cpsr` rather than `rax` and `eflags`.
 
 Source debugging works from here like any other target: open `hello.c` in the
-file tree, click line 14, and the breakpoint resolves to `main` at `0x10380`.
-That is what the `cp` in the first block is for — a binary records the path its
-compiler was given, so one built straight out of `testdata/fixtures` leaves gdb
-with a file name that is nowhere under `-project`. See
+file tree, click line 14, and the breakpoint resolves to `main`. That is what
+the `cp` in the first block is for — a binary records the path its compiler was
+given, so one built straight out of `testdata/fixtures` leaves gdb with a file
+name that is nowhere under `-project`. See
 [No source file named …](../troubleshooting.md#no-source-file-named-tmptourhelloc).
 
 ## What remote targets do not do

@@ -25,16 +25,25 @@ jobs:
       # Installed explicitly rather than assumed. Runners do ship gdb, but
       # relying on that makes the workflow silently skip its most valuable
       # tests the day an image changes — and it costs seconds.
-      - name: Install gdb
+      #
+      # The other three are for the cross-architecture test, which is the one
+      # path that cannot be checked against the host's own binaries: gdb reads
+      # a stub's registers through whatever architecture it believes in, so the
+      # wrong one yields plausible nonsense rather than an error. Without them
+      # that test skips, and a skip is exactly what nobody notices.
+      - name: Install gdb and the cross-architecture toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gdb
+          sudo apt-get install -y gdb gdb-multiarch qemu-user gcc-arm-linux-gnueabihf
 
       - name: Versions
         run: |
           go version
           gdb --version | head -1
+          gdb-multiarch --version | head -1
+          qemu-arm --version | head -1
           gcc --version | head -1
+          arm-linux-gnueabihf-gcc --version | head -1
 
       - name: gofmt
         run: |
@@ -52,8 +61,9 @@ jobs:
         run: go test -race ./...
 
       # ptrace_scope on the runners is 1, which permits tracing a *child*. That
-      # is what -exec-run does, so these work; attach-to-pid would not, which is
-      # one more reason it is out of scope.
+      # is what -exec-run does, so those work. The attach tests run here too,
+      # because their fixture calls prctl(PR_SET_PTRACER_ANY) and lets any
+      # tracer in — a program that expects to be attached to does exactly that.
       - name: Integration tests against real gdb
         run: go test -tags integration -race -timeout 10m ./...
 

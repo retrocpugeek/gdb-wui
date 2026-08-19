@@ -68,11 +68,20 @@ func startReal(t *testing.T, fixture string) *harness {
 func startRealWithFiles(t *testing.T, files *srcfs.FS) *harness {
 	t.Helper()
 	testutil.RequireGDB(t, 10)
+	return startRealWithGDB(t, files, "")
+}
+
+// startRealWithGDB is the same over a named debugger, for the cross-architecture
+// tests: a stock gdb knows one architecture, so those need gdb-multiarch and
+// nothing else about the session changes.
+func startRealWithGDB(t *testing.T, files *srcfs.FS, gdbPath string) *harness {
+	t.Helper()
 
 	rec := newRecorder()
 
 	sess, err := debugger.New(t.Context(), debugger.Config{
 		MI: mi.Options{
+			Path:     gdbPath,
 			Dir:      files.Abs(),
 			Logf:     testLogf(t),
 			ExtraEnv: []string{"HOME=" + t.TempDir()},
