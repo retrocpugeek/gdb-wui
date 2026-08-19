@@ -25,6 +25,26 @@ func RequireTools(t *testing.T, tools ...string) {
 	}
 }
 
+// RequireInstalledTools is RequireTools where a skip would go unnoticed.
+//
+// The workflow installs these on purpose, so a missing one there means the
+// install step changed rather than that this machine is short of a package —
+// and a test that quietly skips is a test nobody notices. Off CI it skips like
+// anything else.
+func RequireInstalledTools(t *testing.T, tools ...string) {
+	t.Helper()
+	for _, tool := range tools {
+		if _, err := exec.LookPath(tool); err == nil {
+			continue
+		}
+		if os.Getenv("CI") != "" {
+			t.Fatalf("%s is not installed, and CI installs it; "+
+				"the workflow's install step and this test disagree", tool)
+		}
+		t.Skipf("%s is not installed; skipping", tool)
+	}
+}
+
 // RequireGDB skips unless gdb is present and at least version min (major).
 // gdb 10 is the floor: it is the first release whose MI3 carries the features
 // the debugger layer relies on.

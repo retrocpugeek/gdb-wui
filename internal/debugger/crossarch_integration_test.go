@@ -37,7 +37,7 @@ import (
 // can be served or breakpointed by name.
 func armProject(t *testing.T) *srcfs.FS {
 	t.Helper()
-	testutil.RequireTools(t, "arm-linux-gnueabihf-gcc", "qemu-arm", "gdb-multiarch")
+	testutil.RequireInstalledTools(t, "arm-linux-gnueabihf-gcc", "qemu-arm", "gdb-multiarch")
 
 	dir := t.TempDir()
 	src := filepath.Join(testutil.RepoRoot(t), "testdata", "fixtures", "hello.c")
