@@ -380,6 +380,9 @@ func (s *Session) inferiorSignal(r *request) (any, *wire.Error) {
 		return nil, wire.NewError(wire.CodeBadRequest, "unknown signal "+req.Signal)
 	}
 	if s.st.inferiorPID == 0 {
+		s.learnInferiorPID(r.ctx)
+	}
+	if s.st.inferiorPID == 0 {
 		return nil, wire.NewError(wire.CodeNotReady, "the program is not running")
 	}
 	// The process group, so a signal reaches children too — and because that is
@@ -392,6 +395,36 @@ func (s *Session) inferiorSignal(r *request) (any, *wire.Error) {
 		}
 	}
 	return map[string]any{"sent": req.Signal}, nil
+}
+
+// learnInferiorPID asks gdb for the pid when the record carrying it has not
+// been handled yet.
+//
+// =thread-group-started is what normally supplies it, and it is queued behind
+// whatever the actor is doing. exec.run reports `running` as soon as gdb
+// accepts -exec-run, so a client acting on that event races the notification —
+// the actor picks between a waiting request and a waiting record, and either
+// can win. Pressing Ctrl-C in the terminal the instant the program starts is
+// exactly that, and it used to answer "the program is not running".
+//
+// -list-thread-groups is safe to ask while the inferior runs: it reports what
+// gdb knows about the process rather than reading it.
+func (s *Session) learnInferiorPID(ctx context.Context) {
+	rec, werr := s.send(ctx, "-list-thread-groups")
+	if werr != nil {
+		s.logf("-list-thread-groups: %s", werr.Message)
+		return
+	}
+	groups, ok := rec.Results.List("groups")
+	if !ok {
+		return
+	}
+	for _, g := range groups {
+		if pid, ok := g.Int("pid"); ok && pid > 0 {
+			s.st.inferiorPID = pid
+			return
+		}
+	}
 }
 
 var signals = map[string]syscall.Signal{
