@@ -1212,3 +1212,44 @@ func TestSnapshotIsCurrentWhenEventFires(t *testing.T) {
 			atEvent)
 	}
 }
+
+// The pid inferior.signal needs arrives in a =thread-group-started record, and
+// that record is queued behind whatever the actor is doing. exec.run reports
+// `running` as soon as gdb accepts -exec-run, so a client acting on that event
+// races the notification — the actor picks between a waiting request and a
+// waiting record, and either can win.
+//
+// Pressing Ctrl-C in the terminal the instant the program starts is exactly
+// that race, and it used to answer "the program is not running". CI lost the
+// race on 2026-08-11; this transcript loses it every time, by never sending the
+// record at all.
+func TestSignalAsksForThePIDWhenTheRecordHasNotArrived(t *testing.T) {
+	h := start(t, loadTranscript+`
+>? -inferior-tty-set*
+< ^done
+> -exec-run
+< ^running
+> -list-thread-groups
+< ^done,groups=[{id="i1",type="process",pid="2147483646",executable="/tmp/prog"}]
+`)
+	h.load()
+	h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+
+	// The signal itself cannot land: 2147483646 is above any pid_max, so the
+	// kill fails and the handler says so. What matters is which failure — this
+	// must not be the not_ready that the missing pid used to produce.
+	_, werr := h.do(wire.TypeInferiorSignal, wire.InferiorSignalRequest{Signal: "INT"})
+	if werr != nil && werr.Code == wire.CodeNotReady {
+		t.Errorf("still not_ready after asking gdb for the pid: %s", werr.Message)
+	}
+	var asked bool
+	for _, cmd := range h.fake.Received() {
+		if cmd == "-list-thread-groups" {
+			asked = true
+		}
+	}
+	if !asked {
+		t.Error("the pid was never asked for; the signal path still depends on " +
+			"a record that may not have been handled yet")
+	}
+}
