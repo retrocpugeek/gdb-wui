@@ -381,19 +381,22 @@ different binaries:
 rbp_offset = ghidra_offset + 8
 ```
 
-On ARM, from `frame.spDepth` rather than from `frame.size`:
+On ARM and AArch64, from `frame.spDepth` rather than from `frame.size`:
 
 ```
 sp_offset = ghidra_offset - frame.spDepth
 ```
 
-AArch64 has no rule established, so its stack variables get no expression. That
-was measured too: `bb_full_fd_action` in busybox opens with
-`stp x19, x20, [sp, #-96]!` and then `sub sp, sp, #4112`, a 4208-byte frame,
-while Ghidra reports `frame.size` as 104. `spDepth` is the number that would
-answer it — it is emitted for every architecture — but nobody has yet checked
-one against a live AArch64 inferior, and an unverified frame base reads as a
-value rather than as a mistake.
+`frame.size` was the first thing tried on AArch64 and it is why that
+architecture went unsupported for a while: `bb_full_fd_action` in busybox opens
+with `stp x19, x20, [sp, #-96]!` and then `sub sp, sp, #4112`, a 4208-byte
+frame, while Ghidra reports `frame.size` as 104. `spDepth` is the number that
+answers it.
+
+Anything else gets no expression. A depth is not a rule on its own — which
+register carries the frame base, and what the call instruction did to the stack,
+is knowledge about the ABI — and a frame base that has not been checked against
+a live inferior reads as a value rather than as a mistake.
 
 gdb's own CFA is the other way in. `info frame` reports "Previous frame's sp",
 which equals Ghidra's frame base exactly and is correct even mid-prologue. It is
@@ -446,7 +449,7 @@ array base. The prologue's eleven register spills at `264(sp)`…`344(sp)` map t
 Ghidra `-88`…`-8`, with `ra` at `-8`, which is the same frame base seen from
 the other end.
 
-#### ARM32, measured
+#### ARM and AArch64, measured
 
 Established on a statically linked Thumb-2 binary built by
 `arm-linux-gnueabihf-gcc 15.2.0`, read back through `qemu-arm` and
@@ -486,10 +489,24 @@ reads 63 through gdb with no symbols at all. `frame.size` gets worse: with no
 debug information to name `bigframe`'s locals, Ghidra reports the frame as
 **13** bytes against a real 4128.
 
-`TestArmStackExpressionsReadTheRightMemory` asks the stricter question the
-build makes available: it compares the address of every generated expression
-with the address gdb gets from DWARF for the variable of the same name, so a
-frame base that is out by four fails rather than reading plausibly.
+AArch64 takes the same rule and needs nothing added to it, measured the same
+way with `aarch64-linux-gnu-gcc 15.2.0` under `qemu-aarch64`. The prologues have
+nothing in common with the 32-bit ones — `accumulate` is a bare
+`sub sp, sp, #0x20`, and `bigframe` writes `stp x29, x30, [sp, #-16]!` and then
+`sub sp, sp, x13`, subtracting a *register* — and the depth accounts for both,
+at -32 and -4144. Against `frame.size`'s 20 and 4132.
+
+```
+(gdb) p &total
+$1 = (int *) 0x76d91317c368
+(gdb) p (void *)($sp + 24)                24 = ghidra_offset(-8) - spDepth(-32)
+$2 = (void *) 0x76d91317c368
+```
+
+`TestCrossArchStackExpressionsReadTheRightMemory` asks the stricter question the
+build makes available, for both: it compares the address of every generated
+expression with the address gdb gets from DWARF for the variable of the same
+name, so a frame base that is out by four fails rather than reading plausibly.
 
 #### frame.size is not the prologue
 
@@ -497,7 +514,8 @@ frame base that is out by four fails rather than reading plausibly.
 instructions that moved the stack pointer. It is the distance from the frame
 base down to the lowest slot something references, so it understates the frame
 whenever the bottom of it is never touched — by four bytes in both ARM
-functions above, and by 4104 bytes in the AArch64 busybox function.
+functions above, by twelve in the AArch64 ones, and by 4104 in the AArch64
+busybox function.
 
 `frame.spDepth` is the prologue's whole effect: Ghidra's own stack analysis
 (`CallDepthChangeInfo`), sampled across the function and reported as the depth

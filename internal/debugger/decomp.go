@@ -689,13 +689,18 @@ func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) str
 			// `jal` touches no memory; the prologue's single stack adjustment
 			// is the whole frame, so entry_sp = $sp + frameSize.
 			base, delta = "$sp", v.Storage.Offset+frame.Size
-		case strings.HasPrefix(lang, "ARM"):
+		case strings.HasPrefix(lang, "ARM"), strings.HasPrefix(lang, "AARCH64"):
 			// `bl` leaves the return address in `lr` and touches no memory, so
 			// entry_sp is wherever the prologue left the stack pointer:
 			// entry_sp = $sp - spDepth. frame.Size is not that number — it is
 			// derived from the variables Ghidra found and understates the
 			// prologue whenever the lowest slot is one nothing touches, which
 			// on gcc's ARM output is most functions.
+			//
+			// One rule for both widths, because the prologues differ in every
+			// way except the one that matters here: 32-bit gcc pushes and then
+			// subtracts, AArch64 writes `stp x29, x30, [sp, #-16]!` and then
+			// subtracts a register, and the depth accounts for all of it.
 			//
 			// No depth means Ghidra could not settle on one, and a frame whose
 			// stack pointer moves under it has no static expression to give.

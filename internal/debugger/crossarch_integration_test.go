@@ -63,8 +63,9 @@ func armProject(t *testing.T) *srcfs.FS {
 	return f
 }
 
-// qemuStub runs the named program under qemu, stopped, waiting for a debugger.
-func qemuStub(t *testing.T, dir, exe string) int {
+// qemuStub runs the named program under the named emulator, stopped, waiting
+// for a debugger.
+func qemuStub(t *testing.T, emulator, dir, exe string) int {
 	t.Helper()
 	// A port the kernel just handed out, released again immediately. Racy in
 	// principle and not in practice, and the alternative — a fixed port — fails
@@ -76,7 +77,7 @@ func qemuStub(t *testing.T, dir, exe string) int {
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
 
-	cmd := exec.Command("qemu-arm", "-g", fmt.Sprint(port), filepath.Join(dir, exe))
+	cmd := exec.Command(emulator, "-g", fmt.Sprint(port), filepath.Join(dir, exe))
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting qemu: %v", err)
 	}
@@ -89,7 +90,7 @@ func qemuStub(t *testing.T, dir, exe string) int {
 
 func TestArmProgramUnderQemu(t *testing.T) {
 	files := armProject(t)
-	port := qemuStub(t, files.Abs(), "hello-arm")
+	port := qemuStub(t, "qemu-arm", files.Abs(), "hello-arm")
 	h := startRealWithGDB(t, files, "gdb-multiarch")
 
 	// The ELF first: only loading the program sets the architecture, and

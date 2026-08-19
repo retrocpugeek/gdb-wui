@@ -21,26 +21,39 @@ import (
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
 
-// The decompiler's stack expressions on ARM, against a live ARM program.
+// The decompiler's stack expressions on ARM and AArch64, against live programs
+// for both.
 //
-// The x86 rule can be checked against the host's own binaries; this one cannot,
-// and it is the case where being wrong is quiet. Ghidra's stack offsets are
+// The x86 rule can be checked against the host's own binaries; these cannot,
+// and they are the case where being wrong is quiet. Ghidra's stack offsets are
 // relative to the stack pointer at function entry, and an entry_sp that is four
 // bytes out reads the neighbouring variable — a plausible number, from the
 // wrong slot.
 //
-// Needs the cross toolchain, the emulator, a multi-architecture gdb and a
-// Ghidra installation. CI has the first three, so this skips there.
+// Needs the cross toolchains, the emulators, a multi-architecture gdb and a
+// Ghidra installation. CI has everything but Ghidra, so this skips there.
 
-// Lines of armDemo, which the test breaks on. Checked against the source below
+// The architectures under test. One rule covers both, and the prologues gcc
+// gives them share nothing: 32-bit ARM pushes and then subtracts a constant,
+// AArch64 writes `stp x29, x30, [sp, #-16]!` and then subtracts a register.
+var crossArches = []struct {
+	name string
+	gcc  string
+	qemu string
+}{
+	{name: "arm", gcc: "arm-linux-gnueabihf-gcc", qemu: "qemu-arm"},
+	{name: "aarch64", gcc: "aarch64-linux-gnu-gcc", qemu: "qemu-aarch64"},
+}
+
+// Lines of crossDemo, which the test breaks on. Checked against the source below
 // rather than trusted, because a line off by one moves the stop into the loop
 // and quietly changes what the locals hold.
 const (
-	lineArmAccumulateReturn = 8
-	lineArmBigframeReturn   = 17
+	lineAccumulateReturn = 8
+	lineBigframeReturn   = 17
 )
 
-const armDemo = `#include <stdio.h>
+const crossDemo = `#include <stdio.h>
 #include <string.h>
 
 int accumulate(int n)
@@ -68,35 +81,41 @@ int main(void)
 }
 `
 
-// armDecompKit is a session on an ARM program: a real gdb-multiarch talking to
-// a real qemu, with a real Ghidra behind the decompiled view.
-type armDecompKit struct {
+// crossDecompKit is a session on a program for another architecture: a real
+// gdb-multiarch talking to a real qemu, with a real Ghidra behind the
+// decompiled view.
+type crossDecompKit struct {
 	do  func(string, any) any
 	try func(string, any) (any, *wire.Error)
 }
 
-func armDecompHarness(t *testing.T) armDecompKit {
+func crossDecompHarness(t *testing.T, gcc, qemu string) crossDecompKit {
 	t.Helper()
-	testutil.RequireInstalledTools(t, "arm-linux-gnueabihf-gcc", "qemu-arm", "gdb-multiarch")
+	// Ghidra first, and that order is the point: CI installs the cross
+	// toolchains and RequireInstalledTools fails rather than skips when one of
+	// them is missing there. CI has no Ghidra, so this test skips there for a
+	// reason of its own, and asking for compilers it will never use would turn
+	// that into a demand on the workflow.
 	install, err := ghidra.Locate("")
 	if err != nil {
 		t.Skipf("no Ghidra installation: %v", err)
 	}
+	testutil.RequireInstalledTools(t, gcc, qemu, "gdb-multiarch")
 
 	dir := t.TempDir()
-	src := filepath.Join(dir, "armdemo.c")
-	if err := os.WriteFile(src, []byte(armDemo), 0o644); err != nil {
+	src := filepath.Join(dir, "crossdemo.c")
+	if err := os.WriteFile(src, []byte(crossDemo), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	checkLine(t, armDemo, lineArmAccumulateReturn, "return total;")
-	checkLine(t, armDemo, lineArmBigframeReturn, "return total;")
+	checkLine(t, crossDemo, lineAccumulateReturn, "return total;")
+	checkLine(t, crossDemo, lineBigframeReturn, "return total;")
 
 	// Statically linked so qemu needs no sysroot, and built inside the project
 	// so gdb can find the source by the path the compiler recorded.
-	out, err := exec.Command("arm-linux-gnueabihf-gcc", "-g", "-O0", "-static",
-		"-o", filepath.Join(dir, "armdemo"), src).CombinedOutput()
+	out, err := exec.Command(gcc, "-g", "-O0", "-static",
+		"-o", filepath.Join(dir, "crossdemo"), src).CombinedOutput()
 	if err != nil {
-		t.Fatalf("cross-compiling armdemo.c: %v\n%s", err, out)
+		t.Fatalf("cross-compiling crossdemo.c: %v\n%s", err, out)
 	}
 
 	files, err := srcfs.Open(dir)
@@ -147,64 +166,70 @@ func armDecompHarness(t *testing.T) armDecompKit {
 		return out
 	}
 
-	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "armdemo"})
-	port := qemuStub(t, dir, "armdemo")
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "crossdemo"})
+	port := qemuStub(t, qemu, dir, "crossdemo")
 	do(wire.TypeConsoleExec, wire.ConsoleExecRequest{
 		Line: fmt.Sprintf("target remote 127.0.0.1:%d", port),
 	})
 	waitReady(t, do)
-	return armDecompKit{do: do, try: try}
+	return crossDecompKit{do: do, try: try}
 }
 
-// TestArmStackExpressionsReadTheRightMemory is the ARM half of
-// TestDecompStackExpressionsReadTheRightMemory, and it asks a stricter
+// TestCrossArchStackExpressionsReadTheRightMemory is the ARM and AArch64 half
+// of TestDecompStackExpressionsReadTheRightMemory, and it asks a stricter
 // question. The program is built with debug information, so gdb knows where
 // each local really is: every address the decompiler's expression computes is
 // compared against the one gdb gets from DWARF for the variable of the same
 // name.
 //
 // bigframe is in here for a specific reason. Ghidra reports its frame size as
-// 4124 where the prologue moves the stack pointer 4128, because the size is
-// derived from the variables Ghidra found rather than from the prologue. A
-// rule built on frame.size lands every one of its locals four bytes low.
-func TestArmStackExpressionsReadTheRightMemory(t *testing.T) {
-	k := armDecompHarness(t)
-	do := k.do
+// 4124 on ARM and 4132 on AArch64, where the prologues move the stack pointer
+// 4128 and 4144, because the size is derived from the variables Ghidra found
+// rather than from the prologue. A rule built on frame.size lands every one of
+// its locals in the wrong place, and only just — which reads as a value.
+func TestCrossArchStackExpressionsReadTheRightMemory(t *testing.T) {
+	for _, arch := range crossArches {
+		t.Run(arch.name, func(t *testing.T) {
+			k := crossDecompHarness(t, arch.gcc, arch.qemu)
+			do := k.do
 
-	do(wire.TypeBpSetSource, wire.BreakpointRequest{
-		Path: "armdemo.c", Line: lineArmAccumulateReturn,
-	})
-	do(wire.TypeBpSetSource, wire.BreakpointRequest{
-		Path: "armdemo.c", Line: lineArmBigframeReturn,
-	})
-	do(wire.TypeExecContinue, wire.ExecRequest{})
-	waitStopped(t, do, 60*time.Second)
+			do(wire.TypeBpSetSource, wire.BreakpointRequest{
+				Path: "crossdemo.c", Line: lineAccumulateReturn,
+			})
+			do(wire.TypeBpSetSource, wire.BreakpointRequest{
+				Path: "crossdemo.c", Line: lineBigframeReturn,
+			})
+			do(wire.TypeExecContinue, wire.ExecRequest{})
+			waitStopped(t, do, 60*time.Second)
 
-	// accumulate(7) sums i*3 for i in 0..6 = 63, and one stack slot holds it.
-	fn := do(wire.TypeDecompFunction,
-		wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
-	if !checkArmStackVars(t, k, fn) {
-		t.Error("accumulate has no readable stack variables at all; " +
-			"the ARM frame rule produced no expressions")
-	}
-	if !readsValue(t, k, fn, "63") {
-		t.Error("no stack expression in accumulate read the accumulator's " +
-			"value of 63")
-	}
+			// accumulate(7) sums i*3 for i in 0..6 = 63, and one stack slot
+			// holds it.
+			fn := do(wire.TypeDecompFunction,
+				wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
+			if !checkStackVars(t, k, fn) {
+				t.Error("accumulate has no readable stack variables at all; " +
+					"the frame rule produced no expressions")
+			}
+			if !readsValue(t, k, fn, "63") {
+				t.Error("no stack expression in accumulate read the " +
+					"accumulator's value of 63")
+			}
 
-	do(wire.TypeExecContinue, wire.ExecRequest{})
-	waitStopped(t, do, 60*time.Second)
+			do(wire.TypeExecContinue, wire.ExecRequest{})
+			waitStopped(t, do, 60*time.Second)
 
-	fn = do(wire.TypeDecompFunction,
-		wire.DecompFunctionRequest{Target: "bigframe"}).(wire.DecompFunction)
-	if !checkArmStackVars(t, k, fn) {
-		t.Error("bigframe has no readable stack variables at all")
+			fn = do(wire.TypeDecompFunction,
+				wire.DecompFunctionRequest{Target: "bigframe"}).(wire.DecompFunction)
+			if !checkStackVars(t, k, fn) {
+				t.Error("bigframe has no readable stack variables at all")
+			}
+		})
 	}
 }
 
-// checkArmStackVars compares each stack expression's address with gdb's own,
+// checkStackVars compares each stack expression's address with gdb's own,
 // and reports whether there was anything to compare.
-func checkArmStackVars(t *testing.T, k armDecompKit, fn wire.DecompFunction) bool {
+func checkStackVars(t *testing.T, k crossDecompKit, fn wire.DecompFunction) bool {
 	t.Helper()
 	var compared int
 	for _, v := range fn.Vars {
@@ -247,7 +272,7 @@ func checkArmStackVars(t *testing.T, k armDecompKit, fn wire.DecompFunction) boo
 
 // readsValue says whether any of the function's stack expressions evaluates to
 // the value given.
-func readsValue(t *testing.T, k armDecompKit, fn wire.DecompFunction, want string) bool {
+func readsValue(t *testing.T, k crossDecompKit, fn wire.DecompFunction, want string) bool {
 	t.Helper()
 	for _, v := range fn.Vars {
 		if v.Storage != wire.DecompStorageStack || v.Expr == "" {

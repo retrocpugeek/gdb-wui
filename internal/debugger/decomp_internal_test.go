@@ -108,18 +108,29 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 				"4124 would have put it at r7+16",
 		},
 		{
+			name:  "AArch64 stack, the same rule as its 32-bit sibling",
+			lang:  "AARCH64:LE:64:v8A",
+			ptr:   8,
+			frame: ghidra.Frame{Size: 20, SPDepth: depth(-32)},
+			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -8}},
+			want: "*(int *)($sp + 0x18)",
+			because: "accumulate opens with sub sp,sp,#0x20 and holds total " +
+				"at [sp,#24], which gdb agrees is &total",
+		},
+		{
 			// The important negative. A plausible wrong address reads as a
 			// value; a blank reads as "not known", which is the truth.
 			name:  "an architecture with no established rule gets no guess",
-			lang:  "AARCH64:LE:64:v8A",
-			ptr:   8,
-			frame: ghidra.Frame{Size: 32},
+			lang:  "PowerPC:BE:32:default",
+			ptr:   4,
+			frame: ghidra.Frame{Size: 32, SPDepth: depth(-32)},
 			v: ghidra.Var{Name: "local_8", Type: "int",
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -8}},
 			want: "",
-			because: "a link register means no return address on the stack, so " +
-				"neither the x86 nor the MIPS rule applies, and AArch64 has no " +
-				"measured rule of its own",
+			because: "a depth is not a rule: which register holds it, and what " +
+				"the call did to the stack, is knowledge about the ABI that " +
+				"has to be measured before it can be used",
 		},
 		{
 			name:  "ARM with no settled depth gets no expression either",

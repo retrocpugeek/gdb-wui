@@ -447,8 +447,8 @@ implementing:
     that do.
 
 44. **Ghidra's `frame.size` is not what the prologue did to the stack
-    pointer.** Measured on ARM32 and x86-64 builds of the same source, with
-    `arm-linux-gnueabihf-gcc 15.2.0` and Ghidra 12.1.2.
+    pointer.** Measured on ARM32, AArch64 and x86-64 builds of the same source,
+    with gcc 15.2.0 for each and Ghidra 12.1.2.
 
     The frame size is derived from the variables Ghidra found: it reaches from
     the frame base down to the lowest slot something references, and stops
@@ -475,6 +475,13 @@ implementing:
     to decompile glibc's 2020-instruction `__printf_buffer`, under a
     millisecond for anything of ordinary size — so it is computed only for a
     function that has something on the stack to apply it to.
+
+    The depth also survives the prologues that defeat a simpler reading. On
+    AArch64 `bigframe` opens with `stp x29, x30, [sp, #-16]!` — a pre-indexed
+    store, which moves the stack pointer as a side effect — and then
+    `sub sp, sp, x13`, subtracting a *register* whose value the analysis has to
+    have propagated. The depth is -4144, which is right, against a `frame.size`
+    of 4132.
 
     The earlier MIPS64 rule survives on the same evidence it was established
     on: `process_packet`'s spills reach the bottom of its frame, so there the

@@ -208,9 +208,9 @@ rather than wrong.
 
 The third is the architecture. Turning Ghidra's stack offsets into an address
 needs the frame base, which is recovered differently on every ABI and is
-established by measurement: x86-64, MIPS64 and ARM have a rule, AArch64 does
-not, and on AArch64 stack locals therefore show nothing at all. A guess there
-would read as a value from the neighbouring slot.
+established by measurement: x86-64, MIPS64, ARM and AArch64 have a rule, and on
+anything else stack locals show nothing at all. A guess there would read as a
+value from the neighbouring slot.
 See [stack offsets](decompilation.md#stack-offsets).
 
 ## Rename is greyed out in the Decompiled tab

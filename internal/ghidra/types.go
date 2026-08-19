@@ -124,7 +124,8 @@ type Line struct {
 // Needed because a stack variable's offset is relative to Ghidra's frame base
 // — the stack pointer at function entry — and not to any register gdb knows.
 // Recovering that base is per-ABI: $rbp+8 on x86-64 with a frame pointer,
-// $sp+Size on MIPS64, $sp-SPDepth on ARM. See docs/decompilation.md.
+// $sp+Size on MIPS64, $sp-SPDepth on ARM and AArch64. See
+// docs/decompilation.md.
 type Frame struct {
 	Size                int  `json:"size"`
 	LocalSize           int  `json:"localSize"`
