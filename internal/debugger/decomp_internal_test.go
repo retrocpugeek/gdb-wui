@@ -17,6 +17,10 @@ import (
 // numbers they were established from — see docs/decompilation.md. Both cases
 // are real: taken from build/structs on x86-64 and from vwfw-linux_64 on
 // MIPS64, and both were checked against the instruction stream.
+// depth is Ghidra's settled stack depth for a function, which is absent rather
+// than zero when it could not settle on one.
+func depth(n int) *int { return &n }
+
 func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -82,17 +86,51 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			because: "unique storage exists nowhere in the machine",
 		},
 		{
+			name:  "ARM stack, from the depth the prologue leaves behind",
+			lang:  "ARM:LE:32:v8",
+			ptr:   4,
+			frame: ghidra.Frame{Size: 20, SPDepth: depth(-24)},
+			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -16}},
+			want: "*(int *)($sp + 0x8)",
+			because: "accumulate opens with push {r7}; sub sp,#20 and holds " +
+				"total at [r7,#8]: entry_sp = $sp - spDepth",
+		},
+		{
+			name:  "ARM stack, where frame.size would have been four bytes out",
+			lang:  "ARM:LE:32:v8",
+			ptr:   4,
+			frame: ghidra.Frame{Size: 4124, SPDepth: depth(-4128)},
+			v: ghidra.Var{Name: "buf", Type: "char[4096]", Size: 4096,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -4108}},
+			want: "*(char[4096] *)($sp + 0x14)",
+			because: "bigframe's buf is memset from r7+20, and frame.size of " +
+				"4124 would have put it at r7+16",
+		},
+		{
 			// The important negative. A plausible wrong address reads as a
 			// value; a blank reads as "not known", which is the truth.
 			name:  "an architecture with no established rule gets no guess",
+			lang:  "AARCH64:LE:64:v8A",
+			ptr:   8,
+			frame: ghidra.Frame{Size: 32},
+			v: ghidra.Var{Name: "local_8", Type: "int",
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -8}},
+			want: "",
+			because: "a link register means no return address on the stack, so " +
+				"neither the x86 nor the MIPS rule applies, and AArch64 has no " +
+				"measured rule of its own",
+		},
+		{
+			name:  "ARM with no settled depth gets no expression either",
 			lang:  "ARM:LE:32:v8",
 			ptr:   4,
 			frame: ghidra.Frame{Size: 32},
 			v: ghidra.Var{Name: "local_8", Type: "int",
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -8}},
 			want: "",
-			because: "a link register means no return address on the stack, so " +
-				"neither the x86 nor the MIPS rule applies",
+			because: "a stack pointer that moves through the body has no one " +
+				"depth, and frame.size is not a stand-in for it",
 		},
 		{
 			name:  "a stack variable with no type still gets an expression",

@@ -35,8 +35,8 @@ p.add_argument("--context", type=int, default=6, help="lines either side of --pc
 args = p.parse_args()
 
 doc = json.load(open(args.sidecar))
-if doc.get("schema") != 1:
-    sys.exit(f"unknown schema {doc.get('schema')}; this reader knows 1")
+if doc.get("schema") != 2:
+    sys.exit(f"unknown schema {doc.get('schema')}; this reader knows 2")
 
 bias = int(args.bias, 16) if args.bias else 0
 image_base = int(doc["program"]["imageBase"], 16)
@@ -159,6 +159,16 @@ def stack_expr(v):
         # `jal` touches no memory; the prologue's single `daddiu sp,sp,-N` is
         # the whole frame, so entry_sp = $sp + frameSize.
         base, delta = "$sp", off + fn["frame"]["size"]
+    elif lang.startswith("ARM"):
+        # `bl` touches no memory either, so entry_sp is wherever the prologue
+        # left the stack pointer: entry_sp = $sp - spDepth. frame.size is not
+        # that number — it is derived from the variables Ghidra found, and on
+        # gcc's ARM output it is routinely four bytes short.
+        depth = fn["frame"].get("spDepth")
+        if depth is None:
+            return (f"<stack {off}: this function's stack pointer never "
+                    f"settles, so there is no static expression for it>")
+        base, delta = "$sp", off - depth
     else:
         return f"<stack {off}: entry_sp rule not established for {lang}>"
     sign = "+" if delta >= 0 else "-"
