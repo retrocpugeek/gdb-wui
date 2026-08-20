@@ -505,7 +505,7 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 			Source:  decompSource(v.Source),
 			Param:   v.Param,
 			Storage: storageKind(v.Storage.Kind),
-			Expr:    varExpr(v, fn.Frame, s.decompLanguage(), s.decompPointerSize()),
+			Expr:    varExpr(v, fn.Frame, s.decompLanguage()),
 			PC:      shiftAddr(v.PC, bias),
 		})
 	}
@@ -665,7 +665,7 @@ func storageKind(k string) string {
 // per-ABI, and each rule below was established by measurement — see
 // docs/decompilation.md. An architecture with no established rule gets no
 // expression rather than a guess, because a wrong address reads as a value.
-func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) string {
+func varExpr(v ghidra.Var, frame ghidra.Frame, lang string) string {
 	switch v.Storage.Kind {
 	case ghidra.StorageRegister:
 		if v.Storage.Register == "" {
@@ -681,26 +681,38 @@ func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) str
 		var base string
 		var delta int
 		switch {
-		case strings.HasPrefix(lang, "x86"):
-			// `call` pushed the return address and `push %rbp` put the saved
-			// frame pointer one word below it: entry_sp = $rbp + pointerSize.
-			base, delta = "$rbp", v.Storage.Offset+pointerSize
-		case strings.HasPrefix(lang, "MIPS"):
-			// `jal` touches no memory; the prologue's single stack adjustment
-			// is the whole frame, so entry_sp = $sp + frameSize.
-			base, delta = "$sp", v.Storage.Offset+frame.Size
-		case strings.HasPrefix(lang, "ARM"), strings.HasPrefix(lang, "AARCH64"):
-			// `bl` leaves the return address in `lr` and touches no memory, so
-			// entry_sp is wherever the prologue left the stack pointer:
-			// entry_sp = $sp - spDepth. frame.Size is not that number — it is
-			// derived from the variables Ghidra found and understates the
-			// prologue whenever the lowest slot is one nothing touches, which
-			// on gcc's ARM output is most functions.
+		case strings.HasPrefix(lang, "x86"), strings.HasPrefix(lang, "ARM"),
+			strings.HasPrefix(lang, "AARCH64"), strings.HasPrefix(lang, "PowerPC"),
+			strings.HasPrefix(lang, "MIPS"):
+			// One rule, on every architecture measured: the address is
+			// entry_sp + offset, and entry_sp is wherever the prologue left
+			// the stack pointer, so entry_sp = $sp - spDepth.
 			//
-			// One rule for both widths, because the prologues differ in every
-			// way except the one that matters here: 32-bit gcc pushes and then
-			// subtracts, AArch64 writes `stp x29, x30, [sp, #-16]!` and then
-			// subtracts a register, and the depth accounts for all of it.
+			// The prologues share nothing. 32-bit ARM pushes and then
+			// subtracts a constant; AArch64 writes `stp x29, x30, [sp, #-16]!`
+			// and then subtracts a register; PowerPC does the whole thing in
+			// one `stwu r1,-48(r1)`, or two `stdu`s for a large frame; MIPS in
+			// one `addiu sp,sp,-16`; x86 pushes a return address before the
+			// function is even entered. The depth accounts for all of them,
+			// because it is measured from the same place the offsets are.
+			//
+			// The two rules this replaced were both right about the binary
+			// they were measured on and wrong in general. `$rbp + pointerSize`
+			// on x86 holds only where there is a frame pointer, and `-O2`
+			// omits one: measured on gcc 15's `-O2` output, the addresses came
+			// out 192 bytes into the *caller's* frame. `frame.Size` on MIPS
+			// holds only where the frame's lowest slot is one something
+			// touches, because the size is derived from the variables Ghidra
+			// found rather than from the prologue; on gcc's output it was out
+			// by four bytes on 32-bit and twelve on 64-bit. Neither failure
+			// looks like a failure — both read as a value.
+			//
+			// A positive offset is ordinary rather than a mistake: the
+			// PowerPC, MIPS and i386 ABIs pass or spill arguments in the
+			// *caller's* frame, so a parameter sits at or above entry_sp while
+			// the locals are below it. A negative delta is ordinary too —
+			// x86-64's red zone puts a leaf function's locals below its own
+			// stack pointer. The arithmetic is the same for both.
 			//
 			// No depth means Ghidra could not settle on one, and a frame whose
 			// stack pointer moves under it has no static expression to give.
@@ -1046,18 +1058,6 @@ func (s *Session) decompLanguage() string {
 		return ""
 	}
 	return s.decomp.client.Ready().Program.LanguageID
-}
-
-func (s *Session) decompPointerSize() int {
-	s.decomp.mu.Lock()
-	defer s.decomp.mu.Unlock()
-	if s.decomp.client == nil {
-		return 8
-	}
-	if n := s.decomp.client.Ready().Program.PointerSize; n > 0 {
-		return n
-	}
-	return 8
 }
 
 // hashExe reads the loaded executable and returns its sha256, or "" if it

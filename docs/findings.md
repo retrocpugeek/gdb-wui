@@ -447,8 +447,8 @@ implementing:
     that do.
 
 44. **Ghidra's `frame.size` is not what the prologue did to the stack
-    pointer.** Measured on ARM32, AArch64 and x86-64 builds of the same source,
-    with gcc 15.2.0 for each and Ghidra 12.1.2.
+    pointer.** Measured on ARM32, AArch64, PowerPC, PowerPC64 and x86-64 builds
+    of the same source, with gcc 15.2.0 for each and Ghidra 12.1.2.
 
     The frame size is derived from the variables Ghidra found: it reaches from
     the frame base down to the lowest slot something references, and stops
@@ -476,6 +476,18 @@ implementing:
     millisecond for anything of ordinary size — so it is computed only for a
     function that has something on the stack to apply it to.
 
+    PowerPC puts numbers on how far apart the two can be. 32-bit `accumulate`
+    allocates 48 bytes in one `stwu r1,-48(r1)` and reports a `frame.size` of
+    56. The 64-bit build of the same function allocates 80 and reports 132,
+    with a `localSize` of 192 — not an understatement of the frame but a
+    different quantity, and there is no arithmetic on either that recovers 80.
+
+    It also produced the first positive stack offsets: both PowerPC ABIs keep
+    the parameter save area in the caller's frame, so a spilled argument sits
+    *above* the frame base at `+48` while the locals are below it. Nothing in
+    the rule needed changing, but an implementation that assumed stack offsets
+    are negative would have been wrong there and nowhere else.
+
     The depth also survives the prologues that defeat a simpler reading. On
     AArch64 `bigframe` opens with `stp x29, x30, [sp, #-16]!` — a pre-indexed
     store, which moves the stack pointer as a side effect — and then
@@ -483,6 +495,22 @@ implementing:
     have propagated. The depth is -4144, which is right, against a `frame.size`
     of 4132.
 
-    The earlier MIPS64 rule survives on the same evidence it was established
-    on: `process_packet`'s spills reach the bottom of its frame, so there the
-    two numbers coincide.
+    The x86-64 rule did not survive either, and it failed the same way one
+    level up: it read `$rbp + 8`, which names the entry stack pointer only
+    where there is a frame pointer to name it with. `-O0` always has one, every
+    binary it was measured on was `-O0`, and `-O2` omits it. Measured on gcc
+    15's `-O2` output, the addresses landed 192 bytes away, inside the caller's
+    frame — mapped memory holding somebody's live data. The depth is right
+    there, and right in the two x86 cases the old rule could not express at
+    all: a leaf's red-zone locals below `$rsp`, and 32-bit x86, where emitting
+    `$rbp` got `void` out of gdb and showed nothing.
+
+    The MIPS rule did not survive. It read `ghidra_offset + frame.size`, and
+    the firmware it was established on is the one binary where that is right:
+    `process_packet`'s eleven register spills reach the bottom of its frame, so
+    the size and the depth are both 352 there. gcc's ordinary output leaves
+    slots nobody touches, and then they part — 20 against 16 on 32-bit
+    `accumulate`, 36 against 48 on the 64-bit build of it — which put every
+    local one slot away from where it lives. Checked against a live inferior:
+    gdb agrees with the depth. Nothing was going to catch that except a second
+    binary, built differently, on the same architecture.

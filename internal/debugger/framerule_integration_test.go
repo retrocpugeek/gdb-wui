@@ -3,6 +3,7 @@
 package debugger_test
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/retrocpugeek/gdb-wui/internal/debugger"
 	"github.com/retrocpugeek/gdb-wui/internal/ghidra"
+	"github.com/retrocpugeek/gdb-wui/internal/srcfs"
 	"github.com/retrocpugeek/gdb-wui/internal/testutil"
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
@@ -25,16 +27,27 @@ import (
 //
 // The substitution is sound because the two describe the same frame. gcc emits
 // `DW_AT_frame_base: DW_OP_call_frame_cfa` for these functions and locates each
-// local as `DW_OP_fbreg: <offset>` from it, and the call frame address on both
-// of these architectures is the stack pointer at function entry, which is
-// exactly what Ghidra's stack offsets are relative to. Checked rather than
-// assumed: the frame base is read out of the binary below, and the offsets it
-// yields are the same numbers Ghidra gives — leafish's a, b, x and y are at
-// -20, -24, -8 and -4 in both.
+// local as `DW_OP_fbreg: <offset>` from it, and on every architecture whose
+// call leaves the return address in a register the call frame address *is* the
+// stack pointer at function entry — exactly what Ghidra's offsets are relative
+// to. Checked rather than assumed: the frame base is read out of the binary
+// below, and the offsets it yields are the same numbers Ghidra gives —
+// AArch64's leafish has a, b, x and y at -20, -24, -8 and -4 in the sidecar and
+// in the debug information alike.
+//
+// x86 is the exception and it cancels. `call` pushes the return address before
+// the function is entered, so the call frame address is eight bytes above
+// Ghidra's base: the DWARF offsets are eight larger than Ghidra's, and the
+// depth this measures from the caller's stack pointer is eight smaller. The
+// pair is self-consistent, so the arithmetic under test is the same
+// arithmetic, and a constant that varExpr added of its own would still show
+// up as a wrong address.
 //
 // What this proves: that varExpr's arithmetic, its choice of base register and
 // its type translation produce an expression which gdb parses and which lands
-// on the variable, on a 32-bit and a 64-bit target. What it cannot prove is
+// on the variable, across every architecture in the table — two families, both
+// widths of each, and a big-endian one whose stack offsets go positive. What
+// it cannot prove is
 // that Ghidra's own numbers mean what this believes they mean. Only the test
 // with a real decompiler behind it can say that.
 func TestFrameRuleAgainstDebugInfo(t *testing.T) {
@@ -63,7 +76,7 @@ func TestFrameRuleAgainstDebugInfo(t *testing.T) {
 			// compiler's choice of when to evaluate an argument.
 			h.mustDo(wire.TypeExecContinue, wire.ExecRequest{})
 			waitStop(t, h)
-			checkFrameRule(t, h, arch.lang, arch.pointerSize, layout["accumulate"],
+			checkFrameRule(t, h, arch.lang, layout["accumulate"],
 				[]local{{"total", "int", 4}, {"n", "int", 4}})
 
 			h.rec.reset()
@@ -72,10 +85,86 @@ func TestFrameRuleAgainstDebugInfo(t *testing.T) {
 			// bigframe carries an array, which is the case that goes through
 			// gdbCType: `char[4096]` is C gdb will parse, and most of Ghidra's
 			// type vocabulary is not.
-			checkFrameRule(t, h, arch.lang, arch.pointerSize, layout["bigframe"],
+			checkFrameRule(t, h, arch.lang, layout["bigframe"],
 				[]local{{"buf", "char[4096]", 4096}, {"total", "int", 4}, {"n", "int", 4}})
 		})
 	}
+
+	// And the host's own architecture, at the optimisation level that broke
+	// the rule it used to have. No emulator: this one runs.
+	t.Run("x86-64-O2", func(t *testing.T) {
+		testutil.RequireGDB(t, 10)
+		testutil.RequireInstalledTools(t, "gcc", "objdump")
+
+		files := optProject(t)
+		layout := dwarfFrame(t, filepath.Join(files.Abs(), "opt"))
+		h := startRealWithFiles(t, files)
+
+		h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "opt"})
+		h.mustDo(wire.TypeBpSetSource, wire.BreakpointRequest{
+			Path: "opt.c", Line: lineTallyLoop,
+		})
+		h.mustDo(wire.TypeExecRun, wire.ExecRequest{})
+		waitStop(t, h)
+
+		// gcc omits the frame pointer here, so $rbp holds whatever main left
+		// in it. The rule this replaced computed addresses from that register
+		// and landed 192 bytes away, in the caller's frame.
+		checkFrameRule(t, h, "x86:LE:64:default", layout["tally"],
+			[]local{{"buf", "char[64]", 64}})
+	})
+}
+
+// Line of optSource that the -O2 test stops on, inside the loop so that buf is
+// certainly live rather than merely declared.
+const lineTallyLoop = 11
+
+// optSource is a program with stack that survives -O2: arrays the compiler
+// cannot hold in registers, and a call in the middle so the frame is live
+// across it. noinline because the point is to have a frame at all.
+const optSource = `#include <stdio.h>
+#include <string.h>
+
+__attribute__((noinline)) int tally(int n)
+{
+	char buf[64];
+	int total = 0;
+	memset(buf, 'a', sizeof buf);
+	buf[sizeof buf - 1] = 0;
+	for (int i = 0; i < n && i < (int)sizeof buf; i++)
+		total += buf[i] - 'a' + i * 3;
+	printf("%.4s\n", buf);
+	return total;
+}
+
+int main(void)
+{
+	printf("%d\n", tally(7));
+	return 0;
+}
+`
+
+// optProject builds optSource for the host at -O2.
+func optProject(t *testing.T) *srcfs.FS {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "opt.c")
+	if err := os.WriteFile(src, []byte(optSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkLine(t, optSource, lineTallyLoop, "total += buf[i]")
+
+	out, err := exec.Command("gcc", "-g", "-O2", "-o", filepath.Join(dir, "opt"), src).
+		CombinedOutput()
+	if err != nil {
+		t.Fatalf("compiling opt.c: %v\n%s", err, out)
+	}
+	files, err := srcfs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = files.Close() })
+	return files
 }
 
 // local is one variable to check, with the type a decompiler would report for
@@ -88,7 +177,7 @@ type local struct {
 
 // checkFrameRule builds each variable's expression the way the server does and
 // asks gdb where it lands.
-func checkFrameRule(t *testing.T, h *harness, lang string, pointerSize int,
+func checkFrameRule(t *testing.T, h *harness, lang string,
 	offsets map[string]int, locals []local,
 ) {
 	t.Helper()
@@ -116,7 +205,7 @@ func checkFrameRule(t *testing.T, h *harness, lang string, pointerSize int,
 				Name: l.name, Type: l.typ, Size: l.size,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: off},
 			},
-			ghidra.Frame{SPDepth: &depth}, lang, pointerSize)
+			ghidra.Frame{SPDepth: &depth}, lang)
 		if expr == "" {
 			t.Errorf("%s: no expression for a stack variable on %s", l.name, lang)
 			continue

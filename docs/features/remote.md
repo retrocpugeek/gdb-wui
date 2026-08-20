@@ -153,10 +153,20 @@ qemu. Load nothing first and gdb reads the stub's registers as x86-64 instead,
 which is the failure the warning above exists to prevent. The Registers pane is
 another way to see it: `r0` and `cpsr` rather than `rax` and `eflags`.
 
-The 64-bit recipe is the same with the names changed —
-`sudo apt install gcc-aarch64-linux-gnu`, then `aarch64-linux-gnu-gcc` and
-`qemu-aarch64` — and `show architecture` answers `aarch64` with `x0` and `sp` in
-the Registers pane. Both are tested against a live qemu on every push.
+Other architectures are the same recipe with the names changed. AArch64 wants
+`gcc-aarch64-linux-gnu`, `aarch64-linux-gnu-gcc` and `qemu-aarch64`, and answers
+`aarch64` with `x0` and `sp` in the Registers pane; PowerPC wants
+`gcc-powerpc-linux-gnu` or `gcc-powerpc64-linux-gnu` and `qemu-ppc` or
+`qemu-ppc64`, and answers `powerpc:common` or `powerpc:common64` with `r0` and
+`lr`; MIPS wants `gcc-mips-linux-gnu` or `gcc-mips64-linux-gnuabi64` and
+`qemu-mips` or `qemu-mips64`, and answers `mips:isa32r2` or `mips:isa64r2` with
+`zero` and `ra`. Seven of them are tested against a live qemu on every push,
+counting both endiannesses of 64-bit PowerPC.
+
+{: .note }
+> On 64-bit PowerPC's ELFv1 the call stack reads `._start` and `.main`, with a
+> leading dot. Those are the real function symbols: the undotted name is a
+> descriptor — a triple of addresses — and the dotted one is the code.
 
 Source debugging works from here like any other target: open `hello.c` in the
 file tree, click line 14, and the breakpoint resolves to `main`. That is what

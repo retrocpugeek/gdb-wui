@@ -135,6 +135,85 @@ func TestRelativeLinksPluginIsConfigured(t *testing.T) {
 	}
 }
 
+// TestSitePagesDoNotLinkToTheExcludedDocs catches the other way a relative
+// link 404s on the site while looking right in the source.
+//
+// docs/_config.yml excludes the developer documents — protocol.md,
+// decompilation.md, findings.md — from the build, deliberately: they describe
+// the wire protocol and the decompiler's internals, and they stay readable on
+// GitHub instead. A published page that links to one of them relatively points
+// at a page that was never built.
+//
+// The trap is that the same spelling is right from one directory and wrong
+// from another. `[decompilation](decompilation.md)` in docs/features/ means
+// features/decompilation.md, which is a page; the identical link in docs/
+// means the excluded developer document. Measured on the published site: it
+// rendered href="decompilation.md" and the target 404s.
+//
+// The convention for reaching an excluded document from a page is its URL on
+// GitHub, which is what index.md and reference/index.md already do.
+func TestSitePagesDoNotLinkToTheExcludedDocs(t *testing.T) {
+	root := repoRoot(t)
+	docs := filepath.Join(root, docsDir)
+	excluded := excludedPages(t, root)
+
+	link := regexp.MustCompile(`\]\(([^):]+\.md)(#[^)]*)?\)`)
+	for _, page := range markdownPages(t, root) {
+		rel, err := filepath.Rel(docs, page)
+		if err != nil || strings.HasPrefix(rel, "_site") {
+			continue
+		}
+		// An excluded document may link to its own kind: neither is published,
+		// and on GitHub both resolve.
+		if excluded[rel] {
+			continue
+		}
+		body, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range link.FindAllSubmatch(body, -1) {
+			target := filepath.Clean(filepath.Join(filepath.Dir(rel), string(m[1])))
+			if !excluded[target] {
+				continue
+			}
+			t.Errorf("%s links to %s, which _config.yml excludes from the site, "+
+				"so it will 404 there; link to "+
+				"https://github.com/retrocpugeek/gdb-wui/blob/master/docs/%s instead",
+				rel, string(m[1]), target)
+		}
+	}
+}
+
+// excludedPages reads the exclude list out of the site configuration, so that
+// the lint above cannot disagree with what Jekyll actually builds.
+func excludedPages(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, docsDir, "_config.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	var inList bool
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "exclude:") {
+			inList = true
+			continue
+		}
+		if inList {
+			item := strings.TrimSpace(line)
+			if !strings.HasPrefix(item, "- ") {
+				break
+			}
+			out[strings.TrimSpace(strings.TrimPrefix(item, "- "))] = true
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("no exclude list in docs/_config.yml; this test would pass vacuously")
+	}
+	return out
+}
+
 // TestDocImagesExist: every image a page references is actually there.
 func TestDocImagesExist(t *testing.T) {
 	root := repoRoot(t)

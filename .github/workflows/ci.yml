@@ -32,25 +32,37 @@ jobs:
       # wrong one yields plausible nonsense rather than an error. Without them
       # those tests skip, and a skip is exactly what nobody notices.
       #
-      # Both widths, because they are two different answers to every question
-      # there: a 32-bit stub's registers are r0 and cpsr, a 64-bit one's are x0
-      # and sp. qemu-user carries both emulators; the compilers are separate.
+      # Seven of them, and each is a different answer to the questions these
+      # tests ask: little-endian against big, 32-bit against 64, PowerPC's
+      # ELFv1 where a function symbol is a descriptor rather than the code, and
+      # the two ABIs where a spilled argument sits above the frame base rather
+      # than below it. The frame rule was wrong on MIPS until one of these
+      # turned up, so the cost of the extra packages is a rule that is checked
+      # rather than believed. qemu-user carries every emulator; the compilers
+      # are separate packages, and the whole install is around half a minute.
       - name: Install gdb and the cross-architecture toolchains
         run: |
           sudo apt-get update
           sudo apt-get install -y gdb gdb-multiarch qemu-user \
-            gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu
+            gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu \
+            gcc-powerpc-linux-gnu gcc-powerpc64-linux-gnu \
+            gcc-powerpc64le-linux-gnu gcc-mips-linux-gnu \
+            gcc-mips64-linux-gnuabi64
 
       - name: Versions
         run: |
           go version
           gdb --version | head -1
           gdb-multiarch --version | head -1
-          qemu-arm --version | head -1
-          qemu-aarch64 --version | head -1
           gcc --version | head -1
-          arm-linux-gnueabihf-gcc --version | head -1
-          aarch64-linux-gnu-gcc --version | head -1
+          for t in arm-linux-gnueabihf aarch64-linux-gnu powerpc-linux-gnu \
+                   powerpc64-linux-gnu powerpc64le-linux-gnu mips-linux-gnu \
+                   mips64-linux-gnuabi64; do
+            $t-gcc --version | head -1
+          done
+          for e in arm aarch64 ppc ppc64 ppc64le mips mips64; do
+            qemu-$e --version | head -1
+          done
 
       - name: gofmt
         run: |

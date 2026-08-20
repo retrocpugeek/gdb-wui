@@ -29,12 +29,12 @@ import (
 // Skipped unless the cross toolchains, the emulators and a multi-architecture
 // gdb are all installed; CI installs all of them.
 
-// The architectures under test. Both widths, because they are two different
-// answers to every question here: gdb reads a 32-bit stub's registers as r0
-// and a 64-bit one's as x0, and a wrong belief about which is a plausible
-// number rather than an error.
+// The architectures under test: three families, both widths of each, and both
+// endiannesses of PowerPC. They are different answers to every question here —
+// gdb reads a 32-bit ARM stub's registers as r0 and a 64-bit one's as x0, and
+// a wrong belief about which is a plausible number rather than an error.
 //
-// This table is also what the decompiler's cross-architecture test walks, so
+// This table is also what the decompiler's cross-architecture tests walk, so
 // there is one list of the architectures gdb-wui claims to handle.
 var crossArches = []struct {
 	name string
@@ -45,20 +45,65 @@ var crossArches = []struct {
 	// this architecture has.
 	arch string
 	regs []string
-	// lang and pointerSize are what Ghidra reports for this architecture, for
-	// the tests that build a decompiler's-eye view of a frame without one.
-	lang        string
-	pointerSize int
+	// entry is what gdb calls the function the stub stops in. Not always
+	// `_start`: under PowerPC's ELFv1 the symbol of that name is a function
+	// *descriptor* — a triple of addresses in .opd — and the code is a second
+	// symbol with a dot in front of it.
+	entry string
+	// lang is what Ghidra reports for this architecture, for the tests that
+	// build a decompiler's-eye view of a frame without one. The language IDs
+	// are the ones Ghidra chose for these very binaries — e500 and A2ALT are
+	// its reading of the ELF headers, not a preference of ours — and only
+	// their family prefix decides whether there is a rule at all.
+	lang string
 }{
 	{
 		name: "arm", gcc: "arm-linux-gnueabihf-gcc", qemu: "qemu-arm",
 		exe: "hello-arm", arch: "armv7", regs: []string{"r0", "cpsr"},
-		lang: "ARM:LE:32:v8", pointerSize: 4,
+		entry: "_start", lang: "ARM:LE:32:v8",
 	},
 	{
 		name: "aarch64", gcc: "aarch64-linux-gnu-gcc", qemu: "qemu-aarch64",
 		exe: "hello-aarch64", arch: "aarch64", regs: []string{"x0", "sp"},
-		lang: "AARCH64:LE:64:v8A", pointerSize: 8,
+		entry: "_start", lang: "AARCH64:LE:64:v8A",
+	},
+	// Big-endian, and the 64-bit one is ELFv1 — every function symbol is a
+	// descriptor in .opd rather than the code itself. Both are exactly the
+	// sort of target this project is for, and neither resembles the host.
+	//
+	// The two widths share their register names, so `show architecture` is
+	// what separates them: powerpc:common against powerpc:common64.
+	{
+		name: "ppc", gcc: "powerpc-linux-gnu-gcc", qemu: "qemu-ppc",
+		exe: "hello-ppc", arch: "powerpc:common", regs: []string{"r0", "lr"},
+		entry: "_start", lang: "PowerPC:BE:32:e500",
+	},
+	{
+		name: "ppc64", gcc: "powerpc64-linux-gnu-gcc", qemu: "qemu-ppc64",
+		exe: "hello-ppc64", arch: "powerpc:common64", regs: []string{"r0", "lr"},
+		entry: "._start", lang: "PowerPC:BE:64:A2ALT",
+	},
+	// The same processor little-endian, which is ELFv2 and so has no
+	// descriptors: the entry symbol loses its dot. Worth both, because the two
+	// ABIs are a real fork in what a PowerPC binary looks like.
+	{
+		name: "ppc64le", gcc: "powerpc64le-linux-gnu-gcc", qemu: "qemu-ppc64le",
+		exe: "hello-ppc64le", arch: "powerpc:common64", regs: []string{"r0", "lr"},
+		entry: "_start", lang: "PowerPC:LE:64:A2ALT",
+	},
+	// MIPS, whose rule this repository got wrong for a while: it was
+	// established on a firmware image where frame.size and the stack depth
+	// happen to be the same number, and gcc's ordinary output is where they
+	// are not. glibc calls the entry point __start here.
+	{
+		name: "mips", gcc: "mips-linux-gnu-gcc", qemu: "qemu-mips",
+		exe: "hello-mips", arch: "mips:isa32r2", regs: []string{"zero", "ra"},
+		entry: "__start", lang: "MIPS:BE:32:default",
+	},
+	{
+		name: "mips64", gcc: "mips64-linux-gnuabi64-gcc", qemu: "qemu-mips64",
+		exe: "hello-mips64", arch: "mips:isa64r2", regs: []string{"zero", "ra"},
+		entry: "__start", lang: "MIPS:BE:64:default",
 	},
 }
 
@@ -124,11 +169,13 @@ func qemuStub(t *testing.T, emulator, dir, exe string) int {
 
 func TestCrossArchProgramsUnderQemu(t *testing.T) {
 	for _, arch := range crossArches {
-		t.Run(arch.name, func(t *testing.T) { crossArchUnderQemu(t, arch.gcc, arch.qemu, arch.exe, arch.arch, arch.regs) })
+		t.Run(arch.name, func(t *testing.T) {
+			crossArchUnderQemu(t, arch.gcc, arch.qemu, arch.exe, arch.arch, arch.entry, arch.regs)
+		})
 	}
 }
 
-func crossArchUnderQemu(t *testing.T, gcc, qemu, exe, arch string, regs []string) {
+func crossArchUnderQemu(t *testing.T, gcc, qemu, exe, arch, entry string, regs []string) {
 	files := crossProject(t, gcc, qemu, exe)
 	port := qemuStub(t, qemu, files.Abs(), exe)
 	h := startRealWithGDB(t, files, "gdb-multiarch")
@@ -149,8 +196,8 @@ func crossArchUnderQemu(t *testing.T, gcc, qemu, exe, arch string, regs []string
 	waitFor(t, h, func(snap wire.Hello) bool {
 		return snap.RunState == wire.RunStateStopped && len(snap.Frames) > 0
 	}, "a stop at the entry point")
-	if got := h.sess.Snapshot().Frames[0].Func; got != "_start" {
-		t.Errorf("stopped in %q, want _start", got)
+	if got := h.sess.Snapshot().Frames[0].Func; got != entry {
+		t.Errorf("stopped in %q, want %s", got, entry)
 	}
 
 	// The architecture came out of the ELF rather than out of the stub, which
