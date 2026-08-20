@@ -100,15 +100,10 @@ func TestInferiorOutputIsNotInTheMIStream(t *testing.T) {
 	if got := collectInferior(t, h, "total=3", 3*time.Second); got == "" {
 		t.Error("the program's output did not arrive on the terminal")
 	}
-	for _, e := range h.rec.all() {
-		if e.name != wire.EventConsole {
-			continue
-		}
-		m, ok := e.payload.(map[string]string)
-		if ok && m["stream"] == "inferior" {
-			t.Errorf("program output still leaked into the MI stream: %q", m["text"])
-		}
-	}
+	// With a pty the program talks to its terminal, so nothing it prints
+	// should ever reach the console as inferior-tagged text: that stream is
+	// only written by the fallback that scrapes MI, which is the leak.
+	h.neverOnConsole("inferior")
 }
 
 // TestInterruptSpinningLoop is the second criterion: Ctrl-C a busy program and
@@ -257,19 +252,7 @@ func TestConsoleOutputStreams(t *testing.T) {
 
 	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "print 6*7"})
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, e := range h.rec.all() {
-			if e.name != wire.EventConsole {
-				continue
-			}
-			if m, ok := e.payload.(map[string]string); ok && strings.Contains(m["text"], "42") {
-				return
-			}
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Error("the console command produced no visible output")
+	waitForConsole(t, h, "", "42", "the console command's output")
 }
 
 // TestConsoleErrorIsNotAFailure: a typo at a console is ordinary, and must not
@@ -282,20 +265,10 @@ func TestConsoleErrorIsNotAFailure(t *testing.T) {
 	if _, werr := h.do(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "nosuchcommand"}); werr != nil {
 		t.Errorf("a mistyped console command failed the request: %s", werr.Message)
 	}
-	// The message must still be shown.
-	var sawMessage bool
-	for _, e := range h.rec.all() {
-		if e.name != wire.EventConsole {
-			continue
-		}
-		if m, ok := e.payload.(map[string]string); ok &&
-			strings.Contains(strings.ToLower(m["text"]), "undefined") {
-			sawMessage = true
-		}
-	}
-	if !sawMessage {
-		t.Error("gdb's complaint about the command was not shown to the user")
-	}
+	// The message must still be shown. A wait rather than a read: the reply to
+	// the request is not a promise that gdb's prose has been broadcast too.
+	waitForConsole(t, h, "", "undefined",
+		"gdb's complaint about the command to be shown to the user")
 }
 
 // TestConsoleComplete covers tab completion, which comes from gdb rather than

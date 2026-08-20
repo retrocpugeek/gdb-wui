@@ -184,9 +184,13 @@ distinguishes how confident the mapping is:
   merges statements, and the map cannot separate them again.
 
 A local that the decompiler invented, which lives nowhere in the machine, shows
-no value rather than a wrong one. Around two thirds of recovered locals live in
-a register that is only correct near one program counter, whereas a global at a
-fixed address is valid at every one, so globals are the ones you can rely on.
+no value rather than a wrong one. A local on the stack needs one thing more: a
+rule turning the decompiler's frame offsets into an address, measured against a
+live inferior on x86, ARM, AArch64, PowerPC and MIPS. Outside those, or in a
+frame whose depth Ghidra cannot settle on, a stack local shows no value either.
+Around two thirds of recovered locals live in a register that is only correct
+near one program counter, whereas a global at a fixed address is valid at every
+one, so globals are the ones you can rely on.
 
 ## Following what Ghidra is doing
 

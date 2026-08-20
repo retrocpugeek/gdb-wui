@@ -514,3 +514,32 @@ implementing:
     local one slot away from where it lives. Checked against a live inferior:
     gdb agrees with the depth. Nothing was going to catch that except a second
     binary, built differently, on the same architecture.
+
+45. **A negative assertion read without a barrier passes for ever.** The
+    session broadcasts from the actor's goroutine, so a test that counts events
+    straight after an action counts whatever had arrived by then. Read too
+    early, a positive assertion fails intermittently — unpleasant, but it
+    announces itself, which is how finding 24 was found, and how a cross-arch
+    test that read the console the moment `console.exec` returned was found:
+    on a loaded runner what had arrived was nothing at all. Read too early, a
+    negative assertion *passes*, and passes every run: the event that should
+    have failed it had not been broadcast yet. The suite counts it as coverage
+    and it can never fail.
+
+    `TestRemoteChangedOnlyOnChange` was the case here. Its barrier was real —
+    two `mustDo` round-trips through a single-threaded actor — but it was a
+    fact about the lines above the assertion rather than anything the assertion
+    said, and deleting either call as dead setup would have left it passing and
+    worthless. It is now `h.never`, which brackets the action with barriers of
+    its own.
+
+    The barrier is `session.ping`. Requests arrive on one channel and the actor
+    takes them in order, so a reply to a later request proves the earlier
+    handlers ran to completion and emitted whatever they were going to emit.
+    That is the whole guarantee, and it stops at gdb's out-of-band records:
+    `run()` selects between a waiting request and a waiting record and Go picks
+    at random, so stops and inferior output have no barrier, only a wait.
+    `TestEventAssertionsWaitOrBarrier` keeps `rec.all` and `rec.count` inside
+    the helpers that wait or barrier, by parsing the test files. Like the check
+    in finding 24 it reads the source, because the mistake it prevents shows up
+    as a test that passes.

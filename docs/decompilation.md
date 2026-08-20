@@ -402,8 +402,11 @@ return address in a register — and is eight bytes above it on x86-64, where
 `call` pushes one — and is correct even mid-prologue. It is
 reachable over MI as `$sp` evaluated in the caller's frame, and it generalises:
 `bl` and `jal` push nothing and `call` pushes 8, so
-`entry_sp = caller_sp - callPush` covers x86-64, MIPS64 and AArch64 with one
-constant per ISA. This was verified on all three. Adopting it would make
+`entry_sp = caller_sp - callPush` covers every architecture measured here with
+one constant per ISA, and it was verified on all of them. It is not idle knowledge:
+`TestFrameRuleAgainstDebugInfo` measures the depth exactly this way, the
+caller's `$sp` against this frame's, which is how the rule is checked on every
+push with no Ghidra installed. Adopting it for `expr` itself would make
 expressions frame-dependent rather than static, which changes what `expr`
 promises, so it is recorded here rather than implemented halfway.
 
@@ -642,7 +645,8 @@ onto the stack at the call and the other does not.
 What carries the information is `frame.spDepth`, together with knowing which
 register the ABI leaves usable — and that last part is knowledge about the
 architecture, not a field in the sidecar. `scripts/ghidra/show-decomp.py` holds
-the three rules established so far and refuses to guess for anything else.
+the one rule that replaced the three, and refuses to guess outside the families
+it was measured on.
 
 ## How good is the mapping?
 

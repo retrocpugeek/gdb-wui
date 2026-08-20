@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +63,9 @@ func (r *recorder) Broadcast(event string, payload any) {
 	}
 }
 
+// all is the raw log, and says only what had arrived at the instant it was
+// called. For the helpers that wait or barrier, and enforced by
+// TestEventAssertionsWaitOrBarrier.
 func (r *recorder) all() []recorded {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -85,6 +91,8 @@ func (r *recorder) reset() {
 	}
 }
 
+// count is all with the same caveat: sound only behind a wait or a barrier.
+// See h.never, which supplies both.
 func (r *recorder) count(name string) int {
 	var n int
 	for _, e := range r.all() {
@@ -235,6 +243,117 @@ func (h *harness) mustDo(typ string, payload any) any {
 		h.t.Fatalf("%s: %s: %s", typ, werr.Code, werr.Message)
 	}
 	return out
+}
+
+// barrier returns once the actor has finished every request issued before it.
+//
+// Requests arrive on one channel and the actor takes them in order, and
+// serve() dispatches, replies and emits on that single goroutine. A reply to a
+// request issued after some action is therefore proof that the action's
+// handlers ran to completion, and that every event they were going to
+// broadcast has already been recorded. session.ping is the cheapest thing that
+// goes through the loop: it touches no gdb state, and even the error it
+// returns when gdb is dead is a completed dispatch.
+//
+// What it does not prove is that gdb's out-of-band records have been drained.
+// run() selects between a waiting request and a waiting record and Go picks at
+// random, so a stop notification queued behind this can still be processed
+// after it returns. Events that arrive that way — stops, inferior output, gdb
+// dying — have no barrier: wait for them with rec.wait, and for the negative
+// case wait a bounded time and then assert silence.
+func (h *harness) barrier() {
+	h.t.Helper()
+	_, _ = h.do(wire.TypeSessionPing, nil)
+}
+
+// never asserts that fn provokes no event of this name.
+//
+// The barriers either side are the whole point. Counting events straight after
+// an action races the actor: the event that ought to fail the test may not
+// have been broadcast yet, so the assertion passes. That is worse than the
+// positive case read too early, which fails intermittently and so gets
+// investigated — this one passes every time, and is silently worth nothing.
+// Bracketing the action means the count is taken at a moment when the actor
+// has demonstrably finished with it.
+//
+// The trailing barrier is what lets fn end in something other than a completed
+// request without the assertion becoming a guess.
+//
+// Sound for events a request handler emits, which is the ordering barrier()
+// guarantees; see there for the events it cannot speak for.
+func (h *harness) never(name string, fn func()) {
+	h.t.Helper()
+	h.barrier()
+	before := h.rec.count(name)
+	fn()
+	h.barrier()
+	if n := h.rec.count(name) - before; n != 0 {
+		times := "times"
+		if n == 1 {
+			times = "time"
+		}
+		h.t.Errorf("%s fired %d %s; it should not have fired at all", name, n, times)
+	}
+}
+
+// consoleText is what gdb has written to the console this session, narrowed to
+// one stream if one is named and taken from every stream if not.
+//
+// A read of the log, so only the helpers that wait or barrier may call it: on
+// its own it says what had arrived at one arbitrary instant.
+func consoleText(h *harness, stream string) string {
+	var out strings.Builder
+	for _, e := range h.rec.all() {
+		if e.name != wire.EventConsole {
+			continue
+		}
+		m, ok := e.payload.(map[string]string)
+		if !ok || (stream != "" && m["stream"] != stream) {
+			continue
+		}
+		out.WriteString(m["text"])
+	}
+	return out.String()
+}
+
+// neverOnConsole asserts that nothing has been written to one console stream.
+//
+// Weaker than never, and the difference matters. Console text is broadcast
+// from gdb's records rather than from a request handler, and those arrive
+// after the reply to the command that provoked them, so barrier() does not
+// settle it — see there. What makes this an assertion rather than a guess is
+// the caller having already waited for whatever would have produced the text:
+// in the one use here the program has exited and its whole output has been
+// collected. The barrier is still taken, for the handler-emitted half.
+func (h *harness) neverOnConsole(stream string) {
+	h.t.Helper()
+	h.barrier()
+	if got := consoleText(h, stream); got != "" {
+		h.t.Errorf("the console should carry nothing tagged %q, and carries %q",
+			stream, got)
+	}
+}
+
+// waitForConsole waits for want to appear on the console, or on one stream of
+// it when stream is named.
+//
+// Case-insensitive. gdb's prose is written for a person to read, and nothing
+// here means to assert on how it capitalises a word.
+func waitForConsole(t *testing.T, h *harness, stream, want, what string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if strings.Contains(
+			strings.ToLower(consoleText(h, stream)), strings.ToLower(want)) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("timed out waiting for %s; the console says:\n%s",
+				what, consoleText(h, ""))
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // loadProgram runs the exe.load dialogue the other tests need first.
@@ -752,24 +871,12 @@ func TestInferiorOutputBecomesConsole(t *testing.T) {
 	h := start(t, `
 < total=3 argc=1
 `)
-	_ = h
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, e := range h.rec.all() {
-			if e.name != wire.EventConsole {
-				continue
-			}
-			if m, ok := e.payload.(map[string]string); ok && strings.Contains(m["text"], "total=3") {
-				if m["stream"] != "inferior" {
-					t.Errorf("stream = %q, want inferior", m["stream"])
-				}
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Error("the inferior's output never reached the console")
+	// On the inferior stream specifically: reaching the console on the MI
+	// stream instead is the bug finding 3 is about, and it fails here as a
+	// timeout whose message prints where the line actually went.
+	waitForConsole(t, h, "inferior", "total=3",
+		"the inferior's output to reach the console")
 }
 
 // TestVarobjLRUEviction covers the leak defence.
@@ -1133,12 +1240,12 @@ func TestRemoteChangedOnlyOnChange(t *testing.T) {
 	h := start(t, ``, gdbfake.WithDefaultDone())
 	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "target remote :9999"})
 	h.rec.wait(t, wire.EventRemoteChanged)
-	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "target remote :9999"})
-	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "print 1"})
 
-	if n := h.rec.count(wire.EventRemoteChanged); n != 1 {
-		t.Errorf("remoteChanged fired %d times, want 1", n)
-	}
+	h.never(wire.EventRemoteChanged, func() {
+		h.mustDo(wire.TypeConsoleExec,
+			wire.ConsoleExecRequest{Line: "target remote :9999"})
+		h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "print 1"})
+	})
 }
 
 // Every broadcast must go through emit, which refreshes the snapshot first.
@@ -1181,6 +1288,91 @@ func TestAllBroadcastsGoThroughEmit(t *testing.T) {
 				name, i+1, strings.TrimSpace(line))
 		}
 	}
+}
+
+// An assertion about events must wait for them or barrier first; it must not
+// photograph the log and judge what it happens to find there.
+//
+// The actor broadcasts from its own goroutine, so a count taken straight after
+// an action is a count of whatever had arrived by then. For a positive
+// assertion that is a flake, which is unpleasant but announces itself — CI goes
+// red and somebody looks. For a negative assertion it is worse: the event that
+// should fail the test simply has not been broadcast yet, so the test passes,
+// and it passes every single run. A check that cannot fail is worse than no
+// check, because the suite counts it as coverage.
+//
+// So rec.all and rec.count belong to the helpers below and to nothing else.
+// Positive assertions wait (rec.wait, waitFor, waitForConsole); negative ones
+// go through h.never or h.neverOnConsole, which bracket the action with
+// barriers so the count is taken at a moment the actor has demonstrably
+// finished.
+//
+// Checked by reading the source, like TestAllBroadcastsGoThroughEmit above,
+// and for the same reason turned inside out: the mistake this prevents shows up
+// as a test that passes, so there is no run in which it can be observed.
+func TestEventAssertionsWaitOrBarrier(t *testing.T) {
+	// The helpers allowed to read the log, because reading it is what they
+	// are. Each either polls to a deadline or sits behind a barrier.
+	readers := map[string]bool{
+		"wait":            true, // recorder.wait, for its timeout message
+		"count":           true, // recorder.count, the reader the rest use
+		"never":           true,
+		"neverOnConsole":  true,
+		"consoleText":     true,
+		"collectInferior": true,
+	}
+
+	dir := filepath.Join(testutil.RepoRoot(t), "internal", "debugger")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		// Parsed rather than grepped so the enclosing function is known, and
+		// with no regard for build tags: the integration files need this most.
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || readers[fn.Name.Name] {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok || !isRecorderExpr(sel.X) {
+					return true
+				}
+				if sel.Sel.Name != "all" && sel.Sel.Name != "count" {
+					return true
+				}
+				t.Errorf("%s:%d: %s reads the event log directly (rec.%s). "+
+					"Wait for the event (rec.wait, waitFor, waitForConsole), or "+
+					"for a negative assertion use h.never, which barriers either "+
+					"side so the count means something.",
+					name, fset.Position(sel.Pos()).Line, fn.Name.Name, sel.Sel.Name)
+				return true
+			})
+		}
+	}
+}
+
+// isRecorderExpr reports whether an expression names the recorder: h.rec at a
+// call site, or the receiver inside the recorder's own methods.
+func isRecorderExpr(x ast.Expr) bool {
+	switch v := x.(type) {
+	case *ast.SelectorExpr:
+		return v.Sel.Name == "rec"
+	case *ast.Ident:
+		return v.Name == "r" || v.Name == "rec"
+	}
+	return false
 }
 
 // The snapshot must already describe the change an event announces.

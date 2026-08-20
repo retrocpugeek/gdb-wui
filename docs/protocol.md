@@ -973,10 +973,13 @@ reported rather than omitted, so that the row is visibly blank rather than
 missing.
 
 `expr` is a gdb expression formed from Ghidra's frame base, which is the stack
-pointer at function entry, using a per-ABI rule established by measurement:
-`$rbp + pointerSize` on x86-64 with a frame pointer, and `$sp + frame.size` on
-MIPS64. An architecture with no established rule gets no expression rather than
-a guess. See [docs/decompilation.md](decompilation.md).
+pointer at function entry. One rule, established by measurement on x86, ARM,
+AArch64, PowerPC and MIPS: the address is `$sp - frame.spDepth + offset`, where
+`spDepth` is what the prologue did to the stack pointer. An architecture
+outside those families, or a frame Ghidra could not settle a depth for, gets no
+expression rather than a guess. Two earlier per-ABI rules were replaced after
+measurement showed both wrong on a second binary; see
+[docs/decompilation.md](decompilation.md).
 
 `bp.setAddress` passes a name to gdb verbatim, and wraps only a bare address in
 `*`. This matters because gdb skips the prologue for a named function — `break

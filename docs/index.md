@@ -92,13 +92,18 @@ Stepping through C or C++ built with `-g` works. These are what gdb-wui adds:
 
   gdb-wui holds no architecture-specific knowledge of its own. Registers,
   disassembly, frames and memory all come from gdb and are passed through as
-  reported, so any architecture the gdb you select supports should work. MIPS64,
-  AArch64 and x86-64 are the ones it is developed and tested against.
+  reported, so any architecture the gdb you select supports should work.
+  Tested rather than assumed: every push builds the same program for ARM,
+  AArch64, PowerPC, PowerPC64 in both endiannesses, MIPS and MIPS64, debugs
+  each of them under qemu, and does x86-64 natively.
 
   The one exception is the [Decompiled tab](features/decompilation.md), which
-  needs a per-ABI rule to turn Ghidra's stack offsets into expressions gdb can
-  evaluate. Where no rule has been established, stack variables show no value;
-  everything else in that tab still works.
+  has to turn Ghidra's stack offsets into expressions gdb can evaluate. That is
+  one rule — a variable's address is the stack pointer at function entry plus
+  its offset — and it is measured against a live inferior on each of the
+  architectures above. Outside those families, and in a frame whose depth
+  Ghidra cannot settle on, stack variables show no value; everything else in
+  that tab still works.
 - **Images that do not run where they were linked.** Load symbols at an offset
   and the addresses line up again.
 - **Identifying what you are looking at.** The memory viewer names the symbol
