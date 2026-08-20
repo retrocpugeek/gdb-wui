@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -208,7 +207,7 @@ func crossArchUnderQemu(t *testing.T, gcc, qemu, exe, arch, entry string, regs [
 	// Reading the recorder the moment console.exec returns reads what has
 	// arrived so far, which on a loaded runner was nothing at all.
 	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "show architecture"})
-	waitForConsole(t, h, arch, "gdb to report the "+arch+" architecture")
+	waitForConsole(t, h, "", arch, "gdb to report the "+arch+" architecture")
 
 	// The registers are that architecture's, which is the same fact from the
 	// other side: a gdb reading this stub as x86-64 would answer with rax and
@@ -257,37 +256,6 @@ func waitFor(t *testing.T, h *harness, ok func(wire.Hello) bool, what string) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-}
-
-// consoleText is everything gdb has written to the console this session.
-func consoleText(h *harness) string {
-	var out string
-	for _, e := range h.rec.all() {
-		if e.name != wire.EventConsole {
-			continue
-		}
-		if m, ok := e.payload.(map[string]string); ok {
-			out += m["text"]
-		}
-	}
-	return out
-}
-
-// waitForConsole waits for gdb to have written want to the console.
-func waitForConsole(t *testing.T, h *harness, want, what string) {
-	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		if strings.Contains(consoleText(h), want) {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Errorf("timed out waiting for %s; the console says:\n%s",
-				what, consoleText(h))
-			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
