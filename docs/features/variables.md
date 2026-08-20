@@ -20,11 +20,11 @@ you can see which field moved without comparing against memory yourself.
 
 To change a value, double-click it. See [changing values](editing.md).
 
-## Working with watches
+## Adding, removing and casting a watch
 
-A watch is the only thing in this pane you put there yourself, so it is the only
-one you can take away. Every watch row carries a **×** at its right end; the
-right-click menu offers the same thing in words.
+Add a watch with **+ watch** in the pane header, and remove it with the **×** at
+the right of its row. A watch is the only thing in this pane you put there
+yourself, so it is the only one you can take away.
 
 | To do this | Do this |
 |---|---|

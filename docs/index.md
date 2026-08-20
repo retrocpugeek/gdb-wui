@@ -70,16 +70,16 @@ Stepping through C or C++ built with `-g` works. These are what gdb-wui adds:
   [names the call stack](features/decompilation.md#naming-the-call-stack),
   which gdb otherwise reports as a column of `?? ()`. Its names are things you
   can act on rather than text: `FUN_0010e2dc` and `DAT_001a08de` fill the
-  [symbol pane](features/symbols.md#a-stripped-binary) of a binary that has no
-  symbols, resolve in the [go-to box](features/source.md#going-somewhere) and as
+  [symbol pane](features/symbols.md#listing-a-stripped-binarys-functions) of a binary that has no
+  symbols, resolve in the [go-to box](features/source.md#jumping-to-a-file-symbol-or-address) and as
   [breakpoint locations](features/breakpoints.md), and label the
-  [breakpoint](features/breakpoints.md#what-a-breakpoint-is-called) and
+  [breakpoint](features/breakpoints.md#how-breakpoints-are-named) and
   [watch](features/variables.md#watching-something-from-the-decompiled-view)
   rows that would otherwise be bare addresses. And you can
-  [rename and retype](features/decompilation.md#renaming-what-the-decompiler-guessed)
+  [rename and retype](features/decompilation.md#renaming-variables-and-functions)
   what it guessed and
-  [comment](features/decompilation.md#writing-down-what-you-worked-out) what you
-  work out, as you go.
+  [comment](features/decompilation.md#adding-comments-to-the-decompilation) what
+  you work out, as you go.
 - **Handing the work to an agent.** `gdb-wui -mcp` serves
   [MCP](features/agent.md) for a running session, so an agent can set a
   breakpoint, run to it, read what is actually in the variable and write the

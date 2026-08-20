@@ -29,6 +29,15 @@ const (
 	AnalysisFull Analysis = "full"
 	// AnalysisNone imports without analysis and disassembles on demand.
 	AnalysisNone Analysis = "none"
+	// AnalysisLean runs the analyzers that find functions and leaves out the
+	// ones that cost the memory. For an image with no symbols to lean on: with
+	// nothing to name and nothing to disassemble from, AnalysisNone produces an
+	// empty program. Measured on a stripped 12 MB MIPS64 kernel: 89 seconds and
+	// 1.28 GB, inside the 2 GB heap, finding 12,955 functions of which 97% sit
+	// exactly on a real entry point — but only 57% of the real ones, and every
+	// name is FUN_ plus its address. Pattern matching finds where a function is,
+	// never what it was called.
+	AnalysisLean Analysis = "lean"
 )
 
 // AutoAnalysisLimit is how much executable code auto will hand to the full
@@ -48,7 +57,7 @@ const AutoAnalysisLimit = 4 << 20
 // (which logs the reason) and Import (which must not depend on the caller
 // having done so) call this.
 func (a Analysis) Resolve(binary string) (Analysis, string) {
-	if a == AnalysisFull || a == AnalysisNone {
+	if a != AnalysisAuto && a != "" {
 		return a, ""
 	}
 	n, err := CodeBytes(binary)
@@ -57,17 +66,53 @@ func (a Analysis) Resolve(binary string) (Analysis, string) {
 		// the file; analysing it is the behaviour that predates this switch.
 		return AnalysisFull, ""
 	}
-	return decide(n)
+	return decide(n, HasFunctionSymbols(binary))
 }
 
-// decide is Resolve's judgement, split out so the threshold can be tested
-// without a binary of each size to hand.
-func decide(codeBytes int64) (Analysis, string) {
-	if codeBytes > AutoAnalysisLimit {
+// decide is Resolve's judgement, split out so the thresholds can be tested
+// without a binary of each shape to hand.
+//
+// Both branches past the limit are worse than analysing, and which one is less
+// bad turns on whether anything else knows where the functions are. A symbol
+// table names them all, so nothing needs discovering and the analysis is pure
+// cost. Without one there is no program to show at all until something finds
+// them, and only the analyzers can.
+func decide(codeBytes int64, symbols bool) (Analysis, string) {
+	if codeBytes <= AutoAnalysisLimit {
+		return AnalysisFull, ""
+	}
+	if symbols {
 		return AnalysisNone, fmt.Sprintf(
 			"%s of code is more than Ghidra's analysis will finish", megabytes(codeBytes))
 	}
-	return AnalysisFull, ""
+	return AnalysisLean, fmt.Sprintf(
+		"%s of code is more than Ghidra's analysis will finish, and it is stripped, "+
+			"so the functions have to be found rather than read", megabytes(codeBytes))
+}
+
+// HasFunctionSymbols reports whether an ELF says where any of its functions
+// are. False for a stripped image, and the difference between an import that
+// arrives complete and one that arrives empty.
+func HasFunctionSymbols(path string) bool {
+	f, err := elf.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	// Both tables: a dynamically linked binary keeps .dynsym when stripped, and
+	// its exports are enough to be worth having.
+	for _, syms := range []func() ([]elf.Symbol, error){f.Symbols, f.DynamicSymbols} {
+		list, err := syms()
+		if err != nil {
+			continue
+		}
+		for _, s := range list {
+			if elf.ST_TYPE(s.Info) == elf.STT_FUNC && s.Value != 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // CodeBytes is how much executable code an ELF holds.
@@ -120,11 +165,12 @@ func (a *Analysis) String() string {
 
 func (a *Analysis) Set(s string) error {
 	switch Analysis(s) {
-	case AnalysisAuto, AnalysisFull, AnalysisNone:
+	case AnalysisAuto, AnalysisFull, AnalysisLean, AnalysisNone:
 		*a = Analysis(s)
 		return nil
 	}
-	return fmt.Errorf("must be one of %s, %s or %s", AnalysisAuto, AnalysisFull, AnalysisNone)
+	return fmt.Errorf("must be one of %s, %s, %s or %s",
+		AnalysisAuto, AnalysisFull, AnalysisLean, AnalysisNone)
 }
 
 func (a *Analysis) Get() any { return a.String() }

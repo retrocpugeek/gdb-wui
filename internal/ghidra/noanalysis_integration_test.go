@@ -39,7 +39,7 @@ func startUnanalysed(t *testing.T) (*ghidra.Client, string) {
 
 	started := time.Now()
 	if err := ghidra.Import(ctx, in, projectDir, "itest", bin,
-		ghidra.AnalysisNone, logf); err != nil {
+		ghidra.ImportOptions{Analysis: ghidra.AnalysisNone}, logf); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 	t.Logf("imported without analysis in %v", time.Since(started).Round(time.Millisecond))
@@ -70,7 +70,7 @@ func startUnanalysedWritable(t *testing.T) *ghidra.Client {
 	bin := fixture(t)
 	logf := func(f string, a ...any) { t.Logf(f, a...) }
 	if err := ghidra.Import(ctx, in, projectDir, "itest", bin,
-		ghidra.AnalysisNone, logf); err != nil {
+		ghidra.ImportOptions{Analysis: ghidra.AnalysisNone}, logf); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 	c, err := ghidra.Start(ctx, ghidra.Options{

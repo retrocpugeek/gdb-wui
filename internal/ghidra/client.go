@@ -341,6 +341,13 @@ func (c *Client) spawn(ctx context.Context, sockPath string) (func(), error) {
 // -scriptPath. Embedding rather than reading from the repo means a built
 // binary carries its own decompiler glue and works from anywhere.
 func (c *Client) extractScripts(dir string) error {
+	return extractScripts(dir)
+}
+
+// extractScripts writes the embedded scripts where analyzeHeadless can find
+// them. Both the resident server and the importer need them on disk: -scriptPath
+// takes a directory, and an embedded file system is not one.
+func extractScripts(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("ghidra: script dir: %w", err)
 	}
@@ -663,6 +670,17 @@ func (c *Client) cleanup() {
 	}
 }
 
+// ImportOptions is how a binary is brought into a project.
+type ImportOptions struct {
+	// Analysis is how much of it Ghidra should analyse. The zero value is
+	// AnalysisAuto, which measures the binary and decides.
+	Analysis Analysis
+	// Symbols is a file of `address [type] name` lines — nm's output, or a
+	// kernel's /proc/kallsyms — naming functions the image does not name
+	// itself. Optional, and applied after any analysis.
+	Symbols string
+}
+
 // Import analyses a binary into a project and saves it, so a later Start can
 // open it.
 //
@@ -693,7 +711,7 @@ func heapEnv() []string {
 }
 
 func Import(ctx context.Context, install *Install, projectDir, projectName, binary string,
-	analysis Analysis, logf func(string, ...any)) error {
+	opts ImportOptions, logf func(string, ...any)) error {
 	if install == nil {
 		return errors.New("ghidra: no installation")
 	}
@@ -704,9 +722,36 @@ func Import(ctx context.Context, install *Install, projectDir, projectName, bina
 	// Resolved here as well as in the caller. Resolve is idempotent and only
 	// auto touches the file, so this costs nothing and means no caller can
 	// import an image the wrong way by forgetting.
-	mode, _ := analysis.Resolve(binary)
+	mode, _ := opts.Analysis.Resolve(binary)
 	if mode == AnalysisNone {
 		args = append(args, "-noanalysis")
+	}
+	if mode == AnalysisLean || opts.Symbols != "" {
+		// Both of these are scripts, and analyzeHeadless finds a script by
+		// looking in a directory.
+		dir, err := os.MkdirTemp("", "gdb-wui-import-")
+		if err != nil {
+			return fmt.Errorf("ghidra: %w", err)
+		}
+		defer os.RemoveAll(dir)
+		if err := extractScripts(dir); err != nil {
+			return err
+		}
+		args = append(args, "-scriptPath", dir)
+		if mode == AnalysisLean {
+			// Before the analysis, because it is what the analysis will be.
+			args = append(args, "-preScript", "LeanAnalysis.java")
+		}
+		if opts.Symbols != "" {
+			// After it, so that a name the analysis invented can be replaced
+			// by the real one, and inside the same invocation, because
+			// analyzeHeadless saves the program once the postScript returns.
+			abs, err := filepath.Abs(opts.Symbols)
+			if err != nil {
+				return fmt.Errorf("ghidra: symbols: %w", err)
+			}
+			args = append(args, "-postScript", "ImportSymbols.java", abs)
+		}
 	}
 	cmd := exec.CommandContext(ctx, install.Headless, args...)
 	cmd.Env = []string{

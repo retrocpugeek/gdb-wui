@@ -2,7 +2,7 @@
 title: Agents (MCP)
 layout: default
 parent: Features
-nav_order: 14
+nav_order: 15
 ---
 
 # Agents
@@ -34,7 +34,7 @@ The screenshot above shows live updates to the decompilation made by an agent:
 the function's name and both comments, written through the bridge. The pane
 repainted by itself, as edits are broadcast to open tabs.
 
-## What makes this different from reading a decompilation
+## Why this needs a running program
 
 An agent can point a decompiler at a binary anywhere. What it cannot usually do
 is **check**. Here it can set a breakpoint, run to it, and read what is actually
@@ -73,7 +73,7 @@ meaningless.
 > That is what a debugger does, and it is why it is a separate flag from
 > reading. Do not pass it for a binary you would not run yourself.
 
-## What an agent sees
+## The order to call the tools in
 
 `status` first: what is loaded, whether the program is stopped, whether the
 decompiler is ready. Then `wait_for_decompiler`, because Ghidra takes seconds on
@@ -117,7 +117,7 @@ afterwards is yours.
 Nothing here is a symbol: a name an agent chose is not one the binary carries,
 any more than `FUN_00401154` is, so the call stack shows both in italics.
 
-## Undoing it
+## Undoing an agent's edits
 
 `Ctrl+Shift+Z` undoes one edit. An agent writes in bursts, so consecutive edits
 by one author form a **run**, and right-clicking in the Decompiled tab offers
@@ -128,9 +128,10 @@ Only the most recent run can be undone. Each inverse was worked out against the
 state its edit left behind, so taking an older one back first would put a name
 over something later renamed.
 
-## What the bridge is, underneath
+## How the bridge works
 
-It is a client. It reads the same 0600 run file `-print-url` reads, mints a
+The bridge is a client of the running gdb-wui, not a second way into gdb. It
+reads the same 0600 run file `-print-url` reads, mints a
 login the same way, and joins the same WebSocket your browser is on; every tool
 is one request from [the protocol](https://github.com/retrocpugeek/gdb-wui/blob/master/docs/protocol.md).
 

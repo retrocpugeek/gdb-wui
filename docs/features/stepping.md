@@ -71,13 +71,14 @@ next run.
 
 ## Stepping without a line table
 
-`F10` and `F11` need debug info. Without it, gdb's step range is the whole
-function, so stepping over runs to the end of the function.
+To step in a binary with no debug info, open the
+[Decompiled tab](decompilation.md) and step as usual, or press `Alt+F11` to
+step one instruction at a time.
 
-To step by smaller amounts in a binary with no debug info, open the
-[Decompiled tab](decompilation.md). While it is showing, a step moves to the
-next decompiled line, using Ghidra's address map instead of the missing line
-table. Otherwise, use `Alt+F11` to step one instruction at a time.
+`F10` and `F11` need debug info: without it gdb's step range is the whole
+function, so stepping over runs to the end of it. While the Decompiled tab is
+showing, a step moves to the next decompiled line instead, using Ghidra's
+address map in place of the missing line table.
 
 ## Worked example
 

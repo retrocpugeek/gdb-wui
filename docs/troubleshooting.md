@@ -195,7 +195,7 @@ frames are named once it has analysed the binary. See
 
 Those names are the decompiler's, not symbols, and are shown in italics to say
 so. Frames in libc keep gdb's own names. Right-clicking one offers to
-[rename it](features/decompilation.md#renaming-what-the-decompiler-guessed).
+[rename it](features/decompilation.md#renaming-variables-and-functions).
 
 ## Hovering a decompiled local shows nothing
 

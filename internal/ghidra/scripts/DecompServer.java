@@ -945,9 +945,14 @@ public class DecompServer extends GhidraScript {
 	// nothing has computed a body: getFunctionContaining answers null for every
 	// address except the entry itself, so a program counter one instruction
 	// into a function would find nothing. The function with the greatest entry
-	// at or below the address is the answer the symbol table already implies.
-	// Restricted to executable memory, so that an address in .data is not
-	// attributed to whichever function happens to sit last in .text.
+	// at or below the address is what the symbol table implies — but only
+	// implies. On an image whose symbols are gone the nearest preceding entry
+	// can be a PLT thunk half a section away, and answering with it would
+	// decompile an unrelated function under the program counter's name. So the
+	// guess is checked rather than trusted: disassemble the candidate and see
+	// whether the body that comes out actually reaches the address. That is
+	// work the caller was going to pay for anyway on a hit, and on a miss it
+	// buys a null instead of a confident wrong answer.
 	private Function containing(Address a) {
 		Function at = currentProgram.getFunctionManager().getFunctionAt(a);
 		if (at != null) {
@@ -967,20 +972,27 @@ public class DecompServer extends GhidraScript {
 			if (f.isExternal()) {
 				continue;
 			}
-			// Only a function whose extent is still unknown. One byte of body
-			// is a function the ELF symbol table declared and nothing has
-			// disassembled, and its real extent runs to the next entry. A
-			// function with a body has been measured, and an address outside
-			// it is genuinely outside it — answering with the nearest one
-			// would turn "no function here" into a confident wrong one, for
-			// padding, a PLT stub, or hand-written assembly nobody claimed.
+			// Only a function whose extent is still unknown. A function with a
+			// body has been measured, and an address outside it is genuinely
+			// outside it — answering with the nearest one would turn "no
+			// function here" into a confident wrong one, for padding, a PLT
+			// stub, or hand-written assembly nobody claimed.
 			if (f.getBody().getNumAddresses() > 1) {
 				return null;
 			}
 			// Same block, or the answer is a function from an earlier section
 			// with a gap in between.
 			MemoryBlock own = currentProgram.getMemory().getBlock(f.getEntryPoint());
-			return own != null && own.equals(block) ? f : null;
+			if (own == null || !own.equals(block)) {
+				return null;
+			}
+			ensureCode(f);
+			Function measured = currentProgram.getFunctionManager()
+				.getFunctionAt(f.getEntryPoint());
+			if (measured != null && measured.getBody().contains(a)) {
+				return measured;
+			}
+			return null;
 		}
 		return null;
 	}

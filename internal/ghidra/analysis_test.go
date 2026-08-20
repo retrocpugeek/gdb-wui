@@ -2,6 +2,7 @@ package ghidra
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,28 +12,60 @@ import (
 
 func TestDecideOnTheThreshold(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		bytes int64
-		want  Analysis
+		name    string
+		bytes   int64
+		symbols bool
+		want    Analysis
 	}{
-		{"a hello world", 2 << 10, AnalysisFull},
-		{"a 2 MB firmware image, which analyses in 71s", 2 << 20, AnalysisFull},
-		{"exactly the limit", AutoAnalysisLimit, AnalysisFull},
-		{"one byte over", AutoAnalysisLimit + 1, AnalysisNone},
-		{"a MIPS64 kernel", 6_800_000, AnalysisNone},
+		{"a hello world", 2 << 10, true, AnalysisFull},
+		{"a 2 MB firmware image, which analyses in 71s", 2 << 20, true, AnalysisFull},
+		{"exactly the limit", AutoAnalysisLimit, true, AnalysisFull},
+		{"one byte over", AutoAnalysisLimit + 1, true, AnalysisNone},
+		{"a MIPS64 kernel", 6_800_000, true, AnalysisNone},
+		// Stripped, so nothing else knows where the functions are and the
+		// analyzers are the only thing that can find them. Below the limit it
+		// makes no difference: the full analysis finds them and more.
+		{"a small stripped binary", 2 << 10, false, AnalysisFull},
+		{"a stripped MIPS64 kernel", 6_800_000, false, AnalysisLean},
 	} {
-		got, why := decide(tc.bytes)
+		got, why := decide(tc.bytes, tc.symbols)
 		if got != tc.want {
-			t.Errorf("%s (%d bytes): decide = %s, want %s", tc.name, tc.bytes, got, tc.want)
+			t.Errorf("%s (%d bytes, symbols=%v): decide = %s, want %s",
+				tc.name, tc.bytes, tc.symbols, got, tc.want)
 		}
 		// The reason exists to be logged, so an empty one where a decision was
 		// taken against the caller's expectation is a silent surprise.
-		if got == AnalysisNone && why == "" {
-			t.Errorf("%s: skipped the analysis without saying why", tc.name)
+		if got != AnalysisFull && why == "" {
+			t.Errorf("%s: chose %s without saying why", tc.name, got)
 		}
 		if got == AnalysisFull && why != "" {
 			t.Errorf("%s: explained a decision it did not take: %q", tc.name, why)
 		}
+	}
+}
+
+func TestStrippedIsDetected(t *testing.T) {
+	bin := smallELF(t)
+	if !HasFunctionSymbols(bin) {
+		t.Error("a freshly compiled binary has no function symbols?")
+	}
+	stripped := filepath.Join(t.TempDir(), "stripped")
+	body, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stripped, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("strip", stripped).CombinedOutput(); err != nil {
+		t.Skipf("strip: %v\n%s", err, out)
+	}
+	if HasFunctionSymbols(stripped) {
+		t.Error("a stripped binary still reports function symbols, so auto would " +
+			"import it with no analysis and produce an empty program")
+	}
+	if mode, _ := AnalysisAuto.Resolve(stripped); mode != AnalysisFull {
+		t.Errorf("auto chose %s for a small stripped binary, want %s", mode, AnalysisFull)
 	}
 }
 

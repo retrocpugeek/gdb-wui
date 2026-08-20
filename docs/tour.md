@@ -142,7 +142,8 @@ the file already open.
 
 Now click the **Disassembly** tab and type `walk` again: the same word, and this
 time you get its instructions. The box acts on whichever view you are looking
-at. See [going somewhere](features/source.md#going-somewhere).
+at. See
+[jumping to a file, symbol or address](features/source.md#jumping-to-a-file-symbol-or-address).
 
 ## Change a value
 

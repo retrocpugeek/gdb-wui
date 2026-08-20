@@ -77,6 +77,7 @@ type options struct {
 	ghidraProject  string
 	ghidraProgram  string
 	ghidraAnalysis ghidra.Analysis
+	ghidraSymbols  string
 	decompDir      string
 }
 
@@ -107,10 +108,14 @@ func main() {
 	flag.StringVar(&opt.ghidraProject, "ghidra-project", "", "existing Ghidra project (.gpr) to read, opened read-only")
 	flag.StringVar(&opt.ghidraProgram, "ghidra-program", "", "which program inside -ghidra-project to decompile")
 	flag.Var(&opt.ghidraAnalysis, "ghidra-analysis",
-		"how much of the binary Ghidra analyses at import: `mode` is auto (the default), full or none "+
-			"(auto skips it for an image with more than "+
-			strconv.Itoa(ghidra.AutoAnalysisLimit>>20)+" MB of code, which analysis "+
-			"cannot finish; functions are then disassembled as they are opened)")
+		"how much of the binary Ghidra analyses at import: `mode` is auto (the default), "+
+			"full, lean or none. Past "+strconv.Itoa(ghidra.AutoAnalysisLimit>>20)+
+			" MB of code the analysis cannot finish, so auto takes none for an image "+
+			"whose symbols say where the functions are, and lean — the analyzers that "+
+			"find functions, without the ones that cost the memory — for a stripped one")
+	flag.StringVar(&opt.ghidraSymbols, "ghidra-symbols", "",
+		"a `file` of 'addr [type] name' lines naming functions the binary does not name "+
+			"itself, as nm and /proc/kallsyms write them")
 	flag.StringVar(&opt.decompDir, "decomp-dir", "", "where to cache Ghidra projects gdb-wui creates (default <project>/gdb-wui-decomp)")
 	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
 		"exit after this long with no browser connected (0 disables)")
@@ -626,6 +631,15 @@ func decompConfig(opt options, projectAbs string, logf func(string, ...any)) deb
 		Install:   install,
 		CacheRoot: opt.decompDir,
 		Analysis:  opt.ghidraAnalysis,
+		Symbols:   opt.ghidraSymbols,
+	}
+	if cfg.Symbols != "" {
+		// Named but unreadable is worth saying now. Otherwise the first sign
+		// is a Ghidra script logging a count of zero, one JVM start later.
+		if _, err := os.Stat(cfg.Symbols); err != nil {
+			logf("decompilation: -ghidra-symbols: %v", err)
+			cfg.Symbols = ""
+		}
 	}
 	if cfg.CacheRoot != "" {
 		// An explicit path that Ghidra will refuse is worth saying so about

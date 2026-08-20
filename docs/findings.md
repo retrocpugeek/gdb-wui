@@ -577,3 +577,38 @@ implementing:
     touched yet, on a program imported with `AnalysisNone`, and asserting a
     stack depth comes back. Asking for the entry point, or asking twice,
     exercises neither.
+
+47. **A stripped image is a different problem from a large one, and the fix for
+    the second breaks on the first.** Importing without analysis works because
+    the ELF loader creates a function per symbol; with no symbol table it
+    creates none. A stripped 12 MB kernel arrives with 1 function and 2
+    symbols, and every program counter resolves to nothing. So `auto` has to
+    ask two questions, not one: past the size limit, an image whose symbols say
+    where the functions are gets no analysis, and a stripped one gets the
+    analyzers that find functions without the ones that cost the memory — 89
+    seconds and 1.28 GB against the 2 GB heap, finding 12,955 functions of
+    which 97% start exactly where a real function starts. Only 57% of the real
+    ones, though, and every name is `FUN_` and an address: pattern matching
+    finds where a function is, never what it was called.
+
+    Names have to come from somewhere that knew them. For a kernel that place
+    is the kernel: `CONFIG_KALLSYMS` keeps the whole symbol table inside the
+    image as data, for oops traces, and stripping the ELF does not touch it.
+    22,563 function names out of a stripped image, and the addresses agree
+    exactly with what Ghidra found on its own. Injected as functions with
+    one-byte bodies — the same shape the ELF loader leaves — they need no new
+    handling at all: the lazy disassembly from finding 46 takes them as they
+    are.
+
+    The trap was in the lookup. Falling back to "the function with the greatest
+    entry at or below this address" is right when a symbol table has named
+    every function and wrong when seven PLT thunks are all that exist, and the
+    wrong answer is not an error — it decompiles an unrelated function under
+    the program counter's name. Bounding it to functions with no measured body
+    was not enough, because on a stripped image nothing has a measured body.
+    What works is to check rather than imply: disassemble the candidate and see
+    whether the body that comes out actually reaches the address. That is work
+    the caller pays for anyway on a hit, and on a miss it buys a null instead
+    of a confident wrong answer. Found by a test asserting the empty case is
+    empty — the assertion nobody writes, because it asserts that nothing
+    happens.

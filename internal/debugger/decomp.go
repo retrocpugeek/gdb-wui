@@ -53,16 +53,50 @@ type DecompConfig struct {
 	// consulted for a project gdb-wui imports itself: one the user named has
 	// already been analysed however they chose.
 	Analysis ghidra.Analysis
+	// Symbols names a file of `address [type] name` lines to import with the
+	// binary, for an image whose own symbols are gone. Same restriction as
+	// Analysis: a project the user named is theirs.
+	Symbols string
 }
 
-// projectSuffix keeps the two kinds of project apart in the cache. Empty for
-// the analysed one, so that every project imported before this existed is
-// still found where it was left.
-func projectSuffix(mode ghidra.Analysis) string {
-	if mode == ghidra.AnalysisNone {
-		return "-noanalysis"
+// projectSuffix keeps the kinds of project apart in the cache.
+//
+// Empty for a fully analysed one with no symbols added, so that every project
+// imported before any of this existed is still found where it was left. The
+// rest carry what made them: an unanalysed project and an analysed one are
+// different artefacts, and handing back the wrong one would leave a flag doing
+// nothing at all, with no diff and no message to say why.
+func projectSuffix(mode ghidra.Analysis, symbols string) string {
+	suffix := ""
+	switch mode {
+	case ghidra.AnalysisNone:
+		suffix = "-noanalysis"
+	case ghidra.AnalysisLean:
+		suffix = "-lean"
 	}
-	return ""
+	if symbols != "" {
+		// Keyed on the contents rather than the path: a symbol file that has
+		// been regenerated is a different symbol file.
+		if sum := hashFile(symbols); sum != "" {
+			suffix += "-sym" + sum[:8]
+		}
+	}
+	return suffix
+}
+
+// hashFile is the sha256 of a file, or "" if it cannot be read. Used for cache
+// keys, where not knowing has to mean "do not claim a match".
+func hashFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // decompStartTimeout has to cover importing and analysing a binary, which is
@@ -258,9 +292,17 @@ func (s *Session) maybeStartDecomp() {
 		// would leave -ghidra-analysis=full doing nothing at all, with no
 		// diff and no message to say why.
 		mode, why = cfg.Analysis.Resolve(abs)
+		if cfg.Symbols != "" && mode == ghidra.AnalysisLean {
+			// Nothing to discover: the symbol file says where the functions
+			// are, which is the whole reason the lean analysis was going to be
+			// run. Falling back to no analysis at all makes the import
+			// seconds instead of a minute and a half.
+			mode, why = ghidra.AnalysisNone, why+", but the symbol file names them"
+		}
 		// Keyed on the hash, not the path: a rebuilt binary must not be served
 		// a stale analysis of its predecessor.
-		cfg.ProjectDir = filepath.Join(root, s.st.exeSHA256[:16]+projectSuffix(mode))
+		cfg.ProjectDir = filepath.Join(root,
+			s.st.exeSHA256[:16]+projectSuffix(mode, cfg.Symbols))
 		cfg.ProjectName = "gdb-wui"
 		cfg.Program = filepath.Base(abs)
 		if _, err := os.Stat(filepath.Join(cfg.ProjectDir, cfg.ProjectName+".gpr")); err != nil {
@@ -284,10 +326,10 @@ func (s *Session) maybeStartDecomp() {
 
 	go func() {
 		// Said on every start rather than only on the one that imports, and
-		// before anything slow: which of the two kinds of project is open
-		// decides what the tab can show, and the answer should not depend on
-		// having watched the log the day it was built.
-		if mode == ghidra.AnalysisNone {
+		// before anything slow: which kind of project is open decides what the
+		// tab can show, and the answer should not depend on having watched the
+		// log the day it was built.
+		if mode != ghidra.AnalysisFull {
 			if why != "" {
 				s.decompLog(wire.DecompLogInfo, "%s", why)
 			}
@@ -295,22 +337,38 @@ func (s *Session) maybeStartDecomp() {
 			if importPath != "" {
 				verb = "importing"
 			}
-			s.decompLog(wire.DecompLogInfo,
-				"%s %s without analysis: each function is disassembled as it is opened, "+
-					"and there are no cross-references or recovered parameter types",
-				verb, cfg.Program)
+			switch mode {
+			case ghidra.AnalysisNone:
+				s.decompLog(wire.DecompLogInfo,
+					"%s %s without analysis: each function is disassembled as it is opened, "+
+						"and there are no cross-references or recovered parameter types",
+					verb, cfg.Program)
+			case ghidra.AnalysisLean:
+				s.decompLog(wire.DecompLogInfo,
+					"%s %s with the analyzers that find functions and not the ones that "+
+						"cost the memory: expect most of the functions, named after their "+
+						"addresses", verb, cfg.Program)
+			}
+		}
+		if cfg.Symbols != "" {
+			s.decompLog(wire.DecompLogInfo, "naming functions from %s",
+				filepath.Base(cfg.Symbols))
 		}
 		// Import first, when there is no project yet. It has to be its own
 		// invocation: analyzeHeadless commits an imported program only after
 		// the postScript returns, and the resident server never returns, so
 		// importing and serving together leaves an empty project behind.
 		if importPath != "" {
-			s.decompLog(wire.DecompLogInfo,
-				"importing %s — analysis is seconds for a small binary and minutes for firmware",
-				filepath.Base(importPath))
+			if mode == ghidra.AnalysisFull {
+				s.decompLog(wire.DecompLogInfo,
+					"importing %s — analysis is seconds for a small binary and minutes for firmware",
+					filepath.Base(importPath))
+			}
 			started := time.Now()
 			if err := ghidra.Import(context.Background(), cfg.Install,
-				cfg.ProjectDir, cfg.ProjectName, importPath, mode, s.ghidraProcessLog); err != nil {
+				cfg.ProjectDir, cfg.ProjectName, importPath,
+				ghidra.ImportOptions{Analysis: mode, Symbols: cfg.Symbols},
+				s.ghidraProcessLog); err != nil {
 				s.decompLog(wire.DecompLogError, "import failed: %v", err)
 				s.decomp.mu.Lock()
 				s.decomp.starting = false
