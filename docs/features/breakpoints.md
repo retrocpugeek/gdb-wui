@@ -58,9 +58,9 @@ and no locals to wait for — and the arguments are still in the registers the
 calling convention put them in, which on that binary is the only place you were
 going to read them.
 
-## What a breakpoint is called
+## How breakpoints are named
 
-A row names the breakpoint the best way anything can: a file and a line where
+Each row is named the best way anything can name it: a file and a line where
 there is debug info, a function name where gdb has one, and otherwise the
 address, which is all a stripped binary offers.
 

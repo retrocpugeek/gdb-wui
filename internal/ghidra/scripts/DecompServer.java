@@ -74,7 +74,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
+import ghidra.app.cmd.disassemble.DisassembleCommand;
 import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
+import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.app.cmd.function.FunctionRenameOption;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
@@ -83,6 +85,7 @@ import ghidra.app.script.GhidraScript;
 import ghidra.app.util.cparser.C.CParserUtils;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
+import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.DataUtilities;
@@ -92,6 +95,7 @@ import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Variable;
 import ghidra.program.model.mem.MemoryBlock;
@@ -238,7 +242,7 @@ public class DecompServer extends GhidraScript {
 		if (f == null) {
 			return fail(id, "no function " + which);
 		}
-		DecompileResults res = decomp.decompileFunction(f, DECOMPILE_TIMEOUT_SECS, monitor);
+		DecompileResults res = decompileFn(f);
 		if (res == null || !res.decompileCompleted() || res.getCCodeMarkup() == null) {
 			return fail(id, res == null ? "no result" : res.getErrorMessage());
 		}
@@ -253,12 +257,9 @@ public class DecompServer extends GhidraScript {
 		try {
 			Address a = currentProgram.getAddressFactory().getAddress(which);
 			if (a != null) {
-				Function at = currentProgram.getFunctionManager().getFunctionAt(a);
-				if (at == null) {
-					// Not an entry point: the containing function is what a
-					// program counter means.
-					at = currentProgram.getFunctionManager().getFunctionContaining(a);
-				}
+				// Not an entry point: the containing function is what a
+				// program counter means.
+				Function at = containing(a);
 				if (at != null) {
 					return at;
 				}
@@ -691,7 +692,7 @@ public class DecompServer extends GhidraScript {
 		if (saveErr != null) {
 			warning = warning == null ? saveErr : warning + "; " + saveErr;
 		}
-		DecompileResults res = decomp.decompileFunction(f, DECOMPILE_TIMEOUT_SECS, monitor);
+		DecompileResults res = decompileFn(f);
 		if (res == null || !res.decompileCompleted() || res.getCCodeMarkup() == null) {
 			return fail(id, "the edit was made, but the function no longer decompiles: "
 				+ (res == null ? "no result" : res.getErrorMessage()));
@@ -727,7 +728,7 @@ public class DecompServer extends GhidraScript {
 	// highOf is the decompiled form of a function, for the callers that need
 	// the whole of it rather than one symbol out of it.
 	private HighFunction highOf(Function f) {
-		DecompileResults res = decomp.decompileFunction(f, DECOMPILE_TIMEOUT_SECS, monitor);
+		DecompileResults res = decompileFn(f);
 		return res == null ? null : res.getHighFunction();
 	}
 
@@ -930,14 +931,131 @@ public class DecompServer extends GhidraScript {
 			if (a == null) {
 				return null;
 			}
-			Function at = currentProgram.getFunctionManager().getFunctionAt(a);
-			if (at == null) {
-				at = currentProgram.getFunctionManager().getFunctionContaining(a);
-			}
-			return at;
+			return containing(a);
 		}
 		catch (Exception ignored) {
 			return null;
+		}
+	}
+
+	// containing is which function an address is in.
+	//
+	// The last clause is for a program imported with -noanalysis, where the ELF
+	// symbol table has given every function an entry point and a name but
+	// nothing has computed a body: getFunctionContaining answers null for every
+	// address except the entry itself, so a program counter one instruction
+	// into a function would find nothing. The function with the greatest entry
+	// at or below the address is what the symbol table implies — but only
+	// implies. On an image whose symbols are gone the nearest preceding entry
+	// can be a PLT thunk half a section away, and answering with it would
+	// decompile an unrelated function under the program counter's name. So the
+	// guess is checked rather than trusted: disassemble the candidate and see
+	// whether the body that comes out actually reaches the address. That is
+	// work the caller was going to pay for anyway on a hit, and on a miss it
+	// buys a null instead of a confident wrong answer.
+	private Function containing(Address a) {
+		Function at = currentProgram.getFunctionManager().getFunctionAt(a);
+		if (at != null) {
+			return at;
+		}
+		at = currentProgram.getFunctionManager().getFunctionContaining(a);
+		if (at != null) {
+			return at;
+		}
+		MemoryBlock block = currentProgram.getMemory().getBlock(a);
+		if (block == null || !block.isExecute()) {
+			return null;
+		}
+		FunctionIterator back = currentProgram.getFunctionManager().getFunctions(a, false);
+		while (back.hasNext()) {
+			Function f = back.next();
+			if (f.isExternal()) {
+				continue;
+			}
+			// Only a function whose extent is still unknown. A function with a
+			// body has been measured, and an address outside it is genuinely
+			// outside it — answering with the nearest one would turn "no
+			// function here" into a confident wrong one, for padding, a PLT
+			// stub, or hand-written assembly nobody claimed.
+			if (f.getBody().getNumAddresses() > 1) {
+				return null;
+			}
+			// Same block, or the answer is a function from an earlier section
+			// with a gap in between.
+			MemoryBlock own = currentProgram.getMemory().getBlock(f.getEntryPoint());
+			if (own == null || !own.equals(block)) {
+				return null;
+			}
+			ensureCode(f);
+			Function measured = currentProgram.getFunctionManager()
+				.getFunctionAt(f.getEntryPoint());
+			if (measured != null && measured.getBody().contains(a)) {
+				return measured;
+			}
+			return null;
+		}
+		return null;
+	}
+
+	// decompileFn is decompile-after-disassembling, which every path that wants
+	// p-code goes through.
+	//
+	// The decompiler needs no help to produce C: it follows flow and translates
+	// bytes itself, and on a program imported with -noanalysis it returns good
+	// output from a listing holding no instructions at all. What does need the
+	// listing is everything derived from it — DecompJson.spDepth builds a
+	// CallDepthChangeInfo by walking the function's instructions, and an empty
+	// body yields no stack depth, which is the number the frame rule turns a
+	// Ghidra stack offset into an address with. Without this the Decompiled tab
+	// would render perfectly and quietly show no value for any local.
+	//
+	// Measured on a 12 MB MIPS64 kernel: 41ms to disassemble one function, 6ms
+	// to recompute its body, against 8.7s for the whole import. When the
+	// program was analysed at import there are instructions already and this
+	// costs one lookup.
+	private DecompileResults decompileFn(Function f) {
+		ensureCode(f);
+		return decomp.decompileFunction(f, DECOMPILE_TIMEOUT_SECS, monitor);
+	}
+
+	private void ensureCode(Function f) {
+		Address entry = f.getEntryPoint();
+		if (currentProgram.getListing().getInstructionAt(entry) != null) {
+			return;
+		}
+		// Bounded by the next function's entry so that following flow cannot
+		// wander off and disassemble the image one call at a time.
+		Address end = null;
+		FunctionIterator it = currentProgram.getFunctionManager().getFunctions(entry, true);
+		while (it.hasNext()) {
+			Function g = it.next();
+			if (!g.getEntryPoint().equals(entry)) {
+				end = g.getEntryPoint().previous();
+				break;
+			}
+		}
+		MemoryBlock block = currentProgram.getMemory().getBlock(entry);
+		if (end == null || (block != null && end.compareTo(block.getEnd()) > 0)) {
+			end = block != null ? block.getEnd() : currentProgram.getMaxAddress();
+		}
+		if (end == null || end.compareTo(entry) < 0) {
+			return;
+		}
+		int tx = currentProgram.startTransaction("gdb-wui: disassemble " + f.getName());
+		try {
+			new DisassembleCommand(entry, new AddressSet(entry, end), true)
+				.applyTo(currentProgram, monitor);
+			// Recompute the body from the instructions just made. Without this
+			// the function is still one byte long and spDepth still has
+			// nothing to walk.
+			new CreateFunctionCmd(null, entry, null, SourceType.ANALYSIS, false, true)
+				.applyTo(currentProgram, monitor);
+		}
+		catch (Exception e) {
+			println("DecompServer: disassembling " + f.getName() + ": " + e);
+		}
+		finally {
+			currentProgram.endTransaction(tx, true);
 		}
 	}
 

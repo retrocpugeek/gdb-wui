@@ -19,10 +19,10 @@ nav_order: 2
 | `Shift+F11` | Step out |
 | `Alt+F10` | Step over one instruction |
 | `Alt+F11` | Step one instruction |
-| `Ctrl+Shift+G` | Go to a symbol, address, line or [decompiler name](../features/source.md#going-somewhere) in the focused view |
+| `Ctrl+Shift+G` | Go to a symbol, address, line or [decompiler name](../features/source.md#jumping-to-a-file-symbol-or-address) in the focused view |
 | `F7` | Split the centre view, or unsplit it |
 | `Shift+F7` | Switch between side by side and stacked |
-| `Ctrl+Shift+Z` | Undo the last [decompiler rename or retype](../features/decompilation.md#renaming-what-the-decompiler-guessed) |
+| `Ctrl+Shift+Z` | Undo the last [decompiler rename or retype](../features/decompilation.md#renaming-variables-and-functions) |
 | `Escape` | Close a context menu, or the About box |
 
 ## While editing a value

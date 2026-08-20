@@ -13,7 +13,7 @@ The Symbols pane lists every function and global in the loaded program, taken
 from debug info if there is any and from the ELF symbol table if not. On a
 release build that table is the only map the *program* carries, and this pane is
 how you read it — and when even that is gone, the pane fills from
-[the decompiler](#a-stripped-binary) instead.
+[the decompiler](#listing-a-stripped-binarys-functions) instead.
 
 The filter box matches substrings. The `fn` and `var` sigils show which kind
 each symbol is, the `all` dropdown narrows the list to one kind, and dimmed rows
@@ -30,11 +30,11 @@ Double-clicking a symbol jumps to it:
 
 Right-clicking a symbol offers **Set breakpoint** and **Go to**.
 
-## A stripped binary
+## Listing a stripped binary's functions
 
-Strip the symbol table and this pane has nothing to show, which is the program
-you most needed it for. With [the decompiler](decompilation.md) configured it
-fills up anyway, from Ghidra's names:
+Configure [the decompiler](decompilation.md) and the pane fills from Ghidra's
+names instead. Without it a stripped binary has nothing to list, which is the
+program you most needed the list for:
 
 ![Functions and globals recovered by the decompiler, on a stripped binary](../images/symbols-decomp.png)
 
@@ -56,7 +56,7 @@ binary's wins and appears once.
 Everything else works the same. Double-clicking goes to the disassembly or the
 memory viewer, right-clicking sets a breakpoint, and the name can be typed into
 the go-to box — or right-clicked where you found it, in the
-[decompiled text](decompilation.md#following-a-call-and-stopping-in-one). gdb has never heard of any of them, so the server resolves the
+[decompiled text](decompilation.md#following-a-call). gdb has never heard of any of them, so the server resolves the
 name through Ghidra and translates the address — which is not the number spelled
 out in the name, since a position-independent executable is somewhere else
 entirely by the time it is running.

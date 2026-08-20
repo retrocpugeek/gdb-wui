@@ -20,13 +20,12 @@ table of a stripped binary, which needs no debug info.
 Rows that belong to no symbol are left blank. Most of the stack and heap is
 blank, which is accurate rather than missing.
 
-## When only the decompiler has a name
+## Naming addresses in a stripped binary
 
-Strip the symbol table and gdb has nothing to put in that column, on the program
-whose hex you most need placing. With [the decompiler](decompilation.md)
-configured, its labels fill it — `DAT_001a08de`, or whatever you renamed it to —
-in the same italics the [call stack](../tour.md) uses, because Ghidra's label is
-a guess and not something the binary says.
+Configure [the decompiler](decompilation.md) and Ghidra's labels fill the symbol
+column that gdb has nothing to put in — `DAT_001a08de`, or whatever you renamed
+it to. They are shown in the same italics the [call stack](../tour.md) uses,
+because Ghidra's label is a guess and not something the binary says.
 
 ![The hex view of a stripped binary, labelled by the decompiler](../images/memory-decomp.png)
 
@@ -66,7 +65,7 @@ resolved to, so a mistake is visible. `Ctrl+Shift+G` puts the cursor in the box.
 
 The box acts on whichever view is focused, so it reads memory when the memory
 view is the one you are looking at. See
-[going somewhere](source.md#going-somewhere).
+[jumping to a file, symbol or address](source.md#jumping-to-a-file-symbol-or-address).
 
 You can also reach the memory viewer without typing an address:
 [hover a variable](variables.md), right-click it, and choose **Show where it is

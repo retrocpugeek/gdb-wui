@@ -8,7 +8,8 @@ nav_order: 13
 # Remote targets
 
 gdb-wui can debug anything that speaks the GDB remote protocol: a gdbserver, an
-emulator's stub, or a board on the end of a probe. It can also attach to a
+emulator's stub, or a board on the end of a probe. A kernel is one of these,
+with enough of its own to say that it has [its own page](kernel.md). It can also attach to a
 process already running on this machine: a target it did not start and must not
 kill.
 

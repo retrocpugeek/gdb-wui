@@ -128,7 +128,8 @@ func startIn(t *testing.T) (*ghidra.Client, string) {
 	projectDir := t.TempDir()
 	bin := fixture(t)
 	logf := func(f string, a ...any) { t.Logf(f, a...) }
-	if err := ghidra.Import(ctx, in, projectDir, "itest", bin, logf); err != nil {
+	if err := ghidra.Import(ctx, in, projectDir, "itest", bin,
+		ghidra.ImportOptions{Analysis: ghidra.AnalysisFull}, logf); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 	c, err := ghidra.Start(ctx, ghidra.Options{

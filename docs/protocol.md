@@ -80,11 +80,11 @@ Everything below needs a debugger session except the `session.*` group; with
 | `exec.pause` | — | `{paused}` | Allowed while running. |
 | `exec.kill` | — | [`ExecAck`](#execack) | Allowed while running. |
 | `exec.runTo` | `{path?, line?, location?, thread?, stopSeq?}` | [`ExecAck`](#execack) | Temporary breakpoint, then run or continue. Give a source line or a `location`, not both. |
-| `bp.setSource` | `{path, line, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | |
-| `bp.setAddress` | `{location, temporary?, condition?}` | [`Breakpoint`](#breakpoints-1) | `location` is an address or a function name. The only way to break in a stripped binary. |
-| `bp.delete` | `{number}` | [`BreakpointList`](#breakpoints-1) | |
-| `bp.setEnabled` | `{number, enabled}` | [`BreakpointList`](#breakpoints-1) | |
-| `bp.list` | — | [`BreakpointList`](#breakpoints-1) | Re-reads from gdb. Allowed while running. |
+| `bp.setSource` | `{path, line, temporary?, condition?}` | [`Breakpoint`](#breakpoints) | |
+| `bp.setAddress` | `{location, temporary?, condition?}` | [`Breakpoint`](#breakpoints) | `location` is an address or a function name. The only way to break in a stripped binary. |
+| `bp.delete` | `{number}` | [`BreakpointList`](#breakpoints) | |
+| `bp.setEnabled` | `{number, enabled}` | [`BreakpointList`](#breakpoints) | |
+| `bp.list` | — | [`BreakpointList`](#breakpoints) | Re-reads from gdb. Allowed while running. |
 | `stack.list` | `{thread?, low?, high?, stopSeq?}` | `{stopSeq, threadId, frames}` | Capped at 64 frames. |
 | `frame.select` | `{thread?, frame, stopSeq?}` | [`Selection`](#selection) | Also emits `selectionChanged`. |
 | `vars.locals` | `{thread?, frame?, stopSeq?}` | `{stopSeq, threadId, frame, variables}` | [`VarNode`](#varnode) rows, no varobjs created. |
@@ -896,7 +896,7 @@ the decompiler's markup rather than from the text, so a decompiled
 addresses in `lines`, deliberately: the program counter must never be put on
 one.
 
-### Who wrote it
+### Marking who wrote an edit
 
 Every decompiler edit carries an optional `author`. The browser never sets it;
 the [MCP bridge](features/agent.md) always does, as `"agent"`. It changes how
@@ -920,7 +920,7 @@ same transaction and the same journal as a person.
 that can reach this protocol could lie about it, and anything that can reach
 this protocol can already rename whatever it likes.
 
-### Undoing a run
+### Undoing a run of edits
 
 `decomp.undo` reverses the last edit. It is gdb-wui's own journal of inverse
 edits rather than Ghidra's undo, because saving clears Ghidra's undo stack and

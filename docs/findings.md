@@ -515,14 +515,16 @@ implementing:
     gdb agrees with the depth. Nothing was going to catch that except a second
     binary, built differently, on the same architecture.
 
-45. **A negative assertion read without a barrier passes for ever.** The
-    session broadcasts from the actor's goroutine, so a test that counts events
-    straight after an action counts whatever had arrived by then. Read too
-    early, a positive assertion fails intermittently — unpleasant, but it
-    announces itself, which is how finding 24 was found, and how a cross-arch
-    test that read the console the moment `console.exec` returned was found:
-    on a loaded runner what had arrived was nothing at all. Read too early, a
-    negative assertion *passes*, and passes every run: the event that should
+45. **A test that asserts an event did not fire passes every run if it reads
+    the log too early.** The session broadcasts from the actor's goroutine, so
+    a test that counts events straight after an action counts whatever had
+    arrived by then, which may be nothing.
+
+    A positive assertion read too early fails intermittently. That is
+    unpleasant but it announces itself: it is how finding 24 was found, and how
+    a cross-arch test that read the console the moment `console.exec` returned
+    was found, on a loaded runner where what had arrived was nothing at all. A
+    negative assertion read too early *passes*, because the event that should
     have failed it had not been broadcast yet. The suite counts it as coverage
     and it can never fail.
 
@@ -543,3 +545,70 @@ implementing:
     the helpers that wait or barrier, by parsing the test files. Like the check
     in finding 24 it reads the source, because the mistake it prevents shows up
     as a test that passes.
+
+46. **Ghidra's decompiler works without its analysis, but everything derived
+    from the listing does not.** A 12 MB MIPS64 `vmlinux`, 6.9 MB of it code,
+    cannot be analysed at all: `analyzeHeadless` hard-codes a 2 GB heap, and
+    `MipsAddressAnalyzer` exhausts it across 22,702 functions. The log is worth
+    knowing by sight, because it reports success and failure together —
+    `Analysis succeeded for file`, then `Can't checkpoint with locked buffers`,
+    then `Import failed`. Only the check for `REPORT: Import succeeded` caught
+    it; the exit code is 0.
+
+    Imported with `-noanalysis` instead, the same kernel takes 6.8 seconds and
+    597 MB, and the ELF symbol table alone gives 22,143 named functions with
+    correct entry points. Decompiling one of them takes 86 ms — from a listing
+    holding zero instructions. The decompiler follows flow and translates bytes
+    itself; auto-analysis buys cross-references, parameter types and typed
+    strings, none of which it consults.
+
+    What breaks is quieter. `spDepth` builds a `CallDepthChangeInfo` by walking
+    the function's instructions, and an unanalysed body is one byte long, so
+    the depth comes back null and the frame rule has nothing to turn a stack
+    offset into an address with. Every stack local shows no value, and the
+    decompiled C — the thing a reader would check — is perfect. It reads
+    exactly like the documented "a frame whose depth Ghidra cannot settle on".
+    The fix is to disassemble the one function being opened (41 ms, plus 6 ms
+    to recompute its body), bounded by the next function's entry so following
+    flow cannot wander off across the image. The second, related trap: with
+    every body one byte long, `getFunctionContaining` answers null for any
+    address that is not an entry point, so a program counter one instruction
+    into a function finds nothing at all.
+
+    Both are tested by asking for an interior address of a function nothing has
+    touched yet, on a program imported with `AnalysisNone`, and asserting a
+    stack depth comes back. Asking for the entry point, or asking twice,
+    exercises neither.
+
+47. **Importing without analysis produces an empty program for a stripped
+    image.** The ELF loader creates a function per symbol, so with no symbol
+    table it creates none: a stripped 12 MB kernel arrives with 1 function and
+    2 symbols, and every program counter resolves to nothing. So `auto` has to
+    ask two questions, not one: past the size limit, an image whose symbols say
+    where the functions are gets no analysis, and a stripped one gets the
+    analyzers that find functions without the ones that cost the memory — 89
+    seconds and 1.28 GB against the 2 GB heap, finding 12,955 functions of
+    which 97% start exactly where a real function starts. Only 57% of the real
+    ones, though, and every name is `FUN_` and an address: pattern matching
+    finds where a function is, never what it was called.
+
+    Names have to come from somewhere that knew them. For a kernel that place
+    is the kernel: `CONFIG_KALLSYMS` keeps the whole symbol table inside the
+    image as data, for oops traces, and stripping the ELF does not touch it.
+    22,563 function names out of a stripped image, and the addresses agree
+    exactly with what Ghidra found on its own. Injected as functions with
+    one-byte bodies — the same shape the ELF loader leaves — they need no new
+    handling at all: the lazy disassembly from finding 46 takes them as they
+    are.
+
+    The trap was in the lookup. Falling back to "the function with the greatest
+    entry at or below this address" is right when a symbol table has named
+    every function and wrong when seven PLT thunks are all that exist, and the
+    wrong answer is not an error — it decompiles an unrelated function under
+    the program counter's name. Bounding it to functions with no measured body
+    was not enough, because on a stripped image nothing has a measured body.
+    What works is to check rather than imply: disassemble the candidate and see
+    whether the body that comes out actually reaches the address. That is work
+    the caller pays for anyway on a hit, and on a miss it returns null rather
+    than a confident wrong answer. Found by a test asserting that the empty
+    case is empty.

@@ -23,13 +23,12 @@ This tab needs the `-ghidra` argument. See
 
 To decompile a particular function rather than the one being executed, type its
 name or an address into the go-to box at the right of the tab strip. See
-[going somewhere](source.md#going-somewhere).
+[jumping to a file, symbol or address](source.md#jumping-to-a-file-symbol-or-address).
 
 ## Naming the call stack
 
-gdb has no symbol for a stripped binary's own functions, so every frame inside
-the program reads `?? ()`. The decompiler does know what is there, and the names
-are filled in once it has finished analysing.
+Frames that gdb cannot name are named by the decompiler, once it has finished
+analysing. Without it every frame inside a stripped binary reads `?? ()`.
 
 ![A stripped binary's call stack, named by the decompiler](../images/stack-names.png)
 
@@ -57,11 +56,12 @@ Renaming a function shows your name here, so a stack you have already worked
 through reads in your own names — and you can rename it from the stack row
 itself, without leaving gdb-wui.
 
-## Following a call, and stopping in one
+## Following a call
 
-The body of a recovered function is full of names that exist nowhere else:
-`FUN_004011d6` for the function it calls, `DAT_00404040` for the global it
-reads. Right-click one and the menu offers what to do with it:
+Right-click a name in the decompiled text to set a breakpoint on it or jump to
+it. The body of a recovered function is full of names that exist nowhere else —
+`FUN_004011d6` for a function it calls, `DAT_00404040` for a global it reads —
+and the menu offers what to do with each:
 
 - **Set breakpoint at `FUN_004011d6`** — the breakpoint appears in the
   [Breakpoints pane](breakpoints.md) named the same way rather than as a bare
@@ -82,11 +82,12 @@ The address is not the digits in the name. Those are where Ghidra found the
 function at link time, and a position-independent executable is somewhere else
 entirely once it is running.
 
-## Renaming what the decompiler guessed
+## Renaming variables and functions
 
-`FUN_00401154`, `local_10` and `undefined8` are not wrong: they are what can be
-known without a symbol table. But a reader holds a program in their head by its
-names, and invented ones give you nothing to hold on to.
+Rename a decompiler-invented name by right-clicking it in the Decompiled tab.
+`FUN_00401154`, `local_10` and `undefined8` are not wrong — they are what can be
+known without a symbol table — but a reader holds a program in their head by its
+names.
 
 ![A decompiler-invented name being replaced](../images/decomp-rename.png)
 
@@ -102,7 +103,7 @@ Right-click a name in the Decompiled tab:
   re-read at every stop. A global is the one to reach for: a fixed address is
   valid at every program counter, so the watch goes on reading however far you
   step. It arrives typed as whatever the decompiler believes, which is often
-  `undefined8`, and the pane can [cast it](variables.md#working-with-watches).
+  `undefined8`, and the pane can [cast it](variables.md#adding-removing-and-casting-a-watch).
 
 Right-clicking a recovered frame in the call stack offers the same rename, which
 is usually where an unhelpful name is first met.
@@ -129,15 +130,13 @@ reading one build's names against another build's addresses is a confidently
 wrong answer — but it does mean the naming is worth doing on a binary you are
 going to keep.
 
-## Writing down what you worked out
+## Adding comments to the decompilation
 
-Renaming corrects what the decompiler guessed. A comment records what you
-understood, and it has nowhere else to go: there is no source file to write it
-in, and reading the recovered C a second time will not give it back.
+Comments can be added to the decompilation by right-clicking in the Decompiled
+tab. There is no source file to write them in, and re-reading the recovered C
+will not give back what you worked out.
 
 ![A comment written onto recovered C](../images/decomp-comment.png)
-
-Right-click in the Decompiled tab:
 
 - **Comment this line…** — a note above that line. Right-clicking a comment
   offers **Edit the comment on this line…** instead, opening on what you typed,
@@ -160,8 +159,9 @@ notes wrap when the decompiler prints them.
 
 ## Stepping in the decompiled view
 
-gdb's own stepping needs a line table. Without one its step range is the whole
-function, so `F10` runs to the end of the function.
+Step by decompiled line with `F10`, the same key as everywhere else. gdb's own
+stepping needs a line table, and without one its step range would be the whole
+function.
 
 While this tab is showing, a step moves to the next decompiled line instead,
 using Ghidra's address map in place of the missing line table. The gutter also
@@ -173,8 +173,9 @@ With both showing, the focused one decides how stepping behaves.
 
 ## How the program counter is marked
 
-Recovered C is a model of the program rather than its source, so the pane
-distinguishes how confident the mapping is:
+The pane marks the current line one of three ways, according to how well the
+recovered C maps to the address. Recovered C is a model of the program rather
+than its source, so the mapping is not always exact:
 
 - **Filled** — a decompiled line claims the program counter's address exactly.
 - **Outlined**, with `pc between lines` in the header — no line claims the
@@ -192,7 +193,7 @@ Around two thirds of recovered locals live in a register that is only correct
 near one program counter, whereas a global at a fixed address is valid at every
 one, so globals are the ones you can rely on.
 
-## Following what Ghidra is doing
+## Watching the import and analysis
 
 ![The decompiler's activity in the log](../images/decompiled-log.png)
 
@@ -204,6 +205,39 @@ line per operation and it is the only way to tell a slow start from a stuck one.
 Import and analysis take seconds for a small program and minutes for firmware.
 The result is cached under `<project>/gdb-wui-decomp`, keyed on the binary's
 SHA-256, so later runs are immediate.
+
+## Images too big to analyse
+
+Past 4 MB of code, gdb-wui imports the image without Ghidra's analysis and
+disassembles each function as it is opened. Nothing is needed from you; the log
+says when it happens. Import drops to seconds, and the first time you open a
+function costs a few tens of milliseconds more than the times after it.
+
+The reason is that Ghidra's analysis walks the whole image — disassembling
+everything, propagating constants between functions, building the
+cross-references — and past a few megabytes of code that stops finishing. A
+12 MB MIPS64 kernel, 6.9 MB of it code, exhausts `analyzeHeadless`'s 2 GB heap
+and the import fails outright.
+
+What you keep is what the decompiler produces on its own: the C, the variables,
+the stack rule and every function in the symbol table — a kernel arrives with
+all 22,000 of them named. What you lose is the whole-program work:
+cross-references, recovered parameter types, and strings identified as strings.
+
+An image with no symbol table has nothing to list this way, so `auto` takes
+`lean` for that case instead: the analyzers that find functions, without the
+ones that cost the memory. They arrive named after their addresses, because
+nothing knows what they were called. If something else does — a kernel's own
+`kallsyms`, or `nm` output from an unstripped build — `-ghidra-symbols` takes a
+file of `address [type] name` lines and names them.
+See [debugging a kernel](kernel.md#a-stripped-kernel), which is where both of
+these come up.
+
+`-ghidra-analysis` overrides the choice — `full` to analyse anyway and wait,
+`none` to skip it on a smaller binary. Raising Ghidra's heap raises the ceiling
+too: `GHIDRA_MAXMEM=8G` is passed through to the Ghidra gdb-wui spawns. Each
+kind of project is cached separately, so switching either flag re-imports
+rather than handing back the one you already have.
 
 ## Using an existing Ghidra project
 
@@ -253,7 +287,7 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
 - **It does not name every pane.** It names the [call stack](#naming-the-call-stack),
   the [symbol pane](symbols.md), the [breakpoint list](breakpoints.md), a
   [watch on an address](variables.md#watching-something-from-the-decompiled-view)
-  and the [memory viewer](memory.md#when-only-the-decompiler-has-a-name)'s
+  and the [memory viewer](memory.md#naming-addresses-in-a-stripped-binary)'s
   symbol column. The Threads pane shows a frame per thread and leaves gdb's
   `??` on it.
 - **It does not know how far an untyped label runs**, so the memory column names
@@ -268,3 +302,7 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
   types are inferred. Read it as a model.
 - **It does nothing without Ghidra**, and prints no warning until you open the
   tab.
+- **It does not analyse a large image**, and says so: past 4 MB of code the
+  import skips Ghidra's analysis, which costs cross-references and recovered
+  parameter types.
+  See [images too big to analyse](#images-too-big-to-analyse).

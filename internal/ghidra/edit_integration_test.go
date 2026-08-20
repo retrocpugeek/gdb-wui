@@ -39,7 +39,8 @@ func startWritableOn(t *testing.T, bin string) (*ghidra.Client, ghidra.Options) 
 
 	projectDir := t.TempDir()
 	logf := func(f string, a ...any) { t.Logf(f, a...) }
-	if err := ghidra.Import(ctx, in, projectDir, "itest", bin, logf); err != nil {
+	if err := ghidra.Import(ctx, in, projectDir, "itest", bin,
+		ghidra.ImportOptions{Analysis: ghidra.AnalysisFull}, logf); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 	opts := ghidra.Options{

@@ -74,10 +74,10 @@ focused, `F10` steps by instruction, and with the decompiled view focused it
 [steps by decompiled line](decompilation.md#stepping-in-the-decompiled-view).
 Both views follow the program counter either way.
 
-## Going somewhere
+## Jumping to a file, symbol or address
 
-The box at the right of the tab strip takes a place and sends the focused view
-there. `Ctrl+Shift+G` puts the cursor in it.
+Type where you want to go into the box at the right of the tab strip, and the
+focused view goes there. `Ctrl+Shift+G` puts the cursor in it.
 
 ![Going to walk with the disassembly focused](../images/goto.png)
 
