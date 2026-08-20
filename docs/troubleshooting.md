@@ -208,9 +208,8 @@ rather than wrong.
 
 The third is the architecture. Turning Ghidra's stack offsets into an address
 needs the frame base, which is recovered differently on every ABI and is
-established by measurement: x86-64, ARM, AArch64, PowerPC and MIPS have a rule
-— both widths of the last three — and on anything else stack locals show
-nothing at all. A guess there would read as a
+established by measurement: x86, ARM, AArch64, PowerPC and MIPS have one — both
+widths of each — and on anything else stack locals show nothing at all. A guess there would read as a
 value from the neighbouring slot. See
 [stack offsets](https://github.com/retrocpugeek/gdb-wui/blob/master/docs/decompilation.md#stack-offsets).
 

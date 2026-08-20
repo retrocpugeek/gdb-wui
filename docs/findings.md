@@ -495,6 +495,16 @@ implementing:
     have propagated. The depth is -4144, which is right, against a `frame.size`
     of 4132.
 
+    The x86-64 rule did not survive either, and it failed the same way one
+    level up: it read `$rbp + 8`, which names the entry stack pointer only
+    where there is a frame pointer to name it with. `-O0` always has one, every
+    binary it was measured on was `-O0`, and `-O2` omits it. Measured on gcc
+    15's `-O2` output, the addresses landed 192 bytes away, inside the caller's
+    frame — mapped memory holding somebody's live data. The depth is right
+    there, and right in the two x86 cases the old rule could not express at
+    all: a leaf's red-zone locals below `$rsp`, and 32-bit x86, where emitting
+    `$rbp` got `void` out of gdb and showed nothing.
+
     The MIPS rule did not survive. It read `ghidra_offset + frame.size`, and
     the firmware it was established on is the one binary where that is right:
     `process_packet`'s eleven register spills reach the bottom of its frame, so

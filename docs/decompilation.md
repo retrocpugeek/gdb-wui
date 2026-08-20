@@ -374,19 +374,16 @@ one.
 ### Stack offsets
 
 A `stack` offset is relative to Ghidra's frame base rather than to any register
-gdb knows. On x86-64 SysV with a frame pointer, measured on two functions in two
-different binaries:
-
-```
-rbp_offset = ghidra_offset + 8
-```
-
-On everything else measured so far — ARM, AArch64, both PowerPC widths and
-both endiannesses, and both MIPS widths — from `frame.spDepth`:
+gdb knows. One rule recovers it everywhere measured — x86-64 and i386, ARM,
+AArch64, both PowerPC widths in both endiannesses, and both MIPS widths:
 
 ```
 sp_offset = ghidra_offset - frame.spDepth
 ```
+
+Ghidra's frame base is the stack pointer at function entry and `spDepth` is
+where the prologue left the stack pointer relative to it, so subtracting one
+from the other is just "how far down are we now".
 
 `frame.size` was the first thing tried on AArch64 and it is why that
 architecture went unsupported for a while: `bb_full_fd_action` in busybox opens
@@ -400,7 +397,9 @@ is knowledge about the ABI — and a frame base that has not been checked agains
 a live inferior reads as a value rather than as a mistake.
 
 gdb's own CFA is the other way in. `info frame` reports "Previous frame's sp",
-which equals Ghidra's frame base exactly and is correct even mid-prologue. It is
+which equals Ghidra's frame base on every architecture whose call leaves the
+return address in a register — and is eight bytes above it on x86-64, where
+`call` pushes one — and is correct even mid-prologue. It is
 reachable over MI as `$sp` evaluated in the caller's frame, and it generalises:
 `bl` and `jal` push nothing and `call` pushes 8, so
 `entry_sp = caller_sp - callPush` covers x86-64, MIPS64 and AArch64 with one
@@ -408,29 +407,57 @@ constant per ISA. This was verified on all three. Adopting it would make
 expressions frame-dependent rather than static, which changes what `expr`
 promises, so it is recorded here rather than implemented halfway.
 
-`inspect`: `buf` at Ghidra `-0x58` is `-0x50(%rbp)` in the instruction stream.
-`FUN_00101167`: `local_10` at Ghidra `-16` is `-0x8(%rbp)`. The 8 is the saved
-frame pointer — Ghidra's base is the entry stack pointer, which points at the
-return address, and `push %rbp` moves `%rbp` eight bytes below it.
+#### x86-64, measured twice — and the first time assumed a frame pointer
 
-Verified against a live inferior, on the **stripped** binary, third time round
-the loop:
+The rule here was `ghidra_offset + 8` against `$rbp`, and the reasoning was
+sound as far as it went: `inspect`'s `buf` at Ghidra `-0x58` is `-0x50(%rbp)`
+in the instruction stream, `FUN_00101167`'s `local_10` at Ghidra `-16` is
+`-0x8(%rbp)`, and the 8 is the saved frame pointer — Ghidra's base is the entry
+stack pointer, which points at the return address, and `push %rbp` moves
+`%rbp` eight bytes below it. Verified against a live inferior on the stripped
+binary, third time round the loop:
 
 ```
 ghidra local_10 Stack[-16] via $rbp+(-16+8) = 2      ground truth -0x8(%rbp) = 2
 ghidra local_c  Stack[-12] via $rbp+(-12+8) = 8      ground truth -0x4(%rbp) = 8
 ```
 
-This constant is **not** portable, and the general rule is simpler than it
-looks. Ghidra's frame base is always **the stack pointer at function entry**,
-so the address is always:
+Every one of those functions was built `-O0`, and `-O0` keeps a frame pointer.
+`-O2` does not. Measured on gcc 15's `-O2` output, where `tally` opens
+`push %rbx; sub $0x50,%rsp` and never touches `%rbp`:
+
+| | `&buf` |
+|---|---|
+| gdb, from DWARF | `0x7fffffffd360` |
+| `$sp - spDepth + offset` | `0x7fffffffd360` |
+| `$rbp + 8 + offset` | `0x7fffffffd420` |
+
+192 bytes out, inside `main`'s frame — mapped memory holding somebody's live
+data, which is the worst possible way to be wrong. So x86 takes the same depth
+rule as everything else, and `TestDecompStackExpressionsWithoutAFramePointer`
+holds it there.
+
+Three x86 cases the depth handles that are worth naming, because each looks
+wrong at a glance:
+
+- **The red zone.** A leaf at `-O0` never moves the stack pointer past the
+  pushed frame pointer, so its locals are *below* `$rsp`: `accumulate`'s
+  `total` is `$rsp-8`. A negative delta is a real answer.
+- **i386.** The old rule emitted `$rbp` whatever the width, and 32-bit gdb
+  answers `void` to that, so nothing was ever shown. `$sp` is spelled the same
+  on both, so the depth reaches 32-bit binaries for the first time.
+- **cdecl arguments.** i386 passes them on the stack above the frame base, so
+  `n` at Ghidra `+4` is `$esp+24` and readable — parameters, not just locals.
+
+Ghidra's frame base is always **the stack pointer at function entry**, so the
+address is always:
 
 ```
 address = entry_sp + ghidra_offset
 ```
 
-All that changes per ABI is how `entry_sp` is recovered from a register gdb
-has. That has to be measured per architecture.
+and what changes per ABI is only how much the prologue subtracted before you
+looked, which is what `spDepth` reports.
 
 #### MIPS, measured twice — and the first time was wrong
 

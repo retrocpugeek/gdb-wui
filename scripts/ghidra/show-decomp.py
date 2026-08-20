@@ -40,7 +40,6 @@ if doc.get("schema") != 2:
 
 bias = int(args.bias, 16) if args.bias else 0
 image_base = int(doc["program"]["imageBase"], 16)
-psize = doc["program"]["pointerSize"]
 lang = doc["program"]["languageId"]
 
 
@@ -151,29 +150,19 @@ def stack_expr(v):
     """
     off = v["storage"]["offset"]
     ctype = v["type"] or "long"
-    if lang.startswith("x86"):
-        # `call` pushed the return address, then `push %rbp` put the saved
-        # frame pointer one word below it, so entry_sp = $rbp + pointerSize.
-        base, delta = "$rbp", off + psize
-    elif lang.startswith("MIPS"):
-        # `jal` touches no memory; the prologue's single `daddiu sp,sp,-N` is
-        # the whole frame, so entry_sp = $sp + frameSize.
-        base, delta = "$sp", off + fn["frame"]["size"]
-    elif (lang.startswith("ARM") or lang.startswith("AARCH64")
-          or lang.startswith("PowerPC")):
-        # The call leaves the return address in a link register and touches no
-        # memory, so entry_sp is wherever the prologue left the stack pointer:
-        # entry_sp = $sp - spDepth. frame.size is not that number — it is
-        # derived from the variables Ghidra found, and on gcc's output for
-        # these it is routinely several bytes out, or on 64-bit PowerPC a
-        # different quantity altogether.
-        depth = fn["frame"].get("spDepth")
-        if depth is None:
-            return (f"<stack {off}: this function's stack pointer never "
-                    f"settles, so there is no static expression for it>")
-        base, delta = "$sp", off - depth
-    else:
+    families = ("x86", "ARM", "AARCH64", "PowerPC", "MIPS")
+    if not lang.startswith(families):
         return f"<stack {off}: entry_sp rule not established for {lang}>"
+    # entry_sp is wherever the prologue left the stack pointer, and spDepth is
+    # how far that is. frame.size is not the same number — it is derived from
+    # the variables Ghidra found, so it misses whatever the frame holds that
+    # nothing touches — and $rbp is only the frame base where there is a frame
+    # pointer, which -O2 omits.
+    depth = fn["frame"].get("spDepth")
+    if depth is None:
+        return (f"<stack {off}: this function's stack pointer never "
+                f"settles, so there is no static expression for it>")
+    base, delta = "$sp", off - depth
     sign = "+" if delta >= 0 else "-"
     return f"*({ctype} *)({base} {sign} {abs(delta):#x})"
 

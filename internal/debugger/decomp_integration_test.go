@@ -113,6 +113,19 @@ int main(void) { printf("%d %d\n", tally(7), hits); return 0; }
 		t.Fatalf("gcc (stripped): %v\n%s", err, out)
 	}
 
+	// And one at -O2, which on x86-64 means no frame pointer. That is the
+	// build the old frame rule was wrong about, and the only one here whose
+	// stack expressions cannot be derived from $rbp.
+	optSrc := filepath.Join(dir, "opt.c")
+	if err := os.WriteFile(optSrc, []byte(optSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = exec.Command("gcc", "-g", "-O2", "-o", filepath.Join(dir, "opt"), optSrc).
+		CombinedOutput()
+	if err != nil {
+		t.Fatalf("gcc (opt): %v\n%s", err, out)
+	}
+
 	files, err := srcfs.Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -325,6 +338,40 @@ func TestDecompStackExpressionsReadTheRightMemory(t *testing.T) {
 	if matched == 0 {
 		t.Error("no stack expression read the accumulator's value of 63; " +
 			"the frame-base rule is producing readable but wrong addresses")
+	}
+}
+
+// TestDecompStackExpressionsWithoutAFramePointer is the regression test for
+// the rule x86-64 used to have.
+//
+// It read `$rbp + 8`, which names the entry stack pointer only where there is
+// a frame pointer to name it with. gcc omits one at -O2 — `tally` opens
+// `push %rbx; sub $0x50,%rsp` — and the addresses came out 192 bytes away, in
+// the caller's frame, where there is memory to read and nothing to say it is
+// the wrong memory.
+//
+// Ghidra and gdb both have an opinion about where `buf` is, and this insists
+// they agree.
+func TestDecompStackExpressionsWithoutAFramePointer(t *testing.T) {
+	k := decompHarness(t)
+	do := k.do
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "opt"})
+	waitReady(t, do)
+
+	do(wire.TypeBpSetSource, wire.BreakpointRequest{
+		Path: "opt.c", Line: lineTallyLoop,
+	})
+	do(wire.TypeExecRun, wire.ExecRequest{})
+	waitStopped(t, do, 30*time.Second)
+
+	// By where the program is, which is what the pane asks on every stop.
+	fn := do(wire.TypeDecompFunction, wire.DecompFunctionRequest{}).(wire.DecompFunction)
+	if fn.Name != "tally" {
+		t.Fatalf("stopped in %q, want tally", fn.Name)
+	}
+	if !checkStackVars(t, k.try, fn) {
+		t.Error("tally has no readable stack variables; a function with a " +
+			"64-byte array on the stack has one whatever the optimiser did")
 	}
 }
 

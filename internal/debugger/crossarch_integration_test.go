@@ -50,23 +50,22 @@ var crossArches = []struct {
 	// *descriptor* — a triple of addresses in .opd — and the code is a second
 	// symbol with a dot in front of it.
 	entry string
-	// lang and pointerSize are what Ghidra reports for this architecture, for
-	// the tests that build a decompiler's-eye view of a frame without one.
-	// The language IDs are the ones Ghidra chose for these very binaries —
-	// e500 and A2ALT are its reading of the ELF headers, not a preference of
-	// ours — and only their family prefix decides which rule applies.
-	lang        string
-	pointerSize int
+	// lang is what Ghidra reports for this architecture, for the tests that
+	// build a decompiler's-eye view of a frame without one. The language IDs
+	// are the ones Ghidra chose for these very binaries — e500 and A2ALT are
+	// its reading of the ELF headers, not a preference of ours — and only
+	// their family prefix decides whether there is a rule at all.
+	lang string
 }{
 	{
 		name: "arm", gcc: "arm-linux-gnueabihf-gcc", qemu: "qemu-arm",
 		exe: "hello-arm", arch: "armv7", regs: []string{"r0", "cpsr"},
-		entry: "_start", lang: "ARM:LE:32:v8", pointerSize: 4,
+		entry: "_start", lang: "ARM:LE:32:v8",
 	},
 	{
 		name: "aarch64", gcc: "aarch64-linux-gnu-gcc", qemu: "qemu-aarch64",
 		exe: "hello-aarch64", arch: "aarch64", regs: []string{"x0", "sp"},
-		entry: "_start", lang: "AARCH64:LE:64:v8A", pointerSize: 8,
+		entry: "_start", lang: "AARCH64:LE:64:v8A",
 	},
 	// Big-endian, and the 64-bit one is ELFv1 — every function symbol is a
 	// descriptor in .opd rather than the code itself. Both are exactly the
@@ -77,12 +76,12 @@ var crossArches = []struct {
 	{
 		name: "ppc", gcc: "powerpc-linux-gnu-gcc", qemu: "qemu-ppc",
 		exe: "hello-ppc", arch: "powerpc:common", regs: []string{"r0", "lr"},
-		entry: "_start", lang: "PowerPC:BE:32:e500", pointerSize: 4,
+		entry: "_start", lang: "PowerPC:BE:32:e500",
 	},
 	{
 		name: "ppc64", gcc: "powerpc64-linux-gnu-gcc", qemu: "qemu-ppc64",
 		exe: "hello-ppc64", arch: "powerpc:common64", regs: []string{"r0", "lr"},
-		entry: "._start", lang: "PowerPC:BE:64:A2ALT", pointerSize: 8,
+		entry: "._start", lang: "PowerPC:BE:64:A2ALT",
 	},
 	// The same processor little-endian, which is ELFv2 and so has no
 	// descriptors: the entry symbol loses its dot. Worth both, because the two
@@ -90,7 +89,7 @@ var crossArches = []struct {
 	{
 		name: "ppc64le", gcc: "powerpc64le-linux-gnu-gcc", qemu: "qemu-ppc64le",
 		exe: "hello-ppc64le", arch: "powerpc:common64", regs: []string{"r0", "lr"},
-		entry: "_start", lang: "PowerPC:LE:64:A2ALT", pointerSize: 8,
+		entry: "_start", lang: "PowerPC:LE:64:A2ALT",
 	},
 	// MIPS, whose rule this repository got wrong for a while: it was
 	// established on a firmware image where frame.size and the stack depth
@@ -99,12 +98,12 @@ var crossArches = []struct {
 	{
 		name: "mips", gcc: "mips-linux-gnu-gcc", qemu: "qemu-mips",
 		exe: "hello-mips", arch: "mips:isa32r2", regs: []string{"zero", "ra"},
-		entry: "__start", lang: "MIPS:BE:32:default", pointerSize: 4,
+		entry: "__start", lang: "MIPS:BE:32:default",
 	},
 	{
 		name: "mips64", gcc: "mips64-linux-gnuabi64-gcc", qemu: "qemu-mips64",
 		exe: "hello-mips64", arch: "mips:isa64r2", regs: []string{"zero", "ra"},
-		entry: "__start", lang: "MIPS:BE:64:default", pointerSize: 8,
+		entry: "__start", lang: "MIPS:BE:64:default",
 	},
 }
 

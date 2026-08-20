@@ -25,22 +25,63 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 	cases := []struct {
 		name    string
 		lang    string
-		ptr     int
 		frame   ghidra.Frame
 		v       ghidra.Var
 		want    string
 		because string
 	}{
 		{
-			name:  "x86-64 stack",
+			// The function the x86 rule was first established on, now read
+			// through the depth. Both answers are the same address here,
+			// because inspect has a frame pointer: $rbp + 8 and $rsp + 104 are
+			// two ways of naming its entry stack pointer.
+			name:  "x86-64 stack, with a frame pointer",
 			lang:  "x86:LE:64:default",
-			ptr:   8,
-			frame: ghidra.Frame{Size: 96},
+			frame: ghidra.Frame{Size: 96, SPDepth: depth(-104)},
 			v: ghidra.Var{Name: "buf", Type: "char[64]", Size: 64,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -0x58}},
-			want: "*(char[64] *)($rbp - 0x50)",
+			want: "*(char[64] *)($sp + 0x10)",
 			because: "inspect's buf is at Ghidra -0x58 and the instruction " +
-				"stream addresses it as -0x50(%rbp): entry_sp = $rbp + 8",
+				"stream addresses it as -0x50(%rbp), which is $rsp+16 here",
+		},
+		{
+			// And the case that retired the old rule. gcc omits the frame
+			// pointer at -O2, so $rbp holds whatever the caller left in it:
+			// measured, the old rule landed 192 bytes away, inside main's
+			// frame, where it reads as a value.
+			name:  "x86-64 stack, with no frame pointer",
+			lang:  "x86:LE:64:default",
+			frame: ghidra.Frame{Size: 96, SPDepth: depth(-88)},
+			v: ghidra.Var{Name: "buf", Type: "char[64]", Size: 64,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -88}},
+			want: "*(char[64] *)($sp + 0x0)",
+			because: "tally at -O2 opens push %rbx; sub $0x50,%rsp and keeps " +
+				"buf at the bottom of the frame, where gdb agrees &buf is $rsp",
+		},
+		{
+			// The red zone: a leaf at -O0 never moves the stack pointer past
+			// the pushed frame pointer, so its locals live below $rsp. A
+			// negative delta is a real answer, not a mistake.
+			name:  "x86-64 leaf, locals below the stack pointer",
+			lang:  "x86:LE:64:default",
+			frame: ghidra.Frame{Size: 36, SPDepth: depth(-8)},
+			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -16}},
+			want:    "*(int *)($sp - 0x8)",
+			because: "gdb agrees &total is $rsp-8 in accumulate built -O0",
+		},
+		{
+			// 32-bit x86, which the old rule could not reach at all: it
+			// emitted $rbp, which i386's gdb answers `void`. cdecl puts the
+			// caller's arguments above the frame base, so the depth reaches
+			// those too.
+			name:  "i386 argument, above the frame base",
+			lang:  "x86:LE:32:default",
+			frame: ghidra.Frame{Size: 20, SPDepth: depth(-20)},
+			v: ghidra.Var{Name: "n", Type: "int", Size: 4,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: 4}},
+			want:    "*(int *)($sp + 0x18)",
+			because: "gdb agrees &n is $esp+24 in accumulate built -m32 -O0",
 		},
 		{
 			// The firmware the MIPS rule was first established on. Its frame
@@ -50,7 +91,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			// frame, so there is nothing for frame.size to miss.
 			name:  "MIPS64 stack, positive result",
 			lang:  "MIPS:BE:64:default",
-			ptr:   8,
 			frame: ghidra.Frame{Size: 352, SPDepth: depth(-352)},
 			v: ghidra.Var{Name: "local_70", Type: "undefined1 *", Size: 8,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -112}},
@@ -63,7 +103,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "MIPS64 stack, another verified offset",
 			lang:  "MIPS:BE:64:default",
-			ptr:   8,
 			frame: ghidra.Frame{Size: 352, SPDepth: depth(-352)},
 			v: ghidra.Var{Name: "local_140", Type: "char[2]", Size: 2,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -320}},
@@ -77,7 +116,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			// neighbouring slot, which prints.
 			name:  "MIPS64 stack, where frame.size would have been twelve out",
 			lang:  "MIPS:BE:64:default",
-			ptr:   8,
 			frame: ghidra.Frame{Size: 36, SPDepth: depth(-48)},
 			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -24}},
@@ -88,7 +126,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "MIPS 32-bit argument, at the frame base itself",
 			lang:  "MIPS:BE:32:default",
-			ptr:   4,
 			frame: ghidra.Frame{Size: 20, SPDepth: depth(-16)},
 			v: ghidra.Var{Name: "n", Type: "int", Size: 4,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: 0}},
@@ -100,7 +137,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "register storage",
 			lang:  "x86:LE:64:default",
-			ptr:   8,
 			frame: ghidra.Frame{},
 			v: ghidra.Var{Name: "pcVar5",
 				Storage: ghidra.Storage{Kind: ghidra.StorageRegister, Register: "RAX"}},
@@ -110,7 +146,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "a decompiler temporary has no location at all",
 			lang:  "x86:LE:64:default",
-			ptr:   8,
 			frame: ghidra.Frame{},
 			v: ghidra.Var{Name: "lVar1",
 				Storage: ghidra.Storage{Kind: ghidra.StorageUnique}},
@@ -120,7 +155,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "ARM stack, from the depth the prologue leaves behind",
 			lang:  "ARM:LE:32:v8",
-			ptr:   4,
 			frame: ghidra.Frame{Size: 20, SPDepth: depth(-24)},
 			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -16}},
@@ -131,7 +165,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "ARM stack, where frame.size would have been four bytes out",
 			lang:  "ARM:LE:32:v8",
-			ptr:   4,
 			frame: ghidra.Frame{Size: 4124, SPDepth: depth(-4128)},
 			v: ghidra.Var{Name: "buf", Type: "char[4096]", Size: 4096,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -4108}},
@@ -142,7 +175,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "AArch64 stack, the same rule as its 32-bit sibling",
 			lang:  "AARCH64:LE:64:v8A",
-			ptr:   8,
 			frame: ghidra.Frame{Size: 20, SPDepth: depth(-32)},
 			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -8}},
@@ -153,7 +185,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "PowerPC 32-bit stack",
 			lang:  "PowerPC:BE:32:e500",
-			ptr:   4,
 			frame: ghidra.Frame{Size: 56, SPDepth: depth(-48)},
 			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -24}},
@@ -164,7 +195,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "PowerPC 64-bit parameter, above the frame base",
 			lang:  "PowerPC:BE:64:A2ALT",
-			ptr:   8,
 			frame: ghidra.Frame{Size: 132, SPDepth: depth(-80)},
 			v: ghidra.Var{Name: "n", Type: "int", Size: 4,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: 48}},
@@ -177,7 +207,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			// value; a blank reads as "not known", which is the truth.
 			name:  "an architecture with no established rule gets no guess",
 			lang:  "sparc:BE:32:default",
-			ptr:   4,
 			frame: ghidra.Frame{Size: 32, SPDepth: depth(-32)},
 			v: ghidra.Var{Name: "local_8", Type: "int",
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -8}},
@@ -190,7 +219,6 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "ARM with no settled depth gets no expression either",
 			lang:  "ARM:LE:32:v8",
-			ptr:   4,
 			frame: ghidra.Frame{Size: 32},
 			v: ghidra.Var{Name: "local_8", Type: "int",
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -8}},
@@ -201,18 +229,17 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 		{
 			name:  "a stack variable with no type still gets an expression",
 			lang:  "x86:LE:64:default",
-			ptr:   8,
-			frame: ghidra.Frame{Size: 32},
+			frame: ghidra.Frame{Size: 32, SPDepth: depth(-32)},
 			v: ghidra.Var{Name: "local_10",
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -16}},
-			want:    "*(unsigned long *)($rbp - 0x8)",
+			want:    "*(unsigned long *)($sp + 0x10)",
 			because: "an untyped slot of unknown width is read pointer-sized",
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := varExpr(c.v, c.frame, c.lang, c.ptr)
+			got := varExpr(c.v, c.frame, c.lang)
 			if got != c.want {
 				t.Errorf("varExpr = %q, want %q\n  because: %s", got, c.want, c.because)
 			}

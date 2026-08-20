@@ -209,7 +209,7 @@ func TestCrossArchStackExpressionsReadTheRightMemory(t *testing.T) {
 			// accumulate(7) sums i*3 for i in 0..6 = 63, and one stack slot
 			// holds it.
 			fn := decompHere(t, do, "accumulate")
-			if !checkStackVars(t, k, fn) {
+			if !checkStackVars(t, k.try, fn) {
 				t.Error("accumulate has no readable stack variables at all; " +
 					"the frame rule produced no expressions")
 			}
@@ -222,7 +222,7 @@ func TestCrossArchStackExpressionsReadTheRightMemory(t *testing.T) {
 			waitStopped(t, do, 60*time.Second)
 
 			fn = decompHere(t, do, "bigframe")
-			if !checkStackVars(t, k, fn) {
+			if !checkStackVars(t, k.try, fn) {
 				t.Error("bigframe has no readable stack variables at all")
 			}
 		})
@@ -247,7 +247,7 @@ func decompHere(t *testing.T, do func(string, any) any, want string) wire.Decomp
 
 // checkStackVars compares each stack expression's address with gdb's own,
 // and reports whether there was anything to compare.
-func checkStackVars(t *testing.T, k crossDecompKit, fn wire.DecompFunction) bool {
+func checkStackVars(t *testing.T, try func(string, any) (any, *wire.Error), fn wire.DecompFunction) bool {
 	t.Helper()
 	var compared int
 	for _, v := range fn.Vars {
@@ -257,7 +257,7 @@ func checkStackVars(t *testing.T, k crossDecompKit, fn wire.DecompFunction) bool
 		// gdb knows this variable by name only when the decompiler took the
 		// name from the debug information; Ghidra's own inventions — n_local
 		// beside gdb's n — have nothing to compare against.
-		truth, werr := k.try(wire.TypeEvalExpr, wire.EvalExprRequest{Expr: "&" + v.Name})
+		truth, werr := try(wire.TypeEvalExpr, wire.EvalExprRequest{Expr: "&" + v.Name})
 		if werr != nil {
 			continue
 		}
@@ -265,7 +265,7 @@ func checkStackVars(t *testing.T, k crossDecompKit, fn wire.DecompFunction) bool
 		if !ok {
 			continue
 		}
-		res, werr := k.try(wire.TypeEvalExpr,
+		res, werr := try(wire.TypeEvalExpr,
 			wire.EvalExprRequest{Expr: "&(" + v.Expr + ")"})
 		if werr != nil {
 			t.Errorf("%s: %s did not evaluate: %s", v.Name, v.Expr, werr.Message)
