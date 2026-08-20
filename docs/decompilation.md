@@ -508,6 +508,19 @@ build makes available, for both: it compares the address of every generated
 expression with the address gdb gets from DWARF for the variable of the same
 name, so a frame base that is out by four fails rather than reading plausibly.
 
+That one needs Ghidra, so it never runs in CI. `TestFrameRuleAgainstDebugInfo`
+does the same thing with a compiler's debug information standing in for the
+decompiler, which needs nothing but binutils, and it runs on every push. The
+substitution is sound because the two describe the same frame: gcc emits
+`DW_AT_frame_base: DW_OP_call_frame_cfa` and locates each local at
+`DW_OP_fbreg: <offset>` from it, and the call frame address here is the stack
+pointer at function entry — Ghidra's frame base. The offsets agree to the byte:
+`leafish`'s `a`, `b`, `x` and `y` are at -20, -24, -8 and -4 in both.
+
+It proves the arithmetic, the base register and the type translation against a
+live 32-bit and 64-bit inferior. It cannot prove that Ghidra's numbers mean what
+this believes they mean; only the test with a decompiler behind it says that.
+
 #### frame.size is not the prologue
 
 `frame.size` is derived from the variables Ghidra found, not from the

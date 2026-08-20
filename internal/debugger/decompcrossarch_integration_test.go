@@ -33,17 +33,10 @@ import (
 // Needs the cross toolchains, the emulators, a multi-architecture gdb and a
 // Ghidra installation. CI has everything but Ghidra, so this skips there.
 
-// The architectures under test. One rule covers both, and the prologues gcc
-// gives them share nothing: 32-bit ARM pushes and then subtracts a constant,
-// AArch64 writes `stp x29, x30, [sp, #-16]!` and then subtracts a register.
-var crossArches = []struct {
-	name string
-	gcc  string
-	qemu string
-}{
-	{name: "arm", gcc: "arm-linux-gnueabihf-gcc", qemu: "qemu-arm"},
-	{name: "aarch64", gcc: "aarch64-linux-gnu-gcc", qemu: "qemu-aarch64"},
-}
+// The architectures come from crossArches, beside the test that debugs a
+// program on each. One rule covers both, and the prologues gcc gives them
+// share nothing: 32-bit ARM pushes and then subtracts a constant, AArch64
+// writes `stp x29, x30, [sp, #-16]!` and then subtracts a register.
 
 // Lines of crossDemo, which the test breaks on. Checked against the source below
 // rather than trusted, because a line off by one moves the stop into the loop
@@ -81,6 +74,35 @@ int main(void)
 }
 `
 
+// crossDemoProject writes crossDemo into a project and builds it for another
+// architecture.
+//
+// Statically linked so qemu needs no sysroot, and built inside the project so
+// gdb can find the source by the path the compiler recorded.
+func crossDemoProject(t *testing.T, gcc string) *srcfs.FS {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "crossdemo.c")
+	if err := os.WriteFile(src, []byte(crossDemo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkLine(t, crossDemo, lineAccumulateReturn, "return total;")
+	checkLine(t, crossDemo, lineBigframeReturn, "return total;")
+
+	out, err := exec.Command(gcc, "-g", "-O0", "-static",
+		"-o", filepath.Join(dir, "crossdemo"), src).CombinedOutput()
+	if err != nil {
+		t.Fatalf("cross-compiling crossdemo.c: %v\n%s", err, out)
+	}
+
+	files, err := srcfs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = files.Close() })
+	return files
+}
+
 // crossDecompKit is a session on a program for another architecture: a real
 // gdb-multiarch talking to a real qemu, with a real Ghidra behind the
 // decompiled view.
@@ -102,27 +124,8 @@ func crossDecompHarness(t *testing.T, gcc, qemu string) crossDecompKit {
 	}
 	testutil.RequireInstalledTools(t, gcc, qemu, "gdb-multiarch")
 
-	dir := t.TempDir()
-	src := filepath.Join(dir, "crossdemo.c")
-	if err := os.WriteFile(src, []byte(crossDemo), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	checkLine(t, crossDemo, lineAccumulateReturn, "return total;")
-	checkLine(t, crossDemo, lineBigframeReturn, "return total;")
-
-	// Statically linked so qemu needs no sysroot, and built inside the project
-	// so gdb can find the source by the path the compiler recorded.
-	out, err := exec.Command(gcc, "-g", "-O0", "-static",
-		"-o", filepath.Join(dir, "crossdemo"), src).CombinedOutput()
-	if err != nil {
-		t.Fatalf("cross-compiling crossdemo.c: %v\n%s", err, out)
-	}
-
-	files, err := srcfs.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = files.Close() })
+	files := crossDemoProject(t, gcc)
+	dir := files.Abs()
 
 	logf := func(f string, a ...any) { t.Logf(f, a...) }
 	sess, err := debugger.New(t.Context(), debugger.Config{

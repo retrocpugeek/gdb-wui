@@ -26,18 +26,52 @@ import (
 // docs/features/remote.md are the assertions here, so the page cannot drift
 // from what the code does.
 //
-// Skipped unless the cross toolchain, the emulator and a multi-architecture gdb
-// are all installed; CI installs all three.
+// Skipped unless the cross toolchains, the emulators and a multi-architecture
+// gdb are all installed; CI installs all of them.
 
-// armProject builds hello.c for ARM and returns the project holding it.
+// The architectures under test. Both widths, because they are two different
+// answers to every question here: gdb reads a 32-bit stub's registers as r0
+// and a 64-bit one's as x0, and a wrong belief about which is a plausible
+// number rather than an error.
+//
+// This table is also what the decompiler's cross-architecture test walks, so
+// there is one list of the architectures gdb-wui claims to handle.
+var crossArches = []struct {
+	name string
+	gcc  string
+	qemu string
+	exe  string
+	// arch is what `show architecture` says, and regs are register names only
+	// this architecture has.
+	arch string
+	regs []string
+	// lang and pointerSize are what Ghidra reports for this architecture, for
+	// the tests that build a decompiler's-eye view of a frame without one.
+	lang        string
+	pointerSize int
+}{
+	{
+		name: "arm", gcc: "arm-linux-gnueabihf-gcc", qemu: "qemu-arm",
+		exe: "hello-arm", arch: "armv7", regs: []string{"r0", "cpsr"},
+		lang: "ARM:LE:32:v8", pointerSize: 4,
+	},
+	{
+		name: "aarch64", gcc: "aarch64-linux-gnu-gcc", qemu: "qemu-aarch64",
+		exe: "hello-aarch64", arch: "aarch64", regs: []string{"x0", "sp"},
+		lang: "AARCH64:LE:64:v8A", pointerSize: 8,
+	},
+}
+
+// crossProject builds hello.c for another architecture and returns the project
+// holding it.
 //
 // Statically linked so qemu needs no sysroot, and built from a copy inside the
 // project for the reason every example in the documentation is: a binary
 // records the path its compiler was given, and only a path under the project
 // can be served or breakpointed by name.
-func armProject(t *testing.T) *srcfs.FS {
+func crossProject(t *testing.T, gcc, qemu, exe string) *srcfs.FS {
 	t.Helper()
-	testutil.RequireInstalledTools(t, "arm-linux-gnueabihf-gcc", "qemu-arm", "gdb-multiarch")
+	testutil.RequireInstalledTools(t, gcc, qemu, "gdb-multiarch")
 
 	dir := t.TempDir()
 	src := filepath.Join(testutil.RepoRoot(t), "testdata", "fixtures", "hello.c")
@@ -49,8 +83,8 @@ func armProject(t *testing.T) *srcfs.FS {
 	if err := os.WriteFile(dst, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("arm-linux-gnueabihf-gcc", "-g", "-O0", "-static",
-		"-o", filepath.Join(dir, "hello-arm"), dst)
+	cmd := exec.Command(gcc, "-g", "-O0", "-static",
+		"-o", filepath.Join(dir, exe), dst)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("cross-compiling hello.c: %v\n%s", err, out)
 	}
@@ -88,14 +122,20 @@ func qemuStub(t *testing.T, emulator, dir, exe string) int {
 	return port
 }
 
-func TestArmProgramUnderQemu(t *testing.T) {
-	files := armProject(t)
-	port := qemuStub(t, "qemu-arm", files.Abs(), "hello-arm")
+func TestCrossArchProgramsUnderQemu(t *testing.T) {
+	for _, arch := range crossArches {
+		t.Run(arch.name, func(t *testing.T) { crossArchUnderQemu(t, arch.gcc, arch.qemu, arch.exe, arch.arch, arch.regs) })
+	}
+}
+
+func crossArchUnderQemu(t *testing.T, gcc, qemu, exe, arch string, regs []string) {
+	files := crossProject(t, gcc, qemu, exe)
+	port := qemuStub(t, qemu, files.Abs(), exe)
 	h := startRealWithGDB(t, files, "gdb-multiarch")
 
 	// The ELF first: only loading the program sets the architecture, and
 	// connecting without it is the mistake the page's warning is about.
-	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "hello-arm"})
+	h.mustDo(wire.TypeExeLoad, wire.ExeLoadRequest{Path: exe})
 	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{
 		Line: fmt.Sprintf("target remote 127.0.0.1:%d", port),
 	})
@@ -121,13 +161,17 @@ func TestArmProgramUnderQemu(t *testing.T) {
 	// Reading the recorder the moment console.exec returns reads what has
 	// arrived so far, which on a loaded runner was nothing at all.
 	h.mustDo(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "show architecture"})
-	waitForConsole(t, h, "armv7", "gdb to report an ARM architecture")
+	waitForConsole(t, h, arch, "gdb to report the "+arch+" architecture")
 
-	// Registers are ARM's, which is the same fact from the other side: a gdb
-	// reading this stub as x86-64 would answer with rax and rip.
+	// The registers are that architecture's, which is the same fact from the
+	// other side: a gdb reading this stub as x86-64 would answer with rax and
+	// rip.
 	names := h.mustDo(wire.TypeRegsNames, nil).(wire.RegsNames)
-	if !hasName(names.Names, "r0") || !hasName(names.Names, "cpsr") {
-		t.Errorf("register names are not ARM's: %v", firstFew(names.Names))
+	for _, want := range regs {
+		if !hasName(names.Names, want) {
+			t.Errorf("register names do not include %s, so they are not %s's: %v",
+				want, arch, firstFew(names.Names))
+		}
 	}
 
 	// And source-level debugging over the stub: a breakpoint by file and line,
