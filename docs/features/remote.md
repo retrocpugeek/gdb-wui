@@ -153,6 +153,11 @@ qemu. Load nothing first and gdb reads the stub's registers as x86-64 instead,
 which is the failure the warning above exists to prevent. The Registers pane is
 another way to see it: `r0` and `cpsr` rather than `rax` and `eflags`.
 
+The 64-bit recipe is the same with the names changed —
+`sudo apt install gcc-aarch64-linux-gnu`, then `aarch64-linux-gnu-gcc` and
+`qemu-aarch64` — and `show architecture` answers `aarch64` with `x0` and `sp` in
+the Registers pane. Both are tested against a live qemu on every push.
+
 Source debugging works from here like any other target: open `hello.c` in the
 file tree, click line 14, and the breakpoint resolves to `main`. That is what
 the `cp` in the first block is for — a binary records the path its compiler was

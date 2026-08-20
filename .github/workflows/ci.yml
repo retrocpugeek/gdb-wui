@@ -26,15 +26,20 @@ jobs:
       # relying on that makes the workflow silently skip its most valuable
       # tests the day an image changes — and it costs seconds.
       #
-      # The other three are for the cross-architecture test, which is the one
-      # path that cannot be checked against the host's own binaries: gdb reads
-      # a stub's registers through whatever architecture it believes in, so the
+      # The rest are for the cross-architecture tests, which are the one path
+      # that cannot be checked against the host's own binaries: gdb reads a
+      # stub's registers through whatever architecture it believes in, so the
       # wrong one yields plausible nonsense rather than an error. Without them
-      # that test skips, and a skip is exactly what nobody notices.
-      - name: Install gdb and the cross-architecture toolchain
+      # those tests skip, and a skip is exactly what nobody notices.
+      #
+      # Both widths, because they are two different answers to every question
+      # there: a 32-bit stub's registers are r0 and cpsr, a 64-bit one's are x0
+      # and sp. qemu-user carries both emulators; the compilers are separate.
+      - name: Install gdb and the cross-architecture toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y gdb gdb-multiarch qemu-user gcc-arm-linux-gnueabihf
+          sudo apt-get install -y gdb gdb-multiarch qemu-user \
+            gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu
 
       - name: Versions
         run: |
@@ -42,8 +47,10 @@ jobs:
           gdb --version | head -1
           gdb-multiarch --version | head -1
           qemu-arm --version | head -1
+          qemu-aarch64 --version | head -1
           gcc --version | head -1
           arm-linux-gnueabihf-gcc --version | head -1
+          aarch64-linux-gnu-gcc --version | head -1
 
       - name: gofmt
         run: |

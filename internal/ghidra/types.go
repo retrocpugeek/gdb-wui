@@ -8,7 +8,7 @@ package ghidra
 // different one is refused rather than partially decoded: a cached sidecar
 // outlives the code that wrote it, and guessing at unknown fields renders the
 // wrong thing instead of saying it cannot.
-const Schema = 1
+const Schema = 2
 
 // Program identifies what was decompiled.
 type Program struct {
@@ -124,13 +124,24 @@ type Line struct {
 // Needed because a stack variable's offset is relative to Ghidra's frame base
 // — the stack pointer at function entry — and not to any register gdb knows.
 // Recovering that base is per-ABI: $rbp+8 on x86-64 with a frame pointer,
-// $sp+Size on MIPS64. See docs/decompilation.md.
+// $sp+Size on MIPS64, $sp-SPDepth on ARM and AArch64. See
+// docs/decompilation.md.
 type Frame struct {
 	Size                int  `json:"size"`
 	LocalSize           int  `json:"localSize"`
 	ParamOffset         int  `json:"paramOffset"`
 	ReturnAddressOffset int  `json:"returnAddressOffset"`
 	GrowsNegative       bool `json:"growsNegative"`
+	// SPDepth is where the stack pointer sits relative to the frame base over
+	// the body of the function, negative on a stack that grows down. It is the
+	// prologue's whole effect, which Size is not: Size is derived from the
+	// variables Ghidra found, so it understates a frame whose lowest slot is
+	// never touched.
+	//
+	// A pointer because absent and zero are different answers. Nil is "Ghidra
+	// could not settle on one", which happens when the stack pointer moves
+	// through the body; zero is a function that never moves it at all.
+	SPDepth *int `json:"spDepth,omitempty"`
 }
 
 // Storage kinds. They are not equally useful and the difference has to be

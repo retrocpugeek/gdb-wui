@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -36,7 +38,7 @@ func newFake(t *testing.T, handler func(op string, id uint64, req map[string]any
 	return &fake{
 		t:       t,
 		handler: handler,
-		greeting: `{"event":"ready","schema":1,"functionCount":3,` +
+		greeting: `{"event":"ready","schema":2,"functionCount":3,` +
 			`"program":{"name":"demo","sha256":"abc123","languageId":"MIPS:BE:64:default",` +
 			`"imageBase":"0x120000000","pointerSize":8}}`,
 	}
@@ -133,6 +135,27 @@ func startFake(t *testing.T, f *fake) *Client {
 // until the far end has said what program it has. A caller that got a Client
 // before that would have to poll for identity, and would happily show a
 // decompilation of the wrong binary in the meantime.
+// TestSchemaMatchesJavaSource keeps the two halves of the schema number
+// together. The Java writes it and the Go refuses anything else, and a change
+// to one without the other is a client that rejects its own server.
+func TestSchemaMatchesJavaSource(t *testing.T) {
+	src, err := scripts.ReadFile("scripts/DecompJson.java")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`SCHEMA\s*=\s*(\d+)`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("DecompJson.java declares no SCHEMA")
+	}
+	n, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != Schema {
+		t.Errorf("DecompJson.java writes schema %d, this package understands %d", n, Schema)
+	}
+}
+
 func TestStartWaitsForGreeting(t *testing.T) {
 	f := newFake(t, func(op string, id uint64, req map[string]any) string { return "" })
 	c := startFake(t, f)

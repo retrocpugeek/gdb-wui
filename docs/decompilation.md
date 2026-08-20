@@ -92,6 +92,13 @@ embedded into the binary with `go:embed`, so a built gdb-wui carries its own
 decompiler glue and does not need the repository checked out. They are ordinary
 Ghidra scripts and can be run by hand, as above.
 
+One trap when running them by hand: Ghidra caches compiled scripts, and
+`DecompJson.SCHEMA` is a compile-time constant that javac inlines into whatever
+reads it. After editing `DecompJson.java`, touch `ExportDecomp.java` as well or
+the sidecar announces the previous schema while carrying the new fields. The
+resident server never sees this — it extracts the sources to a fresh directory
+on every start, so both are always compiled together.
+
 The script takes an optional second argument, a regular expression; only
 functions whose names match are decompiled. On an image with thousands of
 functions this is the difference between a quick look and a batch job.
@@ -126,7 +133,7 @@ that also needs a system JDK 21 or later, and both have to remain optional.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "generator": { "tool": "ghidra", "version": "12.1.2", "script": "ExportDecomp" },
   "program": {
     "name": "structs",
@@ -147,7 +154,8 @@ that also needs a system JDK 21 or later, and both have to remain optional.
       "signature": "void inspect(config * cfg)",
       "source": "IMPORTED",
       "frame": { "size": 96, "localSize": 96, "paramOffset": 0,
-                 "returnAddressOffset": 0, "growsNegative": true },
+                 "returnAddressOffset": 0, "growsNegative": true,
+                 "spDepth": -96 },
       "variables": [
         { "name": "buf", "id": "57", "source": "DEFAULT",
           "type": "char[64]", "size": 64, "param": false,
@@ -234,6 +242,24 @@ on a comment.
 Both are needed by an editor: the rendering is wrapped and decorated, so what
 was typed cannot be recovered from it, and the stored text says nothing about
 where it appears on the page.
+
+### `frame`
+
+`size` is what Ghidra believes the frame is, which is derived from the variables
+it found rather than from the prologue. `spDepth` is where the stack pointer
+actually sits relative to the frame base over the body of the function, from
+Ghidra's own stack analysis. They disagree, often — see
+[stack offsets](#stack-offsets) — and `spDepth` is the one that turns an offset
+into an address.
+
+`spDepth` is absent rather than zero when there is no single answer: a function
+that moves its stack pointer through its body has a different one at every point
+in it, and zero is a real depth belonging to a function that never moves it at
+all. It is also absent for a function with nothing on the stack, which is where
+the cost is worth avoiding — the analysis is a symbolic evaluation of the whole
+function, measured at around a third of what decompiling the same function costs
+(465 ms against 3.5 s for glibc's 2020-instruction `__printf_buffer`, and under
+a millisecond for anything of ordinary size).
 
 ### `variables`
 
@@ -355,14 +381,25 @@ different binaries:
 rbp_offset = ghidra_offset + 8
 ```
 
-AArch64 has no rule established, so its stack variables get no expression. This
-is a measured result rather than an omission: `bb_full_fd_action` in busybox
-opens with `stp x19, x20, [sp, #-96]!` and then `sub sp, sp, #4112`, a 4208-byte
-frame, while Ghidra reports `frame.size` as 104. The MIPS rule does not
-transfer, and nothing else derivable from the sidecar alone does either.
+On ARM and AArch64, from `frame.spDepth` rather than from `frame.size`:
 
-gdb's own CFA does work. `info frame` reports "Previous frame's sp", which
-equals Ghidra's frame base exactly and is correct even mid-prologue. It is
+```
+sp_offset = ghidra_offset - frame.spDepth
+```
+
+`frame.size` was the first thing tried on AArch64 and it is why that
+architecture went unsupported for a while: `bb_full_fd_action` in busybox opens
+with `stp x19, x20, [sp, #-96]!` and then `sub sp, sp, #4112`, a 4208-byte
+frame, while Ghidra reports `frame.size` as 104. `spDepth` is the number that
+answers it.
+
+Anything else gets no expression. A depth is not a rule on its own — which
+register carries the frame base, and what the call instruction did to the stack,
+is knowledge about the ABI — and a frame base that has not been checked against
+a live inferior reads as a value rather than as a mistake.
+
+gdb's own CFA is the other way in. `info frame` reports "Previous frame's sp",
+which equals Ghidra's frame base exactly and is correct even mid-prologue. It is
 reachable over MI as `$sp` evaluated in the caller's frame, and it generalises:
 `bl` and `jal` push nothing and `call` pushes 8, so
 `entry_sp = caller_sp - callPush` covers x86-64, MIPS64 and AArch64 with one
@@ -412,6 +449,97 @@ array base. The prologue's eleven register spills at `264(sp)`…`344(sp)` map t
 Ghidra `-88`…`-8`, with `ra` at `-8`, which is the same frame base seen from
 the other end.
 
+#### ARM and AArch64, measured
+
+Established on a statically linked Thumb-2 binary built by
+`arm-linux-gnueabihf-gcc 15.2.0`, read back through `qemu-arm` and
+`gdb-multiarch`. `bl` leaves the return address in `lr` and touches no memory,
+so, as on MIPS, the frame is whatever the prologue subtracted — but
+`frame.size` is not that number:
+
+```
+sp_offset = ghidra_offset - frame.spDepth
+```
+
+`accumulate` opens with `push {r7}` and `sub sp,#20`, which is 24 bytes, and
+Ghidra reports `frame.size` as **20**. Its three locals are at `[r7,#4]`,
+`[r7,#8]` and `[r7,#12]`, which is `entry_sp-20`, `-16` and `-12`, and those are
+the offsets Ghidra gives them. Applying the MIPS rule here lands every one of
+them four bytes low — on the neighbouring variable, which prints a number.
+
+`bigframe` is the same shape at a size that makes the error visible: `push
+{r7, lr}`, `sub.w sp,#4096`, `sub sp,#24`, so 4128 bytes, against a
+`frame.size` of 4124. Its `buf` is passed to `memset` as `r7+20`, which is
+`entry_sp-4108`, exactly Ghidra's offset for it.
+
+Verified against a live inferior, stopped at the `return`:
+
+```
+(gdb) info frame
+ Locals at 0x407ff5e0, Previous frame's sp is 0x407ff5f8
+(gdb) p $sp
+$1 = (void *) 0x407ff5e0                 entry_sp - $sp = 24 = -spDepth
+(gdb) p *(int *)($sp + 8)
+$2 = 63                                  total, which is what accumulate(7) is
+```
+
+Stripped, which is the build this pane exists for, the offsets and the depth
+are unchanged — `sub sp` is `sub sp` with or without DWARF — and `local_10`
+reads 63 through gdb with no symbols at all. `frame.size` gets worse: with no
+debug information to name `bigframe`'s locals, Ghidra reports the frame as
+**13** bytes against a real 4128.
+
+AArch64 takes the same rule and needs nothing added to it, measured the same
+way with `aarch64-linux-gnu-gcc 15.2.0` under `qemu-aarch64`. The prologues have
+nothing in common with the 32-bit ones — `accumulate` is a bare
+`sub sp, sp, #0x20`, and `bigframe` writes `stp x29, x30, [sp, #-16]!` and then
+`sub sp, sp, x13`, subtracting a *register* — and the depth accounts for both,
+at -32 and -4144. Against `frame.size`'s 20 and 4132.
+
+```
+(gdb) p &total
+$1 = (int *) 0x76d91317c368
+(gdb) p (void *)($sp + 24)                24 = ghidra_offset(-8) - spDepth(-32)
+$2 = (void *) 0x76d91317c368
+```
+
+`TestCrossArchStackExpressionsReadTheRightMemory` asks the stricter question the
+build makes available, for both: it compares the address of every generated
+expression with the address gdb gets from DWARF for the variable of the same
+name, so a frame base that is out by four fails rather than reading plausibly.
+
+That one needs Ghidra, so it never runs in CI. `TestFrameRuleAgainstDebugInfo`
+does the same thing with a compiler's debug information standing in for the
+decompiler, which needs nothing but binutils, and it runs on every push. The
+substitution is sound because the two describe the same frame: gcc emits
+`DW_AT_frame_base: DW_OP_call_frame_cfa` and locates each local at
+`DW_OP_fbreg: <offset>` from it, and the call frame address here is the stack
+pointer at function entry — Ghidra's frame base. The offsets agree to the byte:
+`leafish`'s `a`, `b`, `x` and `y` are at -20, -24, -8 and -4 in both.
+
+It proves the arithmetic, the base register and the type translation against a
+live 32-bit and 64-bit inferior. It cannot prove that Ghidra's numbers mean what
+this believes they mean; only the test with a decompiler behind it says that.
+
+#### frame.size is not the prologue
+
+`frame.size` is derived from the variables Ghidra found, not from the
+instructions that moved the stack pointer. It is the distance from the frame
+base down to the lowest slot something references, so it understates the frame
+whenever the bottom of it is never touched — by four bytes in both ARM
+functions above, by twelve in the AArch64 ones, and by 4104 in the AArch64
+busybox function.
+
+`frame.spDepth` is the prologue's whole effect: Ghidra's own stack analysis
+(`CallDepthChangeInfo`), sampled across the function and reported as the depth
+its body settles at. A function whose stack pointer keeps moving gets no number
+at all rather than one that is right for half of it.
+
+The two are not interchangeable even on x86-64, where the rule in use happens
+not to need it. `accumulate` built for x86-64 has a `frame.size` of 36 and an
+`spDepth` of -8: a leaf function at `-O0` keeps its locals in the red zone, so
+`push %rbp` is the only thing that moves the stack pointer at all.
+
 #### A correction
 
 An earlier draft said `frame.returnAddressOffset` gives a consumer "the inputs
@@ -420,10 +548,10 @@ rather than a hardcoded eight". It does not. Ghidra reports
 distinguish the two conventions at all, even though one pushes a return address
 onto the stack at the call and the other does not.
 
-What actually carries the information is `frame.size` together with knowing
-which register the ABI leaves usable — and that last part is knowledge about
-the architecture, not a field in the sidecar. `scripts/ghidra/show-decomp.py`
-holds the two rules established so far and refuses to guess for anything else.
+What carries the information is `frame.spDepth`, together with knowing which
+register the ABI leaves usable — and that last part is knowledge about the
+architecture, not a field in the sidecar. `scripts/ghidra/show-decomp.py` holds
+the three rules established so far and refuses to guess for anything else.
 
 ## How good is the mapping?
 

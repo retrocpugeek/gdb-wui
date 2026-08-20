@@ -197,6 +197,22 @@ Those names are the decompiler's, not symbols, and are shown in italics to say
 so. Frames in libc keep gdb's own names. Right-clicking one offers to
 [rename it](features/decompilation.md#renaming-what-the-decompiler-guessed).
 
+## Hovering a decompiled local shows nothing
+
+Three different reasons, and the pane distinguishes them.
+
+A decompiler temporary — `iVar1`, `uVar2` — exists nowhere in the machine, so
+there is nothing to read. A variable the decompiler put in a register is only
+that register near one program counter, and away from it the row is blank
+rather than wrong.
+
+The third is the architecture. Turning Ghidra's stack offsets into an address
+needs the frame base, which is recovered differently on every ABI and is
+established by measurement: x86-64, MIPS64, ARM and AArch64 have a rule, and on
+anything else stack locals show nothing at all. A guess there would read as a
+value from the neighbouring slot.
+See [stack offsets](decompilation.md#stack-offsets).
+
 ## Rename is greyed out in the Decompiled tab
 
 You started gdb-wui with `-ghidra-project`, so the decompilation is coming from

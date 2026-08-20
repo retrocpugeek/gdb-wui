@@ -445,3 +445,44 @@ implementing:
     [answered Y; input not from terminal]`, and the process is gone. `detach`
     and `-target-detach` both leave it running, and they are the only commands
     that do.
+
+44. **Ghidra's `frame.size` is not what the prologue did to the stack
+    pointer.** Measured on ARM32, AArch64 and x86-64 builds of the same source,
+    with gcc 15.2.0 for each and Ghidra 12.1.2.
+
+    The frame size is derived from the variables Ghidra found: it reaches from
+    the frame base down to the lowest slot something references, and stops
+    there. `accumulate` opens with `push {r7}` and `sub sp,#20` — 24 bytes —
+    and reports a frame size of 20, because nothing touches the word the push
+    saved. Treating that as the prologue's effect puts every local four bytes
+    low, onto its neighbour, which prints a number rather than an error. The
+    same function built for x86-64 reports 36 against a real depth of 8: a leaf
+    at `-O0` keeps its locals in the red zone, so `push %rbp` is all that moves
+    the stack pointer.
+
+    It gets worse on exactly the binaries the decompiled view is for. Stripped
+    of its debug information, the 4128-byte `bigframe` reports a frame size of
+    **13**, because with no names for its locals there is less for the size to
+    be derived from. The stack depth is unchanged at -4128: `sub sp` is `sub
+    sp` whether or not anything describes it.
+
+    What does carry it is Ghidra's own stack analysis,
+    `ghidra.app.cmd.function.CallDepthChangeInfo`, whose `getSPDepth` gives the
+    depth at any address in the function. Sampled across the body it agrees
+    with the instruction stream on every function checked, and with gdb's CFA
+    on a live ARM inferior: "Previous frame's sp" is `$sp - spDepth` exactly.
+    It costs a symbolic evaluation of the whole function — 465 ms against 3.5 s
+    to decompile glibc's 2020-instruction `__printf_buffer`, under a
+    millisecond for anything of ordinary size — so it is computed only for a
+    function that has something on the stack to apply it to.
+
+    The depth also survives the prologues that defeat a simpler reading. On
+    AArch64 `bigframe` opens with `stp x29, x30, [sp, #-16]!` — a pre-indexed
+    store, which moves the stack pointer as a side effect — and then
+    `sub sp, sp, x13`, subtracting a *register* whose value the analysis has to
+    have propagated. The depth is -4144, which is right, against a `frame.size`
+    of 4132.
+
+    The earlier MIPS64 rule survives on the same evidence it was established
+    on: `process_packet`'s spills reach the bottom of its frame, so there the
+    two numbers coincide.

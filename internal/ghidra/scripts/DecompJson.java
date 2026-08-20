@@ -6,10 +6,13 @@
 //
 // The schema is documented in docs/decompilation.md.
 
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeSet;
 
+import ghidra.app.cmd.function.CallDepthChangeInfo;
 import ghidra.app.decompiler.ClangCommentToken;
 import ghidra.app.decompiler.ClangLabelToken;
 import ghidra.app.decompiler.ClangLine;
@@ -21,6 +24,8 @@ import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.listing.Bookmark;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.StackFrame;
@@ -30,13 +35,18 @@ import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.symbol.IdentityNameTransformer;
 import ghidra.program.model.symbol.Symbol;
+import ghidra.util.task.TaskMonitor;
 
 public class DecompJson {
 
 	// SCHEMA is the version of the emitted document. A consumer refuses a
 	// number it does not know rather than guessing at fields, because a cached
 	// sidecar outlives the code that wrote it.
-	public static final int SCHEMA = 1;
+	//
+	// 2 added frame.spDepth. An optional field, but the number still moved:
+	// absent means "no settled depth" to a reader that knows about it, and a
+	// document written before it existed would say that about every function.
+	public static final int SCHEMA = 2;
 
 	/** The `program` object: what a consumer needs to relate this to a live gdb. */
 	public static String program(Program p) {
@@ -79,7 +89,7 @@ public class DecompJson {
 		// named this" rather than "something inferred it" has no other way to
 		// tell, and inventing the distinction on the client would be guessing.
 		b.append(",\"source\":").append(str(source(f.getSymbol())));
-		b.append(",\"frame\":").append(frame(f));
+		b.append(",\"frame\":").append(frame(f, res.getHighFunction()));
 		b.append(",\"variables\":").append(variables(res.getHighFunction()));
 		b.append(",\"globals\":").append(globals(res.getHighFunction()));
 
@@ -265,13 +275,98 @@ public class DecompJson {
 	// variable's offset is relative to this frame, not to any register gdb
 	// knows, so without these numbers the offsets cannot be turned into
 	// something gdb can evaluate.
-	private static String frame(Function f) {
+	private static String frame(Function f, HighFunction high) {
 		StackFrame fr = f.getStackFrame();
-		return "{\"size\":" + fr.getFrameSize() +
-			",\"localSize\":" + fr.getLocalSize() +
-			",\"paramOffset\":" + fr.getParameterOffset() +
-			",\"returnAddressOffset\":" + fr.getReturnAddressOffset() +
-			",\"growsNegative\":" + fr.growsNegative() + "}";
+		StringBuilder b = new StringBuilder();
+		b.append("{\"size\":").append(fr.getFrameSize());
+		b.append(",\"localSize\":").append(fr.getLocalSize());
+		b.append(",\"paramOffset\":").append(fr.getParameterOffset());
+		b.append(",\"returnAddressOffset\":").append(fr.getReturnAddressOffset());
+		b.append(",\"growsNegative\":").append(fr.growsNegative());
+		Integer depth = spDepth(f, high);
+		if (depth != null) {
+			b.append(",\"spDepth\":").append(depth);
+		}
+		return b.append("}").toString();
+	}
+
+	// spDepth is where the stack pointer sits, relative to the frame base, over
+	// the body of the function. Negative on a stack that grows down.
+	//
+	// This is the number that turns a stack offset into an address, and
+	// frame.size is not it. Ghidra's frame size is derived from the variables
+	// it found rather than from the prologue: for `accumulate`, built for ARM,
+	// the prologue moves the stack pointer 24 bytes and the frame size is 20,
+	// because the lowest slot any instruction touches is 20 below the base.
+	// Four bytes of error reads as a neighbouring variable's value.
+	//
+	// The depth changes through the prologue and back again in the epilogue, so
+	// what is emitted is the depth the body settles at — the most common one
+	// across the function's instructions. A function that never settles gets no
+	// number rather than a wrong one: `_start` adjusts the stack for a call and
+	// puts it back, and no single value is right for both halves.
+	//
+	// Only for a function that has somewhere to apply it. This costs a symbolic
+	// evaluation of the whole function — around a third of what decompiling it
+	// costs, measured on glibc — and a function whose locals all live in
+	// registers has no use for the answer.
+	private static Integer spDepth(Function f, HighFunction high) {
+		if (!hasStackStorage(high)) {
+			return null;
+		}
+		Map<Integer, Integer> counts = new HashMap<>();
+		int total = 0;
+		try {
+			CallDepthChangeInfo depths = new CallDepthChangeInfo(f, TaskMonitor.DUMMY);
+			InstructionIterator it =
+				f.getProgram().getListing().getInstructions(f.getBody(), true);
+			while (it.hasNext()) {
+				Instruction ins = it.next();
+				int d = depths.getSPDepth(ins.getAddress());
+				if (d == Function.UNKNOWN_STACK_DEPTH_CHANGE
+					|| d == Function.INVALID_STACK_DEPTH_CHANGE) {
+					continue;
+				}
+				counts.merge(d, 1, Integer::sum);
+				total++;
+			}
+		} catch (Exception e) {
+			// An analysis that fell over says nothing about the frame, which is
+			// the same position as not having run it.
+			return null;
+		}
+		if (total == 0) {
+			return null;
+		}
+		Map.Entry<Integer, Integer> best = null;
+		for (Map.Entry<Integer, Integer> e : counts.entrySet()) {
+			if (best == null || e.getValue() > best.getValue()) {
+				best = e;
+			}
+		}
+		// A majority, not merely a plurality. Two depths at 40% each mean the
+		// stack pointer moves through the body, and either answer is wrong for
+		// most of it.
+		if (best.getValue() * 2 <= total) {
+			return null;
+		}
+		return best.getKey();
+	}
+
+	// hasStackStorage says whether any of the decompiler's symbols live on the
+	// stack, which is the only reason to work out where the stack is.
+	private static boolean hasStackStorage(HighFunction high) {
+		if (high == null) {
+			return false;
+		}
+		Iterator<HighSymbol> syms = high.getLocalSymbolMap().getSymbols();
+		while (syms.hasNext()) {
+			VariableStorage store = syms.next().getStorage();
+			if (store != null && store.isStackStorage()) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// variables is what a live decompiled view needs. Three storage kinds come
