@@ -7,7 +7,7 @@ debugging; this adds a view rather than a second debugger.
 The feature is optional. Without `-ghidra` nothing else changes, and the
 Decompiled tab says what it needs.
 
-## Using it
+## Turning it on
 
 ```sh
 gdb-wui -project DIR -ghidra /opt/ghidra_12.1.2_PUBLIC
@@ -107,7 +107,7 @@ This is the batch counterpart of what the server does on demand. Both emit the
 same schema from the same `DecompJson` helper, so the format described below
 applies to either.
 
-## Reading one
+## Reading a sidecar
 
 `scripts/ghidra/show-decomp.py` prints a sidecar in a form you can look at:
 
@@ -321,7 +321,11 @@ that address yields a plausible pointer into nothing. Measured on an AArch64
 busybox: Ghidra `0x1c9638` against LOAD segments ending at `0xc8938`, which gdb
 answers with "Cannot access memory".
 
-## The two things a consumer must get right
+## Getting addresses right
+
+Two conversions stand between a sidecar and a running program, and both are
+easy to get subtly wrong: the load bias, and the frame base a stack offset is
+measured from.
 
 ### Relocation
 
@@ -354,11 +358,12 @@ console output could not otherwise be read.
 
 ### An address in another module
 
-The most common reason a lookup fails is not a wrong bias but that the program
-counter is somewhere the decompiler does not have; stopping in the dynamic
-loader is enough to cause it. The consumer knows the image's extent from the ELF
-and should say so, because Ghidra's own answer names a translated address the
-user never saw:
+Check that the program counter is inside the image before asking the decompiler
+about it. A lookup fails more often because the pc is somewhere the decompiler
+does not have — stopping in the dynamic loader is enough — than because the
+bias is wrong. The consumer knows the image's extent from the ELF and should say
+so, because Ghidra's own answer names a translated address the user never
+saw:
 
 ```
 no function 0x111b900
@@ -410,9 +415,10 @@ push with no Ghidra installed. Adopting it for `expr` itself would make
 expressions frame-dependent rather than static, which changes what `expr`
 promises, so it is recorded here rather than implemented halfway.
 
-#### x86-64, measured twice — and the first time assumed a frame pointer
+#### x86-64
 
-The rule here was `ghidra_offset + 8` against `$rbp`, and the reasoning was
+Measured twice, and the first time assumed a frame pointer. The rule was
+`ghidra_offset + 8` against `$rbp`, and the reasoning was
 sound as far as it went: `inspect`'s `buf` at Ghidra `-0x58` is `-0x50(%rbp)`
 in the instruction stream, `FUN_00101167`'s `local_10` at Ghidra `-16` is
 `-0x8(%rbp)`, and the 8 is the saved frame pointer — Ghidra's base is the entry
@@ -462,9 +468,10 @@ address = entry_sp + ghidra_offset
 and what changes per ABI is only how much the prologue subtracted before you
 looked, which is what `spDepth` reports.
 
-#### MIPS, measured twice — and the first time was wrong
+#### MIPS
 
-The rule here was `ghidra_offset + frame.size`, established on
+Measured twice, and the first rule was wrong. It read
+`ghidra_offset + frame.size`, established on
 `vwfw-linux_64.symbols`, a 2 MB statically linked big-endian MIPS64 Octeon
 firmware. The evidence was real and it is still true of that image:
 `process_packet` opens with `daddiu sp,sp,-352`, which is Ghidra's `frame.size`
@@ -501,7 +508,7 @@ The lesson is about the evidence rather than about MIPS. One binary
 established a rule that was right about that binary; it took a second,
 built differently, to show which of two coincident numbers was the real one.
 
-#### ARM and AArch64, measured
+#### ARM and AArch64
 
 Established on a statically linked Thumb-2 binary built by
 `arm-linux-gnueabihf-gcc 15.2.0`, read back through `qemu-arm` and
@@ -574,7 +581,7 @@ It proves the arithmetic, the base register and the type translation against a
 live 32-bit and 64-bit inferior. It cannot prove that Ghidra's numbers mean what
 this believes they mean; only the test with a decompiler behind it says that.
 
-#### PowerPC, measured
+#### PowerPC
 
 Established on statically linked big-endian binaries from
 `powerpc-linux-gnu-gcc` and `powerpc64-linux-gnu-gcc 15.2.0`, under `qemu-ppc`
@@ -634,10 +641,10 @@ not to need it. `accumulate` built for x86-64 has a `frame.size` of 36 and an
 `spDepth` of -8: a leaf function at `-O0` keeps its locals in the red zone, so
 `push %rbp` is the only thing that moves the stack pointer at all.
 
-#### A correction
+#### frame.returnAddressOffset does not distinguish the conventions
 
-An earlier draft said `frame.returnAddressOffset` gives a consumer "the inputs
-rather than a hardcoded eight". It does not. Ghidra reports
+An earlier draft of this document said it gives a consumer "the inputs rather
+than a hardcoded eight". It does not. Ghidra reports
 `returnAddressOffset: 0` for **both** x86-64 and MIPS64, so it does not
 distinguish the two conventions at all, even though one pushes a return address
 onto the stack at the call and the other does not.
@@ -648,7 +655,7 @@ architecture, not a field in the sidecar. `scripts/ghidra/show-decomp.py` holds
 the one rule that replaced the three, and refuses to guess outside the families
 it was measured on.
 
-## How good is the mapping?
+## How good the mapping is
 
 Checked against gdb's own DWARF line table for `build/structs`, which is built
 with `-g` so the truth is known:
@@ -703,7 +710,7 @@ address is the minimum of its set and then the lowest line number, and should
 show the ambiguity rather than hide it. This is the same class of imprecision as
 stepping through `-O2` code with DWARF.
 
-## Limits to know before building on this
+## Limits
 
 - **Decompiled C is a model rather than the truth.** It can be wrong, and
   belongs beside the disassembly rather than in place of it.

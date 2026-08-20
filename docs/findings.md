@@ -515,14 +515,16 @@ implementing:
     gdb agrees with the depth. Nothing was going to catch that except a second
     binary, built differently, on the same architecture.
 
-45. **A negative assertion read without a barrier passes for ever.** The
-    session broadcasts from the actor's goroutine, so a test that counts events
-    straight after an action counts whatever had arrived by then. Read too
-    early, a positive assertion fails intermittently — unpleasant, but it
-    announces itself, which is how finding 24 was found, and how a cross-arch
-    test that read the console the moment `console.exec` returned was found:
-    on a loaded runner what had arrived was nothing at all. Read too early, a
-    negative assertion *passes*, and passes every run: the event that should
+45. **A test that asserts an event did not fire passes every run if it reads
+    the log too early.** The session broadcasts from the actor's goroutine, so
+    a test that counts events straight after an action counts whatever had
+    arrived by then, which may be nothing.
+
+    A positive assertion read too early fails intermittently. That is
+    unpleasant but it announces itself: it is how finding 24 was found, and how
+    a cross-arch test that read the console the moment `console.exec` returned
+    was found, on a loaded runner where what had arrived was nothing at all. A
+    negative assertion read too early *passes*, because the event that should
     have failed it had not been broadcast yet. The suite counts it as coverage
     and it can never fail.
 
@@ -544,9 +546,9 @@ implementing:
     in finding 24 it reads the source, because the mistake it prevents shows up
     as a test that passes.
 
-46. **The decompiler does not need the analysis; everything derived from the
-    listing does.** A 12 MB MIPS64 `vmlinux`, 6.9 MB of it code, cannot be
-    analysed at all: `analyzeHeadless` hard-codes a 2 GB heap, and
+46. **Ghidra's decompiler works without its analysis, but everything derived
+    from the listing does not.** A 12 MB MIPS64 `vmlinux`, 6.9 MB of it code,
+    cannot be analysed at all: `analyzeHeadless` hard-codes a 2 GB heap, and
     `MipsAddressAnalyzer` exhausts it across 22,702 functions. The log is worth
     knowing by sight, because it reports success and failure together —
     `Analysis succeeded for file`, then `Can't checkpoint with locked buffers`,
@@ -578,11 +580,10 @@ implementing:
     stack depth comes back. Asking for the entry point, or asking twice,
     exercises neither.
 
-47. **A stripped image is a different problem from a large one, and the fix for
-    the second breaks on the first.** Importing without analysis works because
-    the ELF loader creates a function per symbol; with no symbol table it
-    creates none. A stripped 12 MB kernel arrives with 1 function and 2
-    symbols, and every program counter resolves to nothing. So `auto` has to
+47. **Importing without analysis produces an empty program for a stripped
+    image.** The ELF loader creates a function per symbol, so with no symbol
+    table it creates none: a stripped 12 MB kernel arrives with 1 function and
+    2 symbols, and every program counter resolves to nothing. So `auto` has to
     ask two questions, not one: past the size limit, an image whose symbols say
     where the functions are gets no analysis, and a stripped one gets the
     analyzers that find functions without the ones that cost the memory — 89
@@ -608,7 +609,6 @@ implementing:
     was not enough, because on a stripped image nothing has a measured body.
     What works is to check rather than imply: disassemble the candidate and see
     whether the body that comes out actually reaches the address. That is work
-    the caller pays for anyway on a hit, and on a miss it buys a null instead
-    of a confident wrong answer. Found by a test asserting the empty case is
-    empty — the assertion nobody writes, because it asserts that nothing
-    happens.
+    the caller pays for anyway on a hit, and on a miss it returns null rather
+    than a confident wrong answer. Found by a test asserting that the empty
+    case is empty.

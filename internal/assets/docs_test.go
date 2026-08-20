@@ -1,6 +1,7 @@
 package assets_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -306,4 +307,99 @@ func markdownPages(t *testing.T, root string) []string {
 	}
 	sort.Strings(pages)
 	return pages
+}
+
+// TestDocAnchorsResolve: every `page.md#section` link points at a heading that
+// exists.
+//
+// Renaming a heading changes its anchor, and nothing else in the build says so
+// — the link keeps its text, the page keeps building, and the reader lands at
+// the top of the right page instead of the part they were sent to. Twenty-one
+// headings were renamed in the two commits before this test was written, and a
+// dead `#breakpoints-1` in the protocol reference had been there long enough
+// that nobody remembers the second Breakpoints heading it once pointed at.
+func TestDocAnchorsResolve(t *testing.T) {
+	root := repoRoot(t)
+
+	pages := markdownPages(t, root)
+	anchors := make(map[string]map[string]bool, len(pages))
+	for _, page := range pages {
+		anchors[page] = headingAnchors(t, page)
+	}
+
+	// A relative .md target, or none at all for a link within the same page.
+	link := regexp.MustCompile(`\]\(([^)\s#]*)#([^)\s]+)\)`)
+	var checked int
+	for _, page := range pages {
+		body, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, _ := filepath.Rel(root, page)
+		for _, m := range link.FindAllStringSubmatch(string(body), -1) {
+			target, fragment := m[1], m[2]
+			if strings.HasPrefix(target, "http") {
+				continue
+			}
+			if target != "" && !strings.HasSuffix(target, ".md") {
+				continue
+			}
+			path := page
+			if target != "" {
+				path = filepath.Join(filepath.Dir(page), target)
+			}
+			if _, ok := anchors[path]; !ok {
+				t.Errorf("%s: links to %s, which is not a page under docs/", rel, target)
+				continue
+			}
+			checked++
+			if !anchors[path][fragment] {
+				t.Errorf("%s: links to %s#%s, and that page has no such heading",
+					rel, target, fragment)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no anchored links found; this test would pass vacuously")
+	}
+	t.Logf("%d anchored links resolve", checked)
+}
+
+// headingAnchors is the set of anchors a page offers, by GitHub's rules:
+// lowercased, punctuation dropped, each space becoming a hyphen — so a heading
+// containing `'.'` leaves two hyphens where it was, which is why the spaces are
+// not collapsed first. Repeats of one anchor take -1, -2 and so on.
+func headingAnchors(t *testing.T, page string) map[string]bool {
+	t.Helper()
+	body, err := os.ReadFile(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drop := regexp.MustCompile(`[^\w\- ]`)
+	anchors := map[string]bool{}
+	seen := map[string]int{}
+	var fenced bool
+	for _, line := range strings.Split(string(body), "\n") {
+		// A `#` inside a fenced block is a shell comment, not a heading.
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced || !strings.HasPrefix(line, "#") {
+			continue
+		}
+		text := strings.TrimSpace(strings.TrimLeft(line, "#"))
+		slug := strings.ReplaceAll(drop.ReplaceAllString(strings.ToLower(text), ""), " ", "-")
+		slug = strings.Trim(slug, "-")
+		if slug == "" {
+			continue
+		}
+		if n := seen[slug]; n > 0 {
+			anchors[fmt.Sprintf("%s-%d", slug, n)] = true
+		} else {
+			anchors[slug] = true
+		}
+		seen[slug]++
+	}
+	return anchors
 }
