@@ -208,8 +208,7 @@ func TestCrossArchStackExpressionsReadTheRightMemory(t *testing.T) {
 
 			// accumulate(7) sums i*3 for i in 0..6 = 63, and one stack slot
 			// holds it.
-			fn := do(wire.TypeDecompFunction,
-				wire.DecompFunctionRequest{Target: "accumulate"}).(wire.DecompFunction)
+			fn := decompHere(t, do, "accumulate")
 			if !checkStackVars(t, k, fn) {
 				t.Error("accumulate has no readable stack variables at all; " +
 					"the frame rule produced no expressions")
@@ -222,13 +221,28 @@ func TestCrossArchStackExpressionsReadTheRightMemory(t *testing.T) {
 			do(wire.TypeExecContinue, wire.ExecRequest{})
 			waitStopped(t, do, 60*time.Second)
 
-			fn = do(wire.TypeDecompFunction,
-				wire.DecompFunctionRequest{Target: "bigframe"}).(wire.DecompFunction)
+			fn = decompHere(t, do, "bigframe")
 			if !checkStackVars(t, k, fn) {
 				t.Error("bigframe has no readable stack variables at all")
 			}
 		})
 	}
+}
+
+// decompHere fetches the function the program is stopped in, and checks it is
+// the one the test meant to reach.
+//
+// By where the program is rather than by name, which is both what the pane
+// does on every stop and the only spelling that works everywhere: under
+// PowerPC's ELFv1 the decompiler's name for the code is `.bigframe`, the
+// undotted one belonging to the descriptor.
+func decompHere(t *testing.T, do func(string, any) any, want string) wire.DecompFunction {
+	t.Helper()
+	fn := do(wire.TypeDecompFunction, wire.DecompFunctionRequest{}).(wire.DecompFunction)
+	if fn.Name != want && fn.Name != "."+want {
+		t.Fatalf("stopped in %q, want %s", fn.Name, want)
+	}
+	return fn
 }
 
 // checkStackVars compares each stack expression's address with gdb's own,

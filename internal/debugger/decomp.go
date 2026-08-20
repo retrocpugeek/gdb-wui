@@ -685,30 +685,34 @@ func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) str
 			// `call` pushed the return address and `push %rbp` put the saved
 			// frame pointer one word below it: entry_sp = $rbp + pointerSize.
 			base, delta = "$rbp", v.Storage.Offset+pointerSize
-		case strings.HasPrefix(lang, "MIPS"):
-			// `jal` touches no memory; the prologue's single stack adjustment
-			// is the whole frame, so entry_sp = $sp + frameSize.
-			base, delta = "$sp", v.Storage.Offset+frame.Size
 		case strings.HasPrefix(lang, "ARM"), strings.HasPrefix(lang, "AARCH64"),
-			strings.HasPrefix(lang, "PowerPC"):
+			strings.HasPrefix(lang, "PowerPC"), strings.HasPrefix(lang, "MIPS"):
 			// The call leaves the return address in a link register and
 			// touches no memory, so entry_sp is wherever the prologue left the
-			// stack pointer: entry_sp = $sp - spDepth. frame.Size is not that
-			// number — it is derived from the variables Ghidra found and
-			// misses the prologue whenever the frame has slots nothing
-			// touches, which on gcc's output for these is most functions.
+			// stack pointer: entry_sp = $sp - spDepth.
 			//
-			// One rule for four ABIs, because the prologues differ in every
-			// way except the one that matters here. 32-bit ARM pushes and then
-			// subtracts a constant; AArch64 writes `stp x29, x30, [sp, #-16]!`
-			// and then subtracts a register; PowerPC does the whole thing in
-			// one `stwu r1,-48(r1)`, or in two `stdu`s for a large frame. The
+			// One rule for every ABI of this shape, because the prologues
+			// differ in every way except the one that matters here. 32-bit ARM
+			// pushes and then subtracts a constant; AArch64 writes
+			// `stp x29, x30, [sp, #-16]!` and then subtracts a register;
+			// PowerPC does the whole thing in one `stwu r1,-48(r1)`, or in two
+			// `stdu`s for a large frame; MIPS in one `addiu sp,sp,-16`. The
 			// depth accounts for all of them.
 			//
-			// A positive offset is ordinary here rather than a mistake: the
-			// PowerPC ABIs keep a parameter save area in the *caller's* frame,
-			// so a spilled argument is above entry_sp while the locals are
-			// below it. The arithmetic is the same.
+			// frame.Size is not that number. It is derived from the variables
+			// Ghidra found, so it misses the frame whenever something in it is
+			// never touched — measured out by four bytes on ARM and 32-bit
+			// MIPS, twelve on MIPS64, and by more than four kilobytes on an
+			// AArch64 busybox. It was the rule here for MIPS once, on the
+			// strength of a firmware image whose register spills happened to
+			// reach the bottom of the frame; gcc's ordinary output does not,
+			// and the addresses it produced were wrong by one slot, which
+			// reads as a value.
+			//
+			// A positive offset is ordinary rather than a mistake: the PowerPC
+			// and MIPS ABIs keep an argument save area in the *caller's*
+			// frame, so a spilled parameter is at or above entry_sp while the
+			// locals are below it. The arithmetic is the same.
 			//
 			// No depth means Ghidra could not settle on one, and a frame whose
 			// stack pointer moves under it has no static expression to give.

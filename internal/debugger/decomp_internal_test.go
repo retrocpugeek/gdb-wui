@@ -43,27 +43,59 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 				"stream addresses it as -0x50(%rbp): entry_sp = $rbp + 8",
 		},
 		{
+			// The firmware the MIPS rule was first established on. Its frame
+			// size and its depth are the same number, which is why a rule
+			// built on the wrong one of the two survived here for so long:
+			// process_packet's eleven register spills reach the bottom of its
+			// frame, so there is nothing for frame.size to miss.
 			name:  "MIPS64 stack, positive result",
 			lang:  "MIPS:BE:64:default",
 			ptr:   8,
-			frame: ghidra.Frame{Size: 352},
+			frame: ghidra.Frame{Size: 352, SPDepth: depth(-352)},
 			v: ghidra.Var{Name: "local_70", Type: "undefined1 *", Size: 8,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -112}},
 			// undefined1 is Ghidra's spelling, not C's, so it is translated:
 			// gdb answers "No symbol" for the original.
 			want: "*(unsigned char * *)($sp + 0xf0)",
 			because: "process_packet opens with daddiu sp,sp,-352 and uses " +
-				"240(sp) for this variable: entry_sp = $sp + frame.size",
+				"240(sp) for this variable",
 		},
 		{
 			name:  "MIPS64 stack, another verified offset",
 			lang:  "MIPS:BE:64:default",
 			ptr:   8,
-			frame: ghidra.Frame{Size: 352},
+			frame: ghidra.Frame{Size: 352, SPDepth: depth(-352)},
 			v: ghidra.Var{Name: "local_140", Type: "char[2]", Size: 2,
 				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -320}},
 			want:    "*(char[2] *)($sp + 0x20)",
 			because: "32(sp) appears six times in the instruction stream",
+		},
+		{
+			// And the case that says the two numbers are not interchangeable.
+			// gcc's MIPS64 output reserves a frame the variables do not fill,
+			// and the old rule put every local twelve bytes low — onto the
+			// neighbouring slot, which prints.
+			name:  "MIPS64 stack, where frame.size would have been twelve out",
+			lang:  "MIPS:BE:64:default",
+			ptr:   8,
+			frame: ghidra.Frame{Size: 36, SPDepth: depth(-48)},
+			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -24}},
+			want: "*(int *)($sp + 0x18)",
+			because: "accumulate opens with daddiu sp,sp,-48 and holds total " +
+				"at 24(s8), which gdb agrees is &total",
+		},
+		{
+			name:  "MIPS 32-bit argument, at the frame base itself",
+			lang:  "MIPS:BE:32:default",
+			ptr:   4,
+			frame: ghidra.Frame{Size: 20, SPDepth: depth(-16)},
+			v: ghidra.Var{Name: "n", Type: "int", Size: 4,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: 0}},
+			want: "*(int *)($sp + 0x10)",
+			because: "the argument save area is the caller's, so a spilled " +
+				"first parameter sits exactly on entry_sp: gdb agrees &n is " +
+				"16(sp)",
 		},
 		{
 			name:  "register storage",

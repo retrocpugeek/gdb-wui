@@ -158,7 +158,10 @@ Other architectures are the same recipe with the names changed. AArch64 wants
 `aarch64` with `x0` and `sp` in the Registers pane; PowerPC wants
 `gcc-powerpc-linux-gnu` or `gcc-powerpc64-linux-gnu` and `qemu-ppc` or
 `qemu-ppc64`, and answers `powerpc:common` or `powerpc:common64` with `r0` and
-`lr`. All four are tested against a live qemu on every push.
+`lr`; MIPS wants `gcc-mips-linux-gnu` or `gcc-mips64-linux-gnuabi64` and
+`qemu-mips` or `qemu-mips64`, and answers `mips:isa32r2` or `mips:isa64r2` with
+`zero` and `ra`. Seven of them are tested against a live qemu on every push,
+counting both endiannesses of 64-bit PowerPC.
 
 {: .note }
 > On 64-bit PowerPC's ELFv1 the call stack reads `._start` and `.main`, with a

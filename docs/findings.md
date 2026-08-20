@@ -495,6 +495,12 @@ implementing:
     have propagated. The depth is -4144, which is right, against a `frame.size`
     of 4132.
 
-    The earlier MIPS64 rule survives on the same evidence it was established
-    on: `process_packet`'s spills reach the bottom of its frame, so there the
-    two numbers coincide.
+    The MIPS rule did not survive. It read `ghidra_offset + frame.size`, and
+    the firmware it was established on is the one binary where that is right:
+    `process_packet`'s eleven register spills reach the bottom of its frame, so
+    the size and the depth are both 352 there. gcc's ordinary output leaves
+    slots nobody touches, and then they part — 20 against 16 on 32-bit
+    `accumulate`, 36 against 48 on the 64-bit build of it — which put every
+    local one slot away from where it lives. Checked against a live inferior:
+    gdb agrees with the depth. Nothing was going to catch that except a second
+    binary, built differently, on the same architecture.

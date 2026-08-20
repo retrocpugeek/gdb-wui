@@ -29,10 +29,10 @@ import (
 // Skipped unless the cross toolchains, the emulators and a multi-architecture
 // gdb are all installed; CI installs all of them.
 
-// The architectures under test. Two families and both widths of each, because
-// they are different answers to every question here: gdb reads a 32-bit ARM
-// stub's registers as r0 and a 64-bit one's as x0, and a wrong belief about
-// which is a plausible number rather than an error.
+// The architectures under test: three families, both widths of each, and both
+// endiannesses of PowerPC. They are different answers to every question here —
+// gdb reads a 32-bit ARM stub's registers as r0 and a 64-bit one's as x0, and
+// a wrong belief about which is a plausible number rather than an error.
 //
 // This table is also what the decompiler's cross-architecture tests walk, so
 // there is one list of the architectures gdb-wui claims to handle.
@@ -83,6 +83,28 @@ var crossArches = []struct {
 		name: "ppc64", gcc: "powerpc64-linux-gnu-gcc", qemu: "qemu-ppc64",
 		exe: "hello-ppc64", arch: "powerpc:common64", regs: []string{"r0", "lr"},
 		entry: "._start", lang: "PowerPC:BE:64:A2ALT", pointerSize: 8,
+	},
+	// The same processor little-endian, which is ELFv2 and so has no
+	// descriptors: the entry symbol loses its dot. Worth both, because the two
+	// ABIs are a real fork in what a PowerPC binary looks like.
+	{
+		name: "ppc64le", gcc: "powerpc64le-linux-gnu-gcc", qemu: "qemu-ppc64le",
+		exe: "hello-ppc64le", arch: "powerpc:common64", regs: []string{"r0", "lr"},
+		entry: "_start", lang: "PowerPC:LE:64:A2ALT", pointerSize: 8,
+	},
+	// MIPS, whose rule this repository got wrong for a while: it was
+	// established on a firmware image where frame.size and the stack depth
+	// happen to be the same number, and gcc's ordinary output is where they
+	// are not. glibc calls the entry point __start here.
+	{
+		name: "mips", gcc: "mips-linux-gnu-gcc", qemu: "qemu-mips",
+		exe: "hello-mips", arch: "mips:isa32r2", regs: []string{"zero", "ra"},
+		entry: "__start", lang: "MIPS:BE:32:default", pointerSize: 4,
+	},
+	{
+		name: "mips64", gcc: "mips64-linux-gnuabi64-gcc", qemu: "qemu-mips64",
+		exe: "hello-mips64", arch: "mips:isa64r2", regs: []string{"zero", "ra"},
+		entry: "__start", lang: "MIPS:BE:64:default", pointerSize: 8,
 	},
 }
 
