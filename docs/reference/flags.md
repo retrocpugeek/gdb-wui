@@ -40,6 +40,7 @@ These are all optional, and do nothing without Ghidra. See
 | `-ghidra DIR` | The Ghidra installation. Defaults to `$GHIDRA_INSTALL_DIR`, then the usual locations. |
 | `-ghidra-project PATH` | An existing Ghidra project to read, opened read-only, so your names and types are used but never written to. |
 | `-ghidra-program NAME` | Which program inside that project to use. Required with `-ghidra-project`, because a project usually holds several. |
+| `-ghidra-analysis MODE` | How much of the binary Ghidra analyses at import: `auto`, `full` or `none`. `auto` skips the analysis past 4 MB of code, which it cannot finish, and disassembles each function as it is opened instead. See [images too big to analyse](../features/decompilation.md#images-too-big-to-analyse). |
 | `-decomp-dir DIR` | Where to cache projects gdb-wui creates itself. Default `<project>/gdb-wui-decomp`. |
 
 {: .warning }

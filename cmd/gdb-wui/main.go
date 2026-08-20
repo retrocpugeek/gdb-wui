@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -72,10 +73,11 @@ type options struct {
 
 	// Decompilation. Optional throughout: Ghidra is a large dependency and
 	// most sessions never want one.
-	ghidraDir     string
-	ghidraProject string
-	ghidraProgram string
-	decompDir     string
+	ghidraDir      string
+	ghidraProject  string
+	ghidraProgram  string
+	ghidraAnalysis ghidra.Analysis
+	decompDir      string
 }
 
 func main() {
@@ -104,6 +106,11 @@ func main() {
 	flag.StringVar(&opt.ghidraDir, "ghidra", "", "Ghidra installation directory for decompilation (default $"+ghidra.EnvInstall+", then the usual locations)")
 	flag.StringVar(&opt.ghidraProject, "ghidra-project", "", "existing Ghidra project (.gpr) to read, opened read-only")
 	flag.StringVar(&opt.ghidraProgram, "ghidra-program", "", "which program inside -ghidra-project to decompile")
+	flag.Var(&opt.ghidraAnalysis, "ghidra-analysis",
+		"how much of the binary Ghidra analyses at import: `mode` is auto (the default), full or none "+
+			"(auto skips it for an image with more than "+
+			strconv.Itoa(ghidra.AutoAnalysisLimit>>20)+" MB of code, which analysis "+
+			"cannot finish; functions are then disassembled as they are opened)")
 	flag.StringVar(&opt.decompDir, "decomp-dir", "", "where to cache Ghidra projects gdb-wui creates (default <project>/gdb-wui-decomp)")
 	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
 		"exit after this long with no browser connected (0 disables)")
@@ -615,7 +622,11 @@ func decompConfig(opt options, projectAbs string, logf func(string, ...any)) deb
 		logf("decompilation unavailable: %v", err)
 		return debugger.DecompConfig{}
 	}
-	cfg := debugger.DecompConfig{Install: install, CacheRoot: opt.decompDir}
+	cfg := debugger.DecompConfig{
+		Install:   install,
+		CacheRoot: opt.decompDir,
+		Analysis:  opt.ghidraAnalysis,
+	}
 	if cfg.CacheRoot != "" {
 		// An explicit path that Ghidra will refuse is worth saying so about
 		// now, rather than one JVM start later in a message that names

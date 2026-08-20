@@ -205,6 +205,30 @@ Import and analysis take seconds for a small program and minutes for firmware.
 The result is cached under `<project>/gdb-wui-decomp`, keyed on the binary's
 SHA-256, so later runs are immediate.
 
+## Images too big to analyse
+
+Ghidra's analysis walks the whole image: it disassembles everything, propagates
+constants between functions and builds the cross-references. Past a few
+megabytes of code that stops finishing. A 12 MB MIPS64 kernel, 6.9 MB of it
+code, exhausts `analyzeHeadless`'s 2 GB heap and the import fails outright.
+
+So gdb-wui measures the executable sections and, past 4 MB of them, imports the
+image without analysis and disassembles each function as it is opened instead.
+The log says when this happens. Import drops to seconds, and the first time you
+open a function it costs a few tens of milliseconds more than the ones after
+it.
+
+What you keep is what the decompiler produces on its own: the C, the variables,
+the stack rule and every function in the symbol table — a kernel arrives with
+all 22,000 of them named. What you lose is the whole-program work:
+cross-references, recovered parameter types, and strings identified as strings.
+
+`-ghidra-analysis` overrides the choice — `full` to analyse anyway and wait,
+`none` to skip it on a smaller binary. Raising Ghidra's heap raises the ceiling
+too: `GHIDRA_MAXMEM=8G` is passed through to the Ghidra gdb-wui spawns. The two
+kinds of project are cached separately, so switching the flag re-imports rather
+than handing back the one you already have.
+
 ## Using an existing Ghidra project
 
 To use names and types you have already created in Ghidra, pass the project and
@@ -268,3 +292,7 @@ twice and the marker becomes a solid highlight on `local_10 = &head;`. In the
   types are inferred. Read it as a model.
 - **It does nothing without Ghidra**, and prints no warning until you open the
   tab.
+- **It does not analyse a large image**, and says so: past 4 MB of code the
+  import skips Ghidra's analysis, which costs cross-references and recovered
+  parameter types.
+  See [images too big to analyse](#images-too-big-to-analyse).

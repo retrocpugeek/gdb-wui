@@ -203,7 +203,7 @@ func TestTheUsersOwnProjectIsNotWritten(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	if err := ghidra.Import(ctx, install, projectDir, "theirs",
-		filepath.Join(k.dir, "nodebug"),
+		filepath.Join(k.dir, "nodebug"), ghidra.AnalysisAuto,
 		func(f string, a ...any) { t.Logf(f, a...) }); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestCommentsAreRefusedForTheUsersOwnProject(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	if err := ghidra.Import(ctx, install, projectDir, "theirs",
-		filepath.Join(k.dir, "nodebug"),
+		filepath.Join(k.dir, "nodebug"), ghidra.AnalysisAuto,
 		func(f string, a ...any) { t.Logf(f, a...) }); err != nil {
 		t.Fatalf("Import: %v", err)
 	}

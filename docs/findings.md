@@ -543,3 +543,37 @@ implementing:
     the helpers that wait or barrier, by parsing the test files. Like the check
     in finding 24 it reads the source, because the mistake it prevents shows up
     as a test that passes.
+
+46. **The decompiler does not need the analysis; everything derived from the
+    listing does.** A 12 MB MIPS64 `vmlinux`, 6.9 MB of it code, cannot be
+    analysed at all: `analyzeHeadless` hard-codes a 2 GB heap, and
+    `MipsAddressAnalyzer` exhausts it across 22,702 functions. The log is worth
+    knowing by sight, because it reports success and failure together —
+    `Analysis succeeded for file`, then `Can't checkpoint with locked buffers`,
+    then `Import failed`. Only the check for `REPORT: Import succeeded` caught
+    it; the exit code is 0.
+
+    Imported with `-noanalysis` instead, the same kernel takes 6.8 seconds and
+    597 MB, and the ELF symbol table alone gives 22,143 named functions with
+    correct entry points. Decompiling one of them takes 86 ms — from a listing
+    holding zero instructions. The decompiler follows flow and translates bytes
+    itself; auto-analysis buys cross-references, parameter types and typed
+    strings, none of which it consults.
+
+    What breaks is quieter. `spDepth` builds a `CallDepthChangeInfo` by walking
+    the function's instructions, and an unanalysed body is one byte long, so
+    the depth comes back null and the frame rule has nothing to turn a stack
+    offset into an address with. Every stack local shows no value, and the
+    decompiled C — the thing a reader would check — is perfect. It reads
+    exactly like the documented "a frame whose depth Ghidra cannot settle on".
+    The fix is to disassemble the one function being opened (41 ms, plus 6 ms
+    to recompute its body), bounded by the next function's entry so following
+    flow cannot wander off across the image. The second, related trap: with
+    every body one byte long, `getFunctionContaining` answers null for any
+    address that is not an entry point, so a program counter one instruction
+    into a function finds nothing at all.
+
+    Both are tested by asking for an interior address of a function nothing has
+    touched yet, on a program imported with `AnalysisNone`, and asserting a
+    stack depth comes back. Asking for the entry point, or asking twice,
+    exercises neither.

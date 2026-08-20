@@ -730,6 +730,31 @@ stepping through `-O2` code with DWARF.
   even all 1703 would take under two minutes. Because of that fixed cost, one
   function per invocation is not viable: either export in bulk, as this script
   does, or keep a Ghidra process alive.
+- **Analysis has a ceiling, and the decompiler does not need it.** Past a few
+  megabytes of code auto-analysis stops finishing at all: a 12 MB MIPS64
+  `vmlinux`, 6.9 MB of it code and 22,702 `FUNC` symbols, exhausts
+  `analyzeHeadless`'s hard-coded 2 GB heap inside `MipsAddressAnalyzer` and
+  reports `Import failed`. The decompiler is unaffected, because it follows
+  flow and translates bytes itself rather than reading the listing. Measured on
+  that kernel, imported with `-noanalysis`:
+
+  | | |
+  |---|---|
+  | import | 6.8 s, 597 MB peak RSS |
+  | functions, from the ELF symbol table alone | 22,143 |
+  | instructions in the listing | 0 |
+  | decompile a function never disassembled | 86 ms |
+  | the same function again | 12 ms |
+
+  What the listing is needed for is everything derived from it. `spDepth` walks
+  the function's instructions, so an unanalysed body of one byte yields no
+  stack depth and every stack local silently shows no value — the C itself
+  looks perfect. `DecompServer.ensureCode` therefore disassembles the one
+  function being asked for, bounded by the next function's entry so that
+  following flow cannot wander off across the image: 41 ms to disassemble, 6 ms
+  to recompute the body. With no analysis every function body is also one byte
+  long, so `getFunctionContaining` answers nothing and a program counter has to
+  fall back to the greatest entry at or below it.
 - **The sidecar is large.** `/usr/bin/gzip` produces 819 KiB of JSON from a
   97 KiB binary, roughly eight times the input, most of it the address sets. It
   compresses well and it is a cache, but it should not be held in memory per

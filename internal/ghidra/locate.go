@@ -22,6 +22,16 @@ const analyzeHeadless = "support/analyzeHeadless"
 // machine already set up for Ghidra development needs no flag.
 const EnvInstall = "GHIDRA_INSTALL_DIR"
 
+// EnvMaxMem and EnvHeadlessMaxMem raise the JVM heap. analyzeHeadless defaults
+// to 2 GB, which a large image exhausts during analysis, and reads these two to
+// be told otherwise — the second winning for headless runs. gdb-wui passes them
+// through to the Ghidras it spawns; nothing else in the environment is
+// inherited.
+const (
+	EnvMaxMem         = "GHIDRA_MAXMEM"
+	EnvHeadlessMaxMem = "GHIDRA_HEADLESS_MAXMEM"
+)
+
 // Install describes a located Ghidra.
 type Install struct {
 	// Dir is the installation root.

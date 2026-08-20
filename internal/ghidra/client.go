@@ -285,7 +285,9 @@ func (c *Client) spawn(ctx context.Context, sockPath string) (func(), error) {
 
 	cmd := exec.Command(c.opts.Install.Headless, args...)
 	// A scrubbed environment, as for gdb. Ghidra needs a JDK: it does not ship
-	// one, so PATH and JAVA_HOME are how it is found.
+	// one, so PATH and JAVA_HOME are how it is found. The heap goes through
+	// too: this process holds the whole program, and a large one imported
+	// without analysis grows as functions are disassembled into it.
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
@@ -293,6 +295,7 @@ func (c *Client) spawn(ctx context.Context, sockPath string) (func(), error) {
 		"LC_ALL=C",
 		"LANG=C",
 	}
+	cmd.Env = append(cmd.Env, heapEnv()...)
 	// Its own process group, so one Kill(-pgid) reaps the JVM and the shell
 	// wrapper together. analyzeHeadless is a script that execs java; killing
 	// only the script would leave a 2 GB JVM behind.
@@ -673,16 +676,39 @@ func (c *Client) cleanup() {
 // This blocks for the length of the analysis, which is seconds for a
 // hello-world and minutes for firmware. The caller is expected to be a
 // background job.
+// heapEnv is the JVM heap setting, if the user has one.
+//
+// analyzeHeadless hard-codes a 2 GB heap and reads these two to be told
+// otherwise. Passed through rather than inheriting the environment wholesale:
+// what gdb-wui spawns is built from an allowlist, so that nothing in a shell
+// can quietly change it, and these are the two worth being able to change.
+func heapEnv() []string {
+	var env []string
+	for _, k := range []string{EnvMaxMem, EnvHeadlessMaxMem} {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
+}
+
 func Import(ctx context.Context, install *Install, projectDir, projectName, binary string,
-	logf func(string, ...any)) error {
+	analysis Analysis, logf func(string, ...any)) error {
 	if install == nil {
 		return errors.New("ghidra: no installation")
 	}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	cmd := exec.CommandContext(ctx, install.Headless,
-		projectDir, projectName, "-import", binary)
+	args := []string{projectDir, projectName, "-import", binary}
+	// Resolved here as well as in the caller. Resolve is idempotent and only
+	// auto touches the file, so this costs nothing and means no caller can
+	// import an image the wrong way by forgetting.
+	mode, _ := analysis.Resolve(binary)
+	if mode == AnalysisNone {
+		args = append(args, "-noanalysis")
+	}
+	cmd := exec.CommandContext(ctx, install.Headless, args...)
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
@@ -690,6 +716,7 @@ func Import(ctx context.Context, install *Install, projectDir, projectName, bina
 		"LC_ALL=C",
 		"LANG=C",
 	}
+	cmd.Env = append(cmd.Env, heapEnv()...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	out, err := cmd.CombinedOutput()
