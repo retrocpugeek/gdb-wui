@@ -119,10 +119,32 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 				"at [sp,#24], which gdb agrees is &total",
 		},
 		{
+			name:  "PowerPC 32-bit stack",
+			lang:  "PowerPC:BE:32:e500",
+			ptr:   4,
+			frame: ghidra.Frame{Size: 56, SPDepth: depth(-48)},
+			v: ghidra.Var{Name: "total", Type: "int", Size: 4,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: -24}},
+			want: "*(int *)($sp + 0x18)",
+			because: "accumulate opens with stwu r1,-48(r1) and holds total at " +
+				"24(r31), where frame.size of 56 would have been eight out",
+		},
+		{
+			name:  "PowerPC 64-bit parameter, above the frame base",
+			lang:  "PowerPC:BE:64:A2ALT",
+			ptr:   8,
+			frame: ghidra.Frame{Size: 132, SPDepth: depth(-80)},
+			v: ghidra.Var{Name: "n", Type: "int", Size: 4,
+				Storage: ghidra.Storage{Kind: ghidra.StorageStack, Offset: 48}},
+			want: "*(int *)($sp + 0x80)",
+			because: "the parameter save area is in the caller's frame, so a " +
+				"spilled argument sits above entry_sp: gdb agrees &n is 128(r1)",
+		},
+		{
 			// The important negative. A plausible wrong address reads as a
 			// value; a blank reads as "not known", which is the truth.
 			name:  "an architecture with no established rule gets no guess",
-			lang:  "PowerPC:BE:32:default",
+			lang:  "sparc:BE:32:default",
 			ptr:   4,
 			frame: ghidra.Frame{Size: 32, SPDepth: depth(-32)},
 			v: ghidra.Var{Name: "local_8", Type: "int",
@@ -130,7 +152,8 @@ func TestVarExprUsesTheMeasuredABIRules(t *testing.T) {
 			want: "",
 			because: "a depth is not a rule: which register holds it, and what " +
 				"the call did to the stack, is knowledge about the ABI that " +
-				"has to be measured before it can be used",
+				"has to be measured before it can be used — and SPARC's " +
+				"register windows make it a particularly bad guess",
 		},
 		{
 			name:  "ARM with no settled depth gets no expression either",

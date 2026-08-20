@@ -689,18 +689,26 @@ func varExpr(v ghidra.Var, frame ghidra.Frame, lang string, pointerSize int) str
 			// `jal` touches no memory; the prologue's single stack adjustment
 			// is the whole frame, so entry_sp = $sp + frameSize.
 			base, delta = "$sp", v.Storage.Offset+frame.Size
-		case strings.HasPrefix(lang, "ARM"), strings.HasPrefix(lang, "AARCH64"):
-			// `bl` leaves the return address in `lr` and touches no memory, so
-			// entry_sp is wherever the prologue left the stack pointer:
-			// entry_sp = $sp - spDepth. frame.Size is not that number — it is
-			// derived from the variables Ghidra found and understates the
-			// prologue whenever the lowest slot is one nothing touches, which
-			// on gcc's ARM output is most functions.
+		case strings.HasPrefix(lang, "ARM"), strings.HasPrefix(lang, "AARCH64"),
+			strings.HasPrefix(lang, "PowerPC"):
+			// The call leaves the return address in a link register and
+			// touches no memory, so entry_sp is wherever the prologue left the
+			// stack pointer: entry_sp = $sp - spDepth. frame.Size is not that
+			// number — it is derived from the variables Ghidra found and
+			// misses the prologue whenever the frame has slots nothing
+			// touches, which on gcc's output for these is most functions.
 			//
-			// One rule for both widths, because the prologues differ in every
-			// way except the one that matters here: 32-bit gcc pushes and then
-			// subtracts, AArch64 writes `stp x29, x30, [sp, #-16]!` and then
-			// subtracts a register, and the depth accounts for all of it.
+			// One rule for four ABIs, because the prologues differ in every
+			// way except the one that matters here. 32-bit ARM pushes and then
+			// subtracts a constant; AArch64 writes `stp x29, x30, [sp, #-16]!`
+			// and then subtracts a register; PowerPC does the whole thing in
+			// one `stwu r1,-48(r1)`, or in two `stdu`s for a large frame. The
+			// depth accounts for all of them.
+			//
+			// A positive offset is ordinary here rather than a mistake: the
+			// PowerPC ABIs keep a parameter save area in the *caller's* frame,
+			// so a spilled argument is above entry_sp while the locals are
+			// below it. The arithmetic is the same.
 			//
 			// No depth means Ghidra could not settle on one, and a frame whose
 			// stack pointer moves under it has no static expression to give.

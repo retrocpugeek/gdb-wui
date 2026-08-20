@@ -32,14 +32,16 @@ jobs:
       # wrong one yields plausible nonsense rather than an error. Without them
       # those tests skip, and a skip is exactly what nobody notices.
       #
-      # Both widths, because they are two different answers to every question
-      # there: a 32-bit stub's registers are r0 and cpsr, a 64-bit one's are x0
-      # and sp. qemu-user carries both emulators; the compilers are separate.
+      # Four of them, and each is a different answer to the questions these
+      # tests ask: little-endian against big, 32-bit against 64, and PowerPC's
+      # ELFv1 where a function symbol is a descriptor rather than the code.
+      # qemu-user carries every emulator; the compilers are separate packages.
       - name: Install gdb and the cross-architecture toolchains
         run: |
           sudo apt-get update
           sudo apt-get install -y gdb gdb-multiarch qemu-user \
-            gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu
+            gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu \
+            gcc-powerpc-linux-gnu gcc-powerpc64-linux-gnu
 
       - name: Versions
         run: |
@@ -48,9 +50,13 @@ jobs:
           gdb-multiarch --version | head -1
           qemu-arm --version | head -1
           qemu-aarch64 --version | head -1
+          qemu-ppc --version | head -1
+          qemu-ppc64 --version | head -1
           gcc --version | head -1
           arm-linux-gnueabihf-gcc --version | head -1
           aarch64-linux-gnu-gcc --version | head -1
+          powerpc-linux-gnu-gcc --version | head -1
+          powerpc64-linux-gnu-gcc --version | head -1
 
       - name: gofmt
         run: |

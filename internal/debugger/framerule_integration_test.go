@@ -29,12 +29,14 @@ import (
 // of these architectures is the stack pointer at function entry, which is
 // exactly what Ghidra's stack offsets are relative to. Checked rather than
 // assumed: the frame base is read out of the binary below, and the offsets it
-// yields are the same numbers Ghidra gives — leafish's a, b, x and y are at
-// -20, -24, -8 and -4 in both.
+// yields are the same numbers Ghidra gives — AArch64's leafish has a, b, x and
+// y at -20, -24, -8 and -4 in the sidecar and in the debug information alike.
 //
 // What this proves: that varExpr's arithmetic, its choice of base register and
 // its type translation produce an expression which gdb parses and which lands
-// on the variable, on a 32-bit and a 64-bit target. What it cannot prove is
+// on the variable, across every architecture in the table — two families, both
+// widths of each, and a big-endian one whose stack offsets go positive. What
+// it cannot prove is
 // that Ghidra's own numbers mean what this believes they mean. Only the test
 // with a real decompiler behind it can say that.
 func TestFrameRuleAgainstDebugInfo(t *testing.T) {

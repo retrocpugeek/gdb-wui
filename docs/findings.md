@@ -447,8 +447,8 @@ implementing:
     that do.
 
 44. **Ghidra's `frame.size` is not what the prologue did to the stack
-    pointer.** Measured on ARM32, AArch64 and x86-64 builds of the same source,
-    with gcc 15.2.0 for each and Ghidra 12.1.2.
+    pointer.** Measured on ARM32, AArch64, PowerPC, PowerPC64 and x86-64 builds
+    of the same source, with gcc 15.2.0 for each and Ghidra 12.1.2.
 
     The frame size is derived from the variables Ghidra found: it reaches from
     the frame base down to the lowest slot something references, and stops
@@ -475,6 +475,18 @@ implementing:
     to decompile glibc's 2020-instruction `__printf_buffer`, under a
     millisecond for anything of ordinary size — so it is computed only for a
     function that has something on the stack to apply it to.
+
+    PowerPC puts numbers on how far apart the two can be. 32-bit `accumulate`
+    allocates 48 bytes in one `stwu r1,-48(r1)` and reports a `frame.size` of
+    56. The 64-bit build of the same function allocates 80 and reports 132,
+    with a `localSize` of 192 — not an understatement of the frame but a
+    different quantity, and there is no arithmetic on either that recovers 80.
+
+    It also produced the first positive stack offsets: both PowerPC ABIs keep
+    the parameter save area in the caller's frame, so a spilled argument sits
+    *above* the frame base at `+48` while the locals are below it. Nothing in
+    the rule needed changing, but an implementation that assumed stack offsets
+    are negative would have been wrong there and nowhere else.
 
     The depth also survives the prologues that defeat a simpler reading. On
     AArch64 `bigframe` opens with `stp x29, x30, [sp, #-16]!` — a pre-indexed

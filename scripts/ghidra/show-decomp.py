@@ -159,11 +159,14 @@ def stack_expr(v):
         # `jal` touches no memory; the prologue's single `daddiu sp,sp,-N` is
         # the whole frame, so entry_sp = $sp + frameSize.
         base, delta = "$sp", off + fn["frame"]["size"]
-    elif lang.startswith("ARM") or lang.startswith("AARCH64"):
-        # `bl` touches no memory either, so entry_sp is wherever the prologue
-        # left the stack pointer: entry_sp = $sp - spDepth. frame.size is not
-        # that number — it is derived from the variables Ghidra found, and on
-        # gcc's ARM and AArch64 output it is routinely a few bytes short.
+    elif (lang.startswith("ARM") or lang.startswith("AARCH64")
+          or lang.startswith("PowerPC")):
+        # The call leaves the return address in a link register and touches no
+        # memory, so entry_sp is wherever the prologue left the stack pointer:
+        # entry_sp = $sp - spDepth. frame.size is not that number — it is
+        # derived from the variables Ghidra found, and on gcc's output for
+        # these it is routinely several bytes out, or on 64-bit PowerPC a
+        # different quantity altogether.
         depth = fn["frame"].get("spDepth")
         if depth is None:
             return (f"<stack {off}: this function's stack pointer never "

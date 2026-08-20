@@ -21,8 +21,8 @@ import (
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
 )
 
-// The decompiler's stack expressions on ARM and AArch64, against live programs
-// for both.
+// The decompiler's stack expressions on every architecture with a frame rule
+// but the host's own, against a live program for each.
 //
 // The x86 rule can be checked against the host's own binaries; these cannot,
 // and they are the case where being wrong is quiet. Ghidra's stack offsets are
@@ -178,18 +178,19 @@ func crossDecompHarness(t *testing.T, gcc, qemu string) crossDecompKit {
 	return crossDecompKit{do: do, try: try}
 }
 
-// TestCrossArchStackExpressionsReadTheRightMemory is the ARM and AArch64 half
-// of TestDecompStackExpressionsReadTheRightMemory, and it asks a stricter
+// TestCrossArchStackExpressionsReadTheRightMemory is the cross-architecture
+// half of TestDecompStackExpressionsReadTheRightMemory, and it asks a stricter
 // question. The program is built with debug information, so gdb knows where
 // each local really is: every address the decompiler's expression computes is
 // compared against the one gdb gets from DWARF for the variable of the same
 // name.
 //
-// bigframe is in here for a specific reason. Ghidra reports its frame size as
-// 4124 on ARM and 4132 on AArch64, where the prologues move the stack pointer
-// 4128 and 4144, because the size is derived from the variables Ghidra found
-// rather than from the prologue. A rule built on frame.size lands every one of
-// its locals in the wrong place, and only just — which reads as a value.
+// bigframe is in here for a specific reason. Its frame size comes back as 4124
+// on ARM, 4132 on AArch64, 4152 on PowerPC and 4292 on PowerPC64, where the
+// prologues move the stack pointer 4128, 4144, 4144 and 4240, because the size
+// is derived from the variables Ghidra found rather than from the prologue. A
+// rule built on frame.size lands every one of its locals in the wrong place,
+// and on three of the four only just — which reads as a value.
 func TestCrossArchStackExpressionsReadTheRightMemory(t *testing.T) {
 	for _, arch := range crossArches {
 		t.Run(arch.name, func(t *testing.T) {
@@ -294,10 +295,22 @@ func readsValue(t *testing.T, k crossDecompKit, fn wire.DecompFunction, want str
 
 // addrIn pulls the address out of what gdb prints for a pointer: `&total` is
 // answered as `(int *) 0x407ff5e8`, and the type is in the way.
+//
+// Both bases, because gdb chooses. A pointer prints as hex with a 0x, but a
+// register whose type is an integer prints in decimal — `$sp` is `(void *)
+// 0x407ff620` on ARM and `1082128192` on PowerPC — and reading the second as
+// hex yields an address that is wrong and plausible.
 func addrIn(value string) (uint64, bool) {
 	fields := strings.Fields(value)
 	for i := len(fields) - 1; i >= 0; i-- {
-		if n, err := strconv.ParseUint(strings.TrimPrefix(fields[i], "0x"), 16, 64); err == nil {
+		f := fields[i]
+		if hex, ok := strings.CutPrefix(f, "0x"); ok {
+			if n, err := strconv.ParseUint(hex, 16, 64); err == nil {
+				return n, true
+			}
+			continue
+		}
+		if n, err := strconv.ParseUint(f, 10, 64); err == nil {
 			return n, true
 		}
 	}
