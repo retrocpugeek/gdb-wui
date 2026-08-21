@@ -367,3 +367,68 @@ func TestVendoredModulesAreBrowserLoadable(t *testing.T) {
 		t.Fatalf("walking vendor: %v", err)
 	}
 }
+
+// TestSnapshotFillsTheFetchedViews pins a bug that showed as two empty panes.
+//
+// Everything a hello carries is applied to a panel directly. The disassembly
+// and the decompilation are the two that cannot be: the snapshot has no
+// instructions and no recovered C in it, so they fetch. They used to fetch
+// only from applyStopped, which meant a browser arriving at a session that was
+// already stopped got neither, and nothing filled them until the program next
+// moved.
+//
+// Reachable three ways, so it is worth a test: reloading the page while
+// stopped, opening a second tab, and -gdb-command, which connects to a target
+// before any browser exists to see the stop. Confirmed against a running
+// server, whose event stream on connect is exactly ["hello"] while
+// disasm.function over that same socket returns 80 instructions.
+func TestSnapshotFillsTheFetchedViews(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "assets", "web", "js", "main.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := functionBody(t, string(body), "applySnapshot")
+	for _, call := range []string{"refreshDisasm", "refreshDecomp"} {
+		if !strings.Contains(snapshot, call+"(") {
+			t.Errorf("applySnapshot does not call %s: a browser connecting to a "+
+				"stopped session leaves that view empty", call)
+		}
+	}
+	// The same two, from the other path, so this test cannot pass by the
+	// functions having been renamed out from under it.
+	stopped := functionBody(t, string(body), "applyStopped")
+	for _, call := range []string{"refreshDisasm", "refreshDecomp"} {
+		if !strings.Contains(stopped, call+"(") {
+			t.Errorf("applyStopped does not call %s; this test is checking the "+
+				"wrong names", call)
+		}
+	}
+}
+
+// functionBody returns the source of one top-level function declaration,
+// by counting braces from its opening one.
+func functionBody(t *testing.T, src, name string) string {
+	t.Helper()
+	start := strings.Index(src, "\nfunction "+name+"(")
+	if start < 0 {
+		t.Fatalf("main.js has no top-level function %s", name)
+	}
+	open := strings.Index(src[start:], "{")
+	if open < 0 {
+		t.Fatalf("%s has no body", name)
+	}
+	depth, i := 0, start+open
+	for ; i < len(src); i++ {
+		switch src[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return src[start : i+1]
+			}
+		}
+	}
+	t.Fatalf("%s is not closed", name)
+	return ""
+}

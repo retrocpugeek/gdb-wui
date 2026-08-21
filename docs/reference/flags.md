@@ -18,6 +18,7 @@ nav_order: 1
 | `-project DIR` | The directory to browse. No file outside it is served. Default `.` |
 | `-exe PATH` | Loads a program at startup, relative to `-project`. |
 | `-gdb PATH` | Selects the gdb executable. Default `gdb`; use a suitable gdb (e.g. `gdb-multiarch`) for another architecture. |
+| `-gdb-command CMD` | Runs a gdb command at startup, after `-exe`. Repeat it for each, and they run in the order given — gdb's `-ex` by another name. See [connecting at startup](../features/remote.md#connecting-at-startup). |
 | `-no-gdb` | Browses the project without starting a debugger. |
 
 ## Where to listen

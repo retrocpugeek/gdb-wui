@@ -53,6 +53,51 @@ sudo apt install gdb-multiarch
 ./gdb-wui -project . -gdb gdb-multiarch -exe firmware
 ```
 
+## Connecting at startup
+
+Pass the commands with `-gdb-command`, once per command, and they run in the
+order given as soon as gdb is up:
+
+```sh
+./gdb-wui -project . -gdb gdb-multiarch \
+    -gdb-command 'set architecture arm' \
+    -gdb-command 'target remote 127.0.0.1:9999'
+```
+
+This is gdb's `-ex` by another name, and it is how a session that always starts
+the same way stops needing to be typed. It runs after `-exe`, matching `gdb
+prog -ex ...`: loading the program is what sets the architecture, and a command
+that assumes it has to come second.
+
+`set architecture` is worth having in the list for a target with no program to
+load — an emulator running a [raw kernel image](kernel.md#decompiling-a-kernel-image-gdb-will-not-load)
+— because there is then no ELF to set it from. Some stubs say what they are and
+gdb picks it up on its own; several do not, and connecting with the wrong
+architecture is the failure the section above describes.
+
+The commands are ordinary console commands, so their output lands in the
+Console tab. The terminal gets a line per command and a line saying where the
+sequence arrived:
+
+```
+gdb-wui: gdb command: set architecture arm
+gdb-wui: gdb command: target remote 127.0.0.1:9999
+gdb-wui: after 2 gdb command(s): stopped, connected to 127.0.0.1:9999
+```
+
+They can also live in a [config file](../reference/config.md) as a list, which
+is the shape that suits a target you return to:
+
+```json
+{
+  "gdb": "gdb-multiarch",
+  "gdb-command": [
+    "set architecture arm",
+    "target remote 127.0.0.1:9999"
+  ]
+}
+```
+
 ## Attaching to a local process
 
 ![Attached to a process that was already running](../images/attach.png)

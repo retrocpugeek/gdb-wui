@@ -109,6 +109,10 @@ func value(f *flag.Flag) (any, error) {
 		return v, nil
 	case float64:
 		return v, nil
+	case []string:
+		// A flag given more than once. Written as a JSON array, which Load
+		// reads back as one Set per element, in the same order.
+		return v, nil
 	default:
 		return nil, fmt.Errorf("cannot write a %T to a config file", v)
 	}
