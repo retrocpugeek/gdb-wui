@@ -1,11 +1,12 @@
 // SeedEntry creates a function where a raw image was loaded.
 //
 // A raw image has no entry point and no symbols, so nothing tells Ghidra where
-// execution begins. The analyzers find functions by pattern and miss the first
-// ones: on a 12 MB ARM kernel Image based at 0xc0108000 the lowest they found
-// was 0xc02027a8, a megabyte in, so the one address that was known for certain
-// — the base, which for a kernel Image is where the bootloader jumps — had no
-// function and would not decompile.
+// execution begins, and the entry is exactly where nothing else will look. On a
+// 12 MB ARM kernel Image based at 0xc0108000 it is 672 bytes alone at offset 0,
+// with 992 KB of padding before .text and no cross-reference pointing at it:
+// the analyzers' lowest find was 0xc02027a8, a megabyte further on. So the one
+// address that was known for certain — the base, which for a kernel Image is
+// where the bootloader jumps — had no function and would not decompile.
 //
 // Only where nothing is already, and only if the bytes disassemble. A raw image
 // that starts with a header rather than code gets nothing, which is right: a

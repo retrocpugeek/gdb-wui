@@ -157,10 +157,12 @@ address. [Its own symbol table](#a-stripped-kernel) still applies — a raw
 `Image` built with `CONFIG_KALLSYMS` carries one, and `-ghidra-symbols` gives
 those functions their names back.
 
-One function is created at the base whatever the analysis finds, because the
-analyzers work by pattern and miss the early code: on the image above the
-lowest one they found on their own was a megabyte past the entry point, which
-left the one address you supplied as the one address that would not decompile.
+One function is created at the base whatever the analysis finds, because
+nothing else can find the entry point. On the image above it is 672 bytes
+sitting alone at offset 0, with 992 KB of padding between it and the start of
+`.text` and no cross-reference pointing at it, so the analyzers' lowest find
+was a megabyte further on and the one address you supplied was the one that
+would not decompile.
 
 Break at an address, because there are no names for gdb to resolve. `break
 *0xc0311234` in the console, or the breakpoint action on a decompiled line or a

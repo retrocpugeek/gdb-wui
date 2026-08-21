@@ -640,14 +640,19 @@ implementing:
     18,808 functions.
 
     And they miss the beginning. The lowest function the analyzers found on
-    their own was `0xc02027a8`, a megabyte past the `0xc0108000` the image was
-    based at — so the one address that was known for certain, the entry point,
-    was the one address that would not decompile. Seeding a function there at
-    import time costs nothing and recovers `stext`: the CPUID read, the
-    unrecognised-processor path, and the indirect jump through the procinfo
-    table, all recognisable in the C. Only where nothing is already, and only
-    if the bytes disassemble, because a function invented over data would
-    decompile into fiction.
+    their own was `0xc02027a8`, and the image was based at `0xc0108000` — but
+    the megabyte between them is not missed code, it is padding: 6,297 non-zero
+    bytes in four spans, of which the first 672 are the entry point and the
+    rest are early page tables. `.text` proper starts at the far end of it. So
+    `stext` sits alone at offset 0, a kilobyte of code behind a 992 KB gap with
+    nothing pointing at it — unreachable by a pattern matcher scanning
+    neighbourhoods and by a cross-reference alike, which is why the one address
+    that was known for certain was the one that would not decompile. Seeding a
+    function there at import time costs nothing and recovers it: the CPUID
+    read, the unrecognised-processor path, and the indirect jump through the
+    procinfo table, all recognisable in the C. Only where nothing is already,
+    and only if the bytes disassemble, because a function invented over data
+    would decompile into fiction.
 
 49. **"No program is loaded" was answering a question nobody asked.** Every
     breakpoint request was refused while gdb had no file, which for a target
