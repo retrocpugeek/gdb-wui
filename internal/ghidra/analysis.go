@@ -3,6 +3,7 @@ package ghidra
 import (
 	"debug/elf"
 	"fmt"
+	"os"
 )
 
 // Analysis says how much of a binary Ghidra should chew on at import time.
@@ -57,8 +58,28 @@ const AutoAnalysisLimit = 4 << 20
 // (which logs the reason) and Import (which must not depend on the caller
 // having done so) call this.
 func (a Analysis) Resolve(binary string) (Analysis, string) {
+	return a.ResolveFor(binary, false)
+}
+
+// ResolveFor is Resolve for a binary that may be loaded raw.
+//
+// A raw image is measured by its size, because there is nothing else to
+// measure: no sections saying which bytes are code and no symbol table saying
+// where the functions are. Both of those absences push the answer the same
+// way, so a raw image past the limit always lands on AnalysisLean. Measured on
+// a 12 MB ARM kernel Image: 86 seconds and 1.45 GB, inside the 2 GB heap,
+// finding 18,808 functions — against an import with no analysis, which finds
+// none at all.
+func (a Analysis) ResolveFor(binary string, raw bool) (Analysis, string) {
 	if a != AnalysisAuto && a != "" {
 		return a, ""
+	}
+	if raw {
+		info, err := os.Stat(binary)
+		if err != nil {
+			return AnalysisFull, ""
+		}
+		return decide(info.Size(), false, true)
 	}
 	n, err := CodeBytes(binary)
 	if err != nil {
@@ -66,28 +87,34 @@ func (a Analysis) Resolve(binary string) (Analysis, string) {
 		// the file; analysing it is the behaviour that predates this switch.
 		return AnalysisFull, ""
 	}
-	return decide(n, HasFunctionSymbols(binary))
+	return decide(n, HasFunctionSymbols(binary), false)
 }
 
 // decide is Resolve's judgement, split out so the thresholds can be tested
 // without a binary of each shape to hand.
 //
-// Both branches past the limit are worse than analysing, and which one is less
+// Every outcome past the limit is worse than analysing, and which one is least
 // bad turns on whether anything else knows where the functions are. A symbol
 // table names them all, so nothing needs discovering and the analysis is pure
 // cost. Without one there is no program to show at all until something finds
 // them, and only the analyzers can.
-func decide(codeBytes int64, symbols bool) (Analysis, string) {
+func decide(codeBytes int64, symbols, raw bool) (Analysis, string) {
 	if codeBytes <= AutoAnalysisLimit {
 		return AnalysisFull, ""
 	}
-	if symbols {
+	switch {
+	case symbols:
 		return AnalysisNone, fmt.Sprintf(
 			"%s of code is more than Ghidra's analysis will finish", megabytes(codeBytes))
+	case raw:
+		return AnalysisLean, fmt.Sprintf(
+			"%s of raw image is more than Ghidra's analysis will finish, and a raw image "+
+				"names nothing, so the functions have to be found", megabytes(codeBytes))
+	default:
+		return AnalysisLean, fmt.Sprintf(
+			"%s of code is more than Ghidra's analysis will finish, and it is stripped, "+
+				"so the functions have to be found rather than read", megabytes(codeBytes))
 	}
-	return AnalysisLean, fmt.Sprintf(
-		"%s of code is more than Ghidra's analysis will finish, and it is stripped, "+
-			"so the functions have to be found rather than read", megabytes(codeBytes))
 }
 
 // HasFunctionSymbols reports whether an ELF says where any of its functions

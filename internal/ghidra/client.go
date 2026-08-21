@@ -679,6 +679,18 @@ type ImportOptions struct {
 	// kernel's /proc/kallsyms — naming functions the image does not name
 	// itself. Optional, and applied after any analysis.
 	Symbols string
+	// Processor is a Ghidra language ID — `ARM:LE:32:v7` — saying what the
+	// bytes are. Required alongside Base, because a raw image says nothing
+	// about itself and Ghidra will refuse it with "no load spec"; optional
+	// otherwise, to overrule a guess.
+	Processor string
+	// Base is the address a raw image is loaded at, and setting it is what
+	// selects Ghidra's binary loader. That loader is the only way in for a
+	// file with no format of its own — a kernel Image, a flash dump, a ROM —
+	// and the address given here is the whole of the mapping between what the
+	// debugger reports and what the decompiler holds, since neither symbols
+	// nor an entry point exist to anchor it.
+	Base string
 }
 
 // Import analyses a binary into a project and saves it, so a later Start can
@@ -719,14 +731,20 @@ func Import(ctx context.Context, install *Install, projectDir, projectName, bina
 		logf = func(string, ...any) {}
 	}
 	args := []string{projectDir, projectName, "-import", binary}
+	if opts.Processor != "" {
+		args = append(args, "-processor", opts.Processor)
+	}
+	if opts.Base != "" {
+		args = append(args, "-loader", "BinaryLoader", "-loader-baseAddr", opts.Base)
+	}
 	// Resolved here as well as in the caller. Resolve is idempotent and only
 	// auto touches the file, so this costs nothing and means no caller can
 	// import an image the wrong way by forgetting.
-	mode, _ := opts.Analysis.Resolve(binary)
+	mode, _ := opts.Analysis.ResolveFor(binary, opts.Base != "")
 	if mode == AnalysisNone {
 		args = append(args, "-noanalysis")
 	}
-	if mode == AnalysisLean || opts.Symbols != "" {
+	if mode == AnalysisLean || opts.Symbols != "" || opts.Base != "" {
 		// Both of these are scripts, and analyzeHeadless finds a script by
 		// looking in a directory.
 		dir, err := os.MkdirTemp("", "gdb-wui-import-")
@@ -751,6 +769,11 @@ func Import(ctx context.Context, install *Install, projectDir, projectName, bina
 				return fmt.Errorf("ghidra: symbols: %w", err)
 			}
 			args = append(args, "-postScript", "ImportSymbols.java", abs)
+		}
+		if opts.Base != "" {
+			// Last, so that anything with a better claim on the address —
+			// the analysis, or a symbol naming it — has already had it.
+			args = append(args, "-postScript", "SeedEntry.java", opts.Base)
 		}
 	}
 	cmd := exec.CommandContext(ctx, install.Headless, args...)

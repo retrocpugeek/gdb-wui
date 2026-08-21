@@ -613,6 +613,24 @@ func (s *Session) bpSetAddress(r *request) (any, *wire.Error) {
 	}
 
 	spec := s.locationSpec(r, loc)
+	// A name gdb cannot resolve becomes a pending breakpoint below, which is
+	// right for a shared library that has not loaded yet and wrong when there
+	// is no program at all: nothing will ever define the symbol, so it would
+	// sit there looking set and never fire.
+	//
+	// gdb decides whether the name is known, not exePath, because attaching to
+	// a process gives gdb a symbol table that this session never recorded a
+	// path for — `break main` has to keep working there.
+	//
+	// An address is exempt from the question. It needs no symbols at all,
+	// which is why this is a check on the location rather than a rule about
+	// the session: attached to an emulator running a raw image, gdb has no
+	// file and an address is the only location there is.
+	if s.st.exePath == "" && !strings.HasPrefix(spec, "*") && !s.gdbKnowsSymbol(r, spec) {
+		return nil, wire.NewError(wire.CodeNotReady, fmt.Sprintf(
+			"no program is loaded and gdb has no symbol called %s; "+
+				"break at an address instead", loc))
+	}
 
 	bp, werr := s.insertBreakpoint(r, breakpointSpec{
 		location:  spec,

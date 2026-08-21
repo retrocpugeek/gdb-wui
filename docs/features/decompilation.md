@@ -239,6 +239,16 @@ too: `GHIDRA_MAXMEM=8G` is passed through to the Ghidra gdb-wui spawns. Each
 kind of project is cached separately, so switching either flag re-imports
 rather than handing back the one you already have.
 
+## Decompiling a file gdb did not load
+
+`-ghidra-binary` names the file for Ghidra directly, for the cases where the
+program gdb has is not the one to reverse — or where gdb has no program at all.
+An emulator booting a raw kernel image is the second: the image has no ELF
+header, gdb refuses it, and without this flag the decompiler has nothing to
+open. Such an image also needs `-ghidra-processor` to say what its bytes are
+and `-ghidra-base` to say where they run, since nothing in the file does.
+See [a kernel image gdb will not load](kernel.md#decompiling-a-kernel-image-gdb-will-not-load).
+
 ## Using an existing Ghidra project
 
 To use names and types you have already created in Ghidra, pass the project and

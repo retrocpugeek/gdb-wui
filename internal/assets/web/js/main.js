@@ -408,10 +408,14 @@ for (const [pane, resolve, place] of [
 function runToItem(here) {
   const runState = store.get("session.runState");
   const loaded = Boolean(store.get("session.exePath"));
-  const disabled = !loaded || runState === "running";
+  // A program is only needed to start one. From a stop this is a temporary
+  // breakpoint and a continue, which a target attached to a stub does with no
+  // file loaded at all.
+  const needsProgram = !loaded && runState !== "stopped";
+  const disabled = needsProgram || runState === "running";
   return {
     label: `Run to ${here.label}`,
-    title: !loaded
+    title: needsProgram
       ? "no program is loaded"
       : runState === "running"
         ? "the program is running; pause it first"

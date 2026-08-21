@@ -648,17 +648,28 @@ func (s *Session) gate(typ string) *wire.Error {
 			return wire.NewError(wire.CodeNotReady,
 				"no stopped inferior; load a program and run it first")
 		}
-	case wire.TypeExecRun,
-		// Run-to takes the program from wherever it is to one place, which
-		// includes taking it from not-started: it needs a program and nothing
-		// else. Refused while running by the gate above, like every other way
-		// of placing a breakpoint.
-		wire.TypeExecRunTo:
+	case wire.TypeExecRun:
 		if s.st.exePath == "" {
 			return wire.NewError(wire.CodeNotReady, "no program is loaded")
 		}
-	case wire.TypeBpSetSource, wire.TypeBpSetAddress,
-		wire.TypeBpDelete, wire.TypeBpSetEnabled,
+	case wire.TypeExecRunTo:
+		// Run-to takes the program from wherever it is to one place. From a
+		// stop that is a temporary breakpoint and a continue, which an
+		// attached target does whether or not gdb has a file for it; from
+		// not-started it is a run, and a run needs a program. Refused while
+		// running by the gate above, like every other way of placing a
+		// breakpoint.
+		if s.st.exePath == "" && s.st.runState != wire.RunStateStopped {
+			return wire.NewError(wire.CodeNotReady, "no program is loaded")
+		}
+	// bp.setAddress, bp.delete and bp.setEnabled are deliberately not below.
+	// An address needs no symbol table at all, and attached to an emulator
+	// running a raw image it is the only kind of location there is — requiring
+	// a program left that target with no way to break anywhere. bpSetAddress
+	// makes the narrower check the location actually needs. Deleting and
+	// disabling name a breakpoint that already exists, so whatever was allowed
+	// to create one has to be allowed to undo it.
+	case wire.TypeBpSetSource,
 		// Locating a name needs symbols, not a running process: opening the
 		// source at a function is a reasonable first thing to do, before
 		// deciding where to put a breakpoint.

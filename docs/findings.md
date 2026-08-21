@@ -612,3 +612,68 @@ implementing:
     the caller pays for anyway on a hit, and on a miss it returns null rather
     than a confident wrong answer. Found by a test asserting that the empty
     case is empty.
+
+48. **A raw image has no format, so everything that reads one has to be told
+    instead.** An emulated kernel is the case: an `Image` carved out of
+    firmware is not an ELF, `file` calls it `data`, and gdb answers `not in
+    executable format`. Since the binary the decompiler imports was defined as
+    the binary gdb loaded, that target had no decompilation at all — not
+    degraded, absent. Three things have to be supplied by hand, and they are
+    exactly the three an ELF header would have carried: which file, what
+    processor, and where it is loaded.
+
+    The third is the one with teeth. On an ELF the bias between gdb's addresses
+    and Ghidra's is derived — from a symbol both sides know, or failing that
+    from the entry point in the program headers — and a raw image has neither,
+    so the bias is zero and the base given at startup *is* the mapping. Nothing
+    checks it and nothing corrects it. Ghidra will not even confirm it: a
+    program imported through the binary loader reports an image base of `0x0`
+    whatever the block was placed at, so the two ELF-derived helpers have to
+    stand down rather than compute from it. The same bytes at another base are
+    a different program, so the base and the language key the project cache
+    alongside the binary's hash.
+
+    Analysis is forced by the same absence. There are no sections saying which
+    bytes are code, so the whole file counts, and no symbol table, so only the
+    analyzers can find a function — a raw image past the limit always lands on
+    `lean`. Measured on a 12 MB ARMv7 kernel `Image`: 86 seconds, 1.45 GB,
+    18,808 functions.
+
+    And they miss the beginning. The lowest function the analyzers found on
+    their own was `0xc02027a8`, and the image was based at `0xc0108000` — but
+    the megabyte between them is not missed code, it is padding: 6,297 non-zero
+    bytes in four spans, of which the first 672 are the entry point and the
+    rest are early page tables. `.text` proper starts at the far end of it. So
+    `stext` sits alone at offset 0, a kilobyte of code behind a 992 KB gap with
+    nothing pointing at it — unreachable by a pattern matcher scanning
+    neighbourhoods and by a cross-reference alike, which is why the one address
+    that was known for certain was the one that would not decompile. Seeding a
+    function there at import time costs nothing and recovers it: the CPUID
+    read, the unrecognised-processor path, and the indirect jump through the
+    procinfo table, all recognisable in the C. Only where nothing is already,
+    and only if the bytes disassemble, because a function invented over data
+    would decompile into fiction.
+
+49. **"No program is loaded" was answering a question nobody asked.** Every
+    breakpoint request was refused while gdb had no file, which for a target
+    gdb will not take a file for meant no breakpoints at all — the emulated
+    kernel above could be read, stepped and continued, but never stopped
+    anywhere. gdb itself has no such rule: `-break-insert -f *0x40000000` with
+    no file and no target resolves immediately rather than going pending, and
+    disable, delete and list all behave.
+
+    Three of the five gated requests never needed a program. An address needs
+    no symbol table, and deleting or disabling names a breakpoint that already
+    exists — whatever was allowed to create one has to be allowed to undo it.
+    Run-to needed splitting rather than dropping: from a stop it is a temporary
+    breakpoint and a continue, which an attached target does with no file at
+    all, and only the not-started case is a run.
+
+    The narrower check that replaced it asks gdb, not the session. A name with
+    nothing behind it would become a pending breakpoint that can never fire, so
+    it is still refused — but *pending* is the right answer for a shared
+    library that has not loaded yet, and attaching to a process gives gdb a
+    full symbol table that gdb-wui records no path for. Keying the refusal on
+    "is there an exePath" would have gone on refusing `break main` on a process
+    gdb can see every symbol of. Both halves are pinned by tests that fail
+    against the other reading.

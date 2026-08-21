@@ -15,20 +15,25 @@ func TestDecideOnTheThreshold(t *testing.T) {
 		name    string
 		bytes   int64
 		symbols bool
+		raw     bool
 		want    Analysis
 	}{
-		{"a hello world", 2 << 10, true, AnalysisFull},
-		{"a 2 MB firmware image, which analyses in 71s", 2 << 20, true, AnalysisFull},
-		{"exactly the limit", AutoAnalysisLimit, true, AnalysisFull},
-		{"one byte over", AutoAnalysisLimit + 1, true, AnalysisNone},
-		{"a MIPS64 kernel", 6_800_000, true, AnalysisNone},
+		{"a hello world", 2 << 10, true, false, AnalysisFull},
+		{"a 2 MB firmware image, which analyses in 71s", 2 << 20, true, false, AnalysisFull},
+		{"exactly the limit", AutoAnalysisLimit, true, false, AnalysisFull},
+		{"one byte over", AutoAnalysisLimit + 1, true, false, AnalysisNone},
+		{"a MIPS64 kernel", 6_800_000, true, false, AnalysisNone},
 		// Stripped, so nothing else knows where the functions are and the
 		// analyzers are the only thing that can find them. Below the limit it
 		// makes no difference: the full analysis finds them and more.
-		{"a small stripped binary", 2 << 10, false, AnalysisFull},
-		{"a stripped MIPS64 kernel", 6_800_000, false, AnalysisLean},
+		{"a small stripped binary", 2 << 10, false, false, AnalysisFull},
+		{"a stripped MIPS64 kernel", 6_800_000, false, false, AnalysisLean},
+		// A raw image has no sections and no symbols, so its whole size counts
+		// and there is never anything but the analyzers to find its functions.
+		{"a small raw image", 64 << 10, false, true, AnalysisFull},
+		{"a 12 MB raw ARM kernel Image", 12_240_168, false, true, AnalysisLean},
 	} {
-		got, why := decide(tc.bytes, tc.symbols)
+		got, why := decide(tc.bytes, tc.symbols, tc.raw)
 		if got != tc.want {
 			t.Errorf("%s (%d bytes, symbols=%v): decide = %s, want %s",
 				tc.name, tc.bytes, tc.symbols, got, tc.want)

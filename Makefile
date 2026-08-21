@@ -28,8 +28,13 @@ test: fmt-check vet
 
 # Needs gdb and gcc. Skips rather than fails when they are missing, so a
 # contributor without them still gets a useful `make test`.
+#
+# The timeout is generous because the decompilation tests are only skipped
+# where Ghidra is absent — which is CI, where this whole suite finishes in two
+# minutes. Where Ghidra is installed each of those tests imports and analyses a
+# binary of its own, and the debugger package alone takes twelve.
 test-integration: fmt-check vet
-	$(GO) test -tags integration -race -timeout 10m ./...
+	$(GO) test -tags integration -race -timeout 40m ./...
 
 # Fuzzing is a nightly job, not a pre-commit one; this is the manual entry point.
 test-fuzz:

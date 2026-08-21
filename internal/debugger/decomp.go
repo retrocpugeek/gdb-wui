@@ -57,6 +57,21 @@ type DecompConfig struct {
 	// binary, for an image whose own symbols are gone. Same restriction as
 	// Analysis: a project the user named is theirs.
 	Symbols string
+	// Binary is the file to reverse, when it is not the one gdb loaded. An
+	// emulated kernel is the case: gdb takes an ELF or nothing, and a raw
+	// Image carved out of firmware is neither, so without this the decompiler
+	// never starts at all. It also covers the ordinary mismatch, where gdb has
+	// the stripped build and the full one is on disk beside it.
+	Binary string
+	// Processor is the Ghidra language ID for Binary — `ARM:LE:32:v7`.
+	// Required with Base.
+	Processor string
+	// Base is where Binary is loaded, for a raw image with no format to say so
+	// itself. It is also the entire mapping between gdb's addresses and
+	// Ghidra's: a raw image has no symbols and no entry point to anchor a bias
+	// on, so what is given here has to be the address the code actually runs
+	// at. For a kernel that is the link address, and only once the MMU is on.
+	Base string
 }
 
 // projectSuffix keeps the kinds of project apart in the cache.
@@ -66,13 +81,29 @@ type DecompConfig struct {
 // rest carry what made them: an unanalysed project and an analysed one are
 // different artefacts, and handing back the wrong one would leave a flag doing
 // nothing at all, with no diff and no message to say why.
-func projectSuffix(mode ghidra.Analysis, symbols string) string {
+func projectSuffix(mode ghidra.Analysis, symbols, processor, base string) string {
 	suffix := ""
 	switch mode {
 	case ghidra.AnalysisNone:
 		suffix = "-noanalysis"
 	case ghidra.AnalysisLean:
 		suffix = "-lean"
+	}
+	if base != "" {
+		// The same bytes at a different address are a different program:
+		// every function in it is named after where it sits, and handing back
+		// the one built at the old base would answer every lookup wrongly.
+		suffix += "-at" + strings.TrimPrefix(strings.ToLower(base), "0x")
+	}
+	if processor != "" {
+		// A language is a reading of the bytes, so it keys the project too.
+		// Punctuation out, because this becomes a directory name.
+		suffix += "-" + strings.Map(func(r rune) rune {
+			if r == ':' || r == '/' || r == filepath.Separator {
+				return '-'
+			}
+			return r
+		}, strings.ToLower(processor))
 	}
 	if symbols != "" {
 		// Keyed on the contents rather than the path: a symbol file that has
@@ -234,7 +265,10 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 	// this is a warning rather than a refusal — but reading a decompilation of
 	// a different build than the one being debugged is a confidently wrong
 	// answer, and the user has to be told which they are looking at.
-	if want := s.st.exeSHA256; want != "" && ready.Program.SHA256 != "" &&
+	// Not when the binary was named: the two files being different is then the
+	// point of the flag, and warning about it would fire on every start.
+	if want := s.st.exeSHA256; s.cfg.Decomp.Binary == "" &&
+		want != "" && ready.Program.SHA256 != "" &&
 		!strings.EqualFold(want, ready.Program.SHA256) {
 		out.Mismatch = fmt.Sprintf(
 			"the decompiler has %s (sha256 %s), but gdb has loaded a different build (%s)",
@@ -252,6 +286,19 @@ func (s *Session) maybeStartDecomp() {
 	if cfg.Install == nil {
 		return
 	}
+	// Once one is running, starting or has failed there is nothing to do, and
+	// that is worth knowing before the work below rather than only after it:
+	// naming the project hashes the binary, which is tens of milliseconds on a
+	// kernel image, and decomp.names asks on every stop. Only the actor calls
+	// this, so the locked check further down is the same answer taken again
+	// where it decides something.
+	s.decomp.mu.Lock()
+	busy := s.decomp.closed || s.decomp.starting ||
+		s.decomp.state == wire.DecompReady || s.decomp.state == wire.DecompFailed
+	s.decomp.mu.Unlock()
+	if busy {
+		return
+	}
 	// With no configured project, decompile whatever gdb has loaded. Resolved
 	// here rather than at startup because the executable is usually chosen
 	// after the session begins.
@@ -264,12 +311,34 @@ func (s *Session) maybeStartDecomp() {
 	mode, why := ghidra.AnalysisFull, ""
 	writable := cfg.ProjectDir == ""
 	if cfg.ProjectDir == "" {
-		if s.st.exePath == "" || s.st.exeSHA256 == "" || s.files == nil {
-			return
-		}
-		abs, err := s.files.AbsPath(s.st.exePath)
-		if err != nil {
-			return
+		// Normally the binary is whatever gdb loaded. A configured one wins,
+		// and is the only route in when gdb has no file at all: attached to an
+		// emulator running a raw kernel Image, there is nothing gdb will take.
+		abs, key := cfg.Binary, ""
+		if abs != "" {
+			key = hashFile(abs)
+			if key == "" {
+				// Checked at startup too, so this is the file having gone
+				// since. Failed rather than a bare return, which would ask
+				// again — and log again — on every stop.
+				err := fmt.Sprintf("cannot read %s", abs)
+				s.decomp.mu.Lock()
+				s.decomp.state = wire.DecompFailed
+				s.decomp.err = err
+				s.decomp.mu.Unlock()
+				s.decompLog(wire.DecompLogError, "%s", err)
+				return
+			}
+		} else {
+			if s.st.exePath == "" || s.st.exeSHA256 == "" || s.files == nil {
+				return
+			}
+			var err error
+			abs, err = s.files.AbsPath(s.st.exePath)
+			if err != nil {
+				return
+			}
+			key = s.st.exeSHA256
 		}
 		root := cfg.CacheRoot
 		if root == "" {
@@ -291,7 +360,7 @@ func (s *Session) maybeStartDecomp() {
 		// artefacts, and reusing the first when the second was asked for
 		// would leave -ghidra-analysis=full doing nothing at all, with no
 		// diff and no message to say why.
-		mode, why = cfg.Analysis.Resolve(abs)
+		mode, why = cfg.Analysis.ResolveFor(abs, cfg.Base != "")
 		if cfg.Symbols != "" && mode == ghidra.AnalysisLean {
 			// Nothing to discover: the symbol file says where the functions
 			// are, which is the whole reason the lean analysis was going to be
@@ -302,7 +371,7 @@ func (s *Session) maybeStartDecomp() {
 		// Keyed on the hash, not the path: a rebuilt binary must not be served
 		// a stale analysis of its predecessor.
 		cfg.ProjectDir = filepath.Join(root,
-			s.st.exeSHA256[:16]+projectSuffix(mode, cfg.Symbols))
+			key[:16]+projectSuffix(mode, cfg.Symbols, cfg.Processor, cfg.Base))
 		cfg.ProjectName = "gdb-wui"
 		cfg.Program = filepath.Base(abs)
 		if _, err := os.Stat(filepath.Join(cfg.ProjectDir, cfg.ProjectName+".gpr")); err != nil {
@@ -350,6 +419,18 @@ func (s *Session) maybeStartDecomp() {
 						"addresses", verb, cfg.Program)
 			}
 		}
+		if cfg.Binary != "" {
+			// Which file is on screen is not deducible from anything else once
+			// it is no longer the one gdb loaded, and for a raw image the base
+			// decides whether every address lines up or none of them do.
+			if cfg.Base != "" {
+				s.decompLog(wire.DecompLogInfo, "reversing %s as raw %s loaded at %s",
+					filepath.Base(cfg.Binary), cfg.Processor, cfg.Base)
+			} else {
+				s.decompLog(wire.DecompLogInfo, "reversing %s, which is not what gdb loaded",
+					filepath.Base(cfg.Binary))
+			}
+		}
 		if cfg.Symbols != "" {
 			s.decompLog(wire.DecompLogInfo, "naming functions from %s",
 				filepath.Base(cfg.Symbols))
@@ -367,7 +448,12 @@ func (s *Session) maybeStartDecomp() {
 			started := time.Now()
 			if err := ghidra.Import(context.Background(), cfg.Install,
 				cfg.ProjectDir, cfg.ProjectName, importPath,
-				ghidra.ImportOptions{Analysis: mode, Symbols: cfg.Symbols},
+				ghidra.ImportOptions{
+					Analysis:  mode,
+					Symbols:   cfg.Symbols,
+					Processor: cfg.Processor,
+					Base:      cfg.Base,
+				},
 				s.ghidraProcessLog); err != nil {
 				s.decompLog(wire.DecompLogError, "import failed: %v", err)
 				s.decomp.mu.Lock()
@@ -993,6 +1079,13 @@ func (s *Session) biasFromEntryPoint(r *request, client *ghidra.Client) (int64, 
 	if s.files == nil || s.st.exePath == "" {
 		return 0, ""
 	}
+	if s.cfg.Decomp.Base != "" {
+		// A raw image is placed where the configuration said, and Ghidra
+		// reports an image base of zero for it whatever the block start is.
+		// Both halves of the sum below would be wrong, and the mapping is
+		// already settled: what was given as the base is the runtime address.
+		return 0, ""
+	}
 	abs, err := s.files.AbsPath(s.st.exePath)
 	if err != nil {
 		return 0, ""
@@ -1038,7 +1131,11 @@ func (s *Session) biasFromEntryPoint(r *request, client *ghidra.Client) (int64, 
 // Read from the ELF rather than asked of Ghidra, which reports where the image
 // starts but not how far it goes.
 func (s *Session) exeImageRange(client *ghidra.Client) (lo, hi uint64, ok bool) {
-	if s.files == nil || s.st.exePath == "" {
+	if s.files == nil || s.st.exePath == "" || s.cfg.Decomp.Base != "" {
+		// With a raw image the executable gdb loaded, if there is one at all,
+		// describes a different file. Declining to answer costs the "not
+		// inside this program" message and leaves Ghidra's own "no function"
+		// in its place, which is worse but not wrong.
 		return 0, 0, false
 	}
 	abs, err := s.files.AbsPath(s.st.exePath)
