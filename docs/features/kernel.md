@@ -162,6 +162,12 @@ analyzers work by pattern and miss the early code: on the image above the
 lowest one they found on their own was a megabyte past the entry point, which
 left the one address you supplied as the one address that would not decompile.
 
+Break at an address, because there are no names for gdb to resolve. `break
+*0xc0311234` in the console, or the breakpoint action on a decompiled line or a
+disassembly row, which sends an address for exactly this reason. A function
+name is refused with a message saying so, rather than becoming a breakpoint
+that looks set and never fires.
+
 `-ghidra-binary` on its own, without a base, points the decompiler at a
 different file from the one gdb loaded — the unstripped build sitting beside
 the stripped one, say. It is only a raw image that needs the other two.

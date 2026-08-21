@@ -648,3 +648,27 @@ implementing:
     table, all recognisable in the C. Only where nothing is already, and only
     if the bytes disassemble, because a function invented over data would
     decompile into fiction.
+
+49. **"No program is loaded" was answering a question nobody asked.** Every
+    breakpoint request was refused while gdb had no file, which for a target
+    gdb will not take a file for meant no breakpoints at all — the emulated
+    kernel above could be read, stepped and continued, but never stopped
+    anywhere. gdb itself has no such rule: `-break-insert -f *0x40000000` with
+    no file and no target resolves immediately rather than going pending, and
+    disable, delete and list all behave.
+
+    Three of the five gated requests never needed a program. An address needs
+    no symbol table, and deleting or disabling names a breakpoint that already
+    exists — whatever was allowed to create one has to be allowed to undo it.
+    Run-to needed splitting rather than dropping: from a stop it is a temporary
+    breakpoint and a continue, which an attached target does with no file at
+    all, and only the not-started case is a run.
+
+    The narrower check that replaced it asks gdb, not the session. A name with
+    nothing behind it would become a pending breakpoint that can never fire, so
+    it is still refused — but *pending* is the right answer for a shared
+    library that has not loaded yet, and attaching to a process gives gdb a
+    full symbol table that gdb-wui records no path for. Keying the refusal on
+    "is there an exePath" would have gone on refusing `break main` on a process
+    gdb can see every symbol of. Both halves are pinned by tests that fail
+    against the other reading.
