@@ -78,7 +78,12 @@ type options struct {
 	ghidraProgram  string
 	ghidraAnalysis ghidra.Analysis
 	ghidraSymbols  string
-	decompDir      string
+	// The binary Ghidra reverses, when it is not the one gdb loaded, and the
+	// two facts a file with no format cannot supply about itself.
+	ghidraBinary    string
+	ghidraProcessor string
+	ghidraBase      string
+	decompDir       string
 }
 
 func main() {
@@ -116,6 +121,16 @@ func main() {
 	flag.StringVar(&opt.ghidraSymbols, "ghidra-symbols", "",
 		"a `file` of 'addr [type] name' lines naming functions the binary does not name "+
 			"itself, as nm and /proc/kallsyms write them")
+	flag.StringVar(&opt.ghidraBinary, "ghidra-binary", "",
+		"a `file` for Ghidra to reverse instead of the program gdb loaded, for a target "+
+			"gdb will not take a file for — an emulator running a raw kernel image")
+	flag.StringVar(&opt.ghidraProcessor, "ghidra-processor", "",
+		"Ghidra language `id`, as ARM:LE:32:v7, saying what the bytes are. Required with "+
+			"-ghidra-base, since a raw image says nothing about itself")
+	flag.StringVar(&opt.ghidraBase, "ghidra-base", "",
+		"the `address` a raw -ghidra-binary is loaded at. It imports through Ghidra's "+
+			"binary loader, and it is the whole of the mapping between the debugger's "+
+			"addresses and the decompiler's")
 	flag.StringVar(&opt.decompDir, "decomp-dir", "", "where to cache Ghidra projects gdb-wui creates (default <project>/gdb-wui-decomp)")
 	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
 		"exit after this long with no browser connected (0 disables)")
@@ -619,7 +634,12 @@ func openBrowser(url string, logf func(string, ...any)) {
 func decompConfig(opt options, projectAbs string, logf func(string, ...any)) debugger.DecompConfig {
 	// Only go looking when asked. Discovering a Ghidra nobody mentioned and
 	// silently offering to spawn a JVM from it is too much initiative.
-	if opt.ghidraDir == "" && opt.ghidraProject == "" && os.Getenv(ghidra.EnvInstall) == "" {
+	// Every ghidra flag counts as asking, including the two that only modify
+	// an import. Leaving them out would mean -ghidra-base on its own returned
+	// here, and the complaint that it needs a binary would never be printed.
+	if opt.ghidraDir == "" && opt.ghidraProject == "" && opt.ghidraBinary == "" &&
+		opt.ghidraProcessor == "" && opt.ghidraBase == "" &&
+		os.Getenv(ghidra.EnvInstall) == "" {
 		return debugger.DecompConfig{}
 	}
 	install, err := ghidra.Locate(opt.ghidraDir)
@@ -632,6 +652,45 @@ func decompConfig(opt options, projectAbs string, logf func(string, ...any)) deb
 		CacheRoot: opt.decompDir,
 		Analysis:  opt.ghidraAnalysis,
 		Symbols:   opt.ghidraSymbols,
+		Processor: opt.ghidraProcessor,
+	}
+	if opt.ghidraBinary != "" {
+		// Absolute, because nothing downstream resolves it: it is deliberately
+		// not a path inside -project, the point being to name a file the
+		// debugger has no relationship with.
+		abs, err := filepath.Abs(opt.ghidraBinary)
+		if err == nil {
+			_, err = os.Stat(abs)
+		}
+		if err != nil {
+			// Fatal to the feature rather than dropped like -ghidra-symbols.
+			// A named binary is the whole subject; carrying on would reverse
+			// gdb's program instead, or nothing, without saying so.
+			logf("decompilation unavailable: -ghidra-binary: %v", err)
+			return debugger.DecompConfig{}
+		}
+		cfg.Binary = abs
+	}
+	if opt.ghidraBase != "" {
+		switch {
+		case cfg.Binary == "":
+			logf("decompilation unavailable: -ghidra-base needs -ghidra-binary, " +
+				"which is the image it is the base of")
+			return debugger.DecompConfig{}
+		case cfg.Processor == "":
+			logf("decompilation unavailable: -ghidra-base needs -ghidra-processor, " +
+				"because a raw image says nothing about what its bytes are")
+			return debugger.DecompConfig{}
+		}
+		n, err := strconv.ParseUint(opt.ghidraBase, 0, 64)
+		if err != nil {
+			logf("decompilation unavailable: -ghidra-base %q is not an address",
+				opt.ghidraBase)
+			return debugger.DecompConfig{}
+		}
+		// Normalised, because it names the cache directory and 0xC0108000 and
+		// 0xc0108000 are the same program.
+		cfg.Base = fmt.Sprintf("%#x", n)
 	}
 	if cfg.Symbols != "" {
 		// Named but unreadable is worth saying now. Otherwise the first sign
@@ -677,6 +736,15 @@ func decompConfig(opt options, projectAbs string, logf func(string, ...any)) deb
 			logf("decompilation unavailable: %v", err)
 			return debugger.DecompConfig{}
 		}
+	}
+
+	if opt.ghidraProject != "" && cfg.Binary != "" {
+		// One says open this project, the other says import this file. Both
+		// cannot be honoured, and guessing which was meant would silently
+		// throw away work the user asked for.
+		logf("decompilation unavailable: -ghidra-project and -ghidra-binary " +
+			"name two different programs; pass one")
+		return debugger.DecompConfig{}
 	}
 
 	if opt.ghidraProject != "" {

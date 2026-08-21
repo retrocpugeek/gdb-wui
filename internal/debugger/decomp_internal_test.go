@@ -1,6 +1,7 @@
 package debugger
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/retrocpugeek/gdb-wui/internal/ghidra"
@@ -496,5 +497,50 @@ func TestSymbolFromValue(t *testing.T) {
 		if got := symbolFromValue(in); got != want {
 			t.Errorf("symbolFromValue(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestProjectSuffixKeepsRawImportsApart pins what makes two cached projects
+// different programs.
+//
+// The cache is keyed on the binary's hash, and for a raw image the hash is not
+// enough: the same bytes at another base are another program, and read through
+// another language they are not even the same instructions. Serving the wrong
+// one would answer every address lookup confidently and wrongly, with no diff
+// and no message to say why.
+func TestProjectSuffixKeepsRawImportsApart(t *testing.T) {
+	const (
+		arm  = "ARM:LE:32:v7"
+		mips = "MIPS:BE:64:default"
+	)
+	seen := map[string]string{}
+	for _, tc := range []struct {
+		name      string
+		mode      ghidra.Analysis
+		processor string
+		base      string
+	}{
+		{"an ordinary ELF", ghidra.AnalysisFull, "", ""},
+		{"a raw image", ghidra.AnalysisLean, arm, "0xc0108000"},
+		{"the same image at the physical address", ghidra.AnalysisLean, arm, "0x80108000"},
+		{"the same image read as another processor", ghidra.AnalysisLean, mips, "0xc0108000"},
+		{"the same image analysed differently", ghidra.AnalysisNone, arm, "0xc0108000"},
+		{"a language forced on an ELF", ghidra.AnalysisFull, arm, ""},
+	} {
+		got := projectSuffix(tc.mode, "", tc.processor, tc.base)
+		if was, ok := seen[got]; ok {
+			t.Errorf("%s and %s share the project %q", was, tc.name, got)
+		}
+		seen[got] = tc.name
+		// It names a directory, and Ghidra refuses a path element that begins
+		// with a dot or holds a separator.
+		if strings.ContainsAny(got, "./\\:") {
+			t.Errorf("%s: suffix %q is not usable as a directory name", tc.name, got)
+		}
+	}
+	// The one that must not move: every project imported before any of this
+	// existed is still found where it was left.
+	if got := projectSuffix(ghidra.AnalysisFull, "", "", ""); got != "" {
+		t.Errorf("a plain full analysis is now suffixed %q", got)
 	}
 }

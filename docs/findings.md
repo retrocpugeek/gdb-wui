@@ -612,3 +612,39 @@ implementing:
     the caller pays for anyway on a hit, and on a miss it returns null rather
     than a confident wrong answer. Found by a test asserting that the empty
     case is empty.
+
+48. **A raw image has no format, so everything that reads one has to be told
+    instead.** An emulated kernel is the case: an `Image` carved out of
+    firmware is not an ELF, `file` calls it `data`, and gdb answers `not in
+    executable format`. Since the binary the decompiler imports was defined as
+    the binary gdb loaded, that target had no decompilation at all — not
+    degraded, absent. Three things have to be supplied by hand, and they are
+    exactly the three an ELF header would have carried: which file, what
+    processor, and where it is loaded.
+
+    The third is the one with teeth. On an ELF the bias between gdb's addresses
+    and Ghidra's is derived — from a symbol both sides know, or failing that
+    from the entry point in the program headers — and a raw image has neither,
+    so the bias is zero and the base given at startup *is* the mapping. Nothing
+    checks it and nothing corrects it. Ghidra will not even confirm it: a
+    program imported through the binary loader reports an image base of `0x0`
+    whatever the block was placed at, so the two ELF-derived helpers have to
+    stand down rather than compute from it. The same bytes at another base are
+    a different program, so the base and the language key the project cache
+    alongside the binary's hash.
+
+    Analysis is forced by the same absence. There are no sections saying which
+    bytes are code, so the whole file counts, and no symbol table, so only the
+    analyzers can find a function — a raw image past the limit always lands on
+    `lean`. Measured on a 12 MB ARMv7 kernel `Image`: 86 seconds, 1.45 GB,
+    18,808 functions.
+
+    And they miss the beginning. The lowest function the analyzers found on
+    their own was `0xc02027a8`, a megabyte past the `0xc0108000` the image was
+    based at — so the one address that was known for certain, the entry point,
+    was the one address that would not decompile. Seeding a function there at
+    import time costs nothing and recovers `stext`: the CPUID read, the
+    unrecognised-processor path, and the indirect jump through the procinfo
+    table, all recognisable in the C. Only where nothing is already, and only
+    if the bytes disassemble, because a function invented over data would
+    decompile into fiction.

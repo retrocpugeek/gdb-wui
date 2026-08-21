@@ -118,6 +118,54 @@ it cannot recover what it was called.
 `auto` picks between these: `none` for an image whose symbols say where the
 functions are, `lean` for a stripped one.
 
+## Decompiling a kernel image gdb will not load
+
+Name the file for Ghidra yourself with `-ghidra-binary`, and tell it the two
+things a raw image cannot say about itself: `-ghidra-processor` for what the
+bytes are, and `-ghidra-base` for where they run.
+
+```sh
+./gdb-wui -gdb gdb-multiarch -project . \
+    -ghidra-binary vmlinux.img \
+    -ghidra-processor ARM:LE:32:v7 \
+    -ghidra-base 0xC0108000
+```
+
+Then connect to the stub from the [address box](remote.md) and leave gdb with
+no program loaded, because there is nothing to load: an `Image` carved out of
+firmware and booted by an emulator has no ELF header, and gdb refuses it with
+`not in executable format`. Without these flags the decompiler has no binary to
+open and never starts.
+
+`-ghidra-base` is the entire mapping between the addresses the debugger reports
+and the ones the decompiler holds. A raw image has no symbols and no entry
+point to line the two up with, so nothing checks the number and nothing
+corrects it: give the address the code runs at and every lookup lands, give
+another and every lookup misses. For a kernel that is the link address, and
+only once the MMU is on — the same bytes run at a physical address before that,
+and there the decompiler will name the wrong function.
+
+`-ghidra-processor` takes a Ghidra language ID. `ARM:LE:32:v7`,
+`MIPS:BE:64:default` and `x86:LE:64:default` are the shape of them; Ghidra's
+own import dialog lists the rest.
+
+The analysis picks itself, as it does for any large image, and a raw one always
+lands on `lean`: there is no symbol table to read, so the analyzers are the
+only thing that can find a function. A 12 MB ARMv7 `Image` takes 86 seconds and
+1.45 GB and yields 18,808 functions, every one of them named `FUN_` and its
+address. [Its own symbol table](#a-stripped-kernel) still applies — a raw
+`Image` built with `CONFIG_KALLSYMS` carries one, and `-ghidra-symbols` gives
+those functions their names back.
+
+One function is created at the base whatever the analysis finds, because the
+analyzers work by pattern and miss the early code: on the image above the
+lowest one they found on their own was a megabyte past the entry point, which
+left the one address you supplied as the one address that would not decompile.
+
+`-ghidra-binary` on its own, without a base, points the decompiler at a
+different file from the one gdb loaded — the unstripped build sitting beside
+the stripped one, say. It is only a raw image that needs the other two.
+
 ## kgdb, on real hardware
 
 qemu's stub debugs the machine from outside it. On hardware the equivalent is

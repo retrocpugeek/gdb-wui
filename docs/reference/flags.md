@@ -42,6 +42,9 @@ These are all optional, and do nothing without Ghidra. See
 | `-ghidra-program NAME` | Which program inside that project to use. Required with `-ghidra-project`, because a project usually holds several. |
 | `-ghidra-analysis MODE` | How much of the binary Ghidra analyses at import: `auto`, `full`, `lean` or `none`. Past 4 MB of code the analysis cannot finish, so `auto` takes `none` for an image whose symbols say where the functions are and `lean` — the analyzers that find functions, without the ones that cost the memory — for a stripped one. See [images too big to analyse](../features/decompilation.md#images-too-big-to-analyse). |
 | `-ghidra-symbols FILE` | A file of `address [type] name` lines naming functions the binary does not name itself, as `nm` and `/proc/kallsyms` write them. See [a stripped kernel](../features/kernel.md#a-stripped-kernel). |
+| `-ghidra-binary FILE` | The file for Ghidra to reverse, when it is not the program gdb loaded. The way in for a target gdb will not take a file for at all, such as an emulator booting a raw kernel image. See [a kernel image gdb will not load](../features/kernel.md#decompiling-a-kernel-image-gdb-will-not-load). |
+| `-ghidra-processor ID` | A Ghidra language ID, as `ARM:LE:32:v7`, saying what the bytes are. Required with `-ghidra-base`, since a raw image says nothing about itself. |
+| `-ghidra-base ADDR` | The address a raw `-ghidra-binary` is loaded at. It imports the file through Ghidra's binary loader, and it is the whole of the mapping between the debugger's addresses and the decompiler's — nothing checks it and nothing corrects it. |
 | `-decomp-dir DIR` | Where to cache projects gdb-wui creates itself. Default `<project>/gdb-wui-decomp`. |
 
 {: .warning }
