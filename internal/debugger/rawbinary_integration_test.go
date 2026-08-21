@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/retrocpugeek/gdb-wui/internal/debugger"
 	"github.com/retrocpugeek/gdb-wui/internal/wire"
@@ -136,4 +137,89 @@ func TestRawImageDecompilesWithNoProgramInGDB(t *testing.T) {
 		t.Errorf("%s decompiled to %d lines, which is not a function body",
 			fn.Name, len(fn.Lines))
 	}
+}
+
+// TestAConfiguredBaseSurvivesAStop is the bug the symbol pane showed as
+// "0 of 30854" over the words "this program has no symbols".
+//
+// The count is the index; the list was empty. decompSymbols declines to answer
+// when the bias could not be established — a pane full of link-time addresses
+// labelled as runtime ones is worse than a quiet one — and "could not be
+// established" is read as a zero bias with no anchor while there is an
+// inferior. A raw image imported at a configured base has exactly that shape,
+// and is the one case where the zero is *known*: the mapping was given rather
+// than derived. Neither way of deriving one applies to it. There is no symbol
+// gdb and Ghidra share, and the entry-point arithmetic reads Ghidra's image
+// base, which is 0x0 for anything the binary loader brought in however far up
+// memory its block actually sits.
+//
+// So the program gdb runs here is deliberately unrelated to the image Ghidra
+// holds. That is not a contrived pairing: it is what -exe plus -ghidra-binary
+// means, and the ELF is exactly what the bias machinery would otherwise reach
+// for.
+func TestAConfiguredBaseSurvivesAStop(t *testing.T) {
+	img := rawImage(t, t.TempDir())
+	const (
+		base      = "0x40000000"
+		processor = "x86:LE:64:default"
+	)
+	k := decompHarnessWith(t, func(cfg *debugger.DecompConfig) {
+		cfg.Binary = img
+		cfg.Processor = processor
+		cfg.Base = base
+	})
+	do := k.do
+	waitReady(t, do)
+
+	// Before there is an inferior, where a zero bias is unambiguously right
+	// and the pane worked even with the bug.
+	before := decompNames(t, do)
+	if len(before) == 0 {
+		t.Fatal("no decompiler symbols before running; this test shows nothing")
+	}
+
+	// Now give gdb a program and stop it, which is the state the pane went
+	// blank in.
+	do(wire.TypeExeLoad, wire.ExeLoadRequest{Path: "nodebug"})
+	do(wire.TypeBpSetAddress, wire.BreakpointAddressRequest{Location: "accumulate"})
+	do(wire.TypeExecRun, wire.ExecRequest{})
+	waitStopped(t, do, 30*time.Second)
+
+	after := decompNames(t, do)
+	if len(after) == 0 {
+		t.Fatalf("the decompiler's names vanished when the program stopped; "+
+			"there were %d of them a moment ago", len(before))
+	}
+	// And at the addresses the base put them at. The other way this fails is
+	// quieter: a bias derived from the running program's ELF against an image
+	// base of zero moves every one of them somewhere unmapped.
+	for name, addr := range after {
+		if was, ok := before[name]; ok && was != addr {
+			t.Errorf("%s moved from %s to %s across the stop; the configured "+
+				"base is being overridden", name, was, addr)
+		}
+		if !strings.HasPrefix(addr, "0x4000") {
+			t.Errorf("%s is at %s, outside the image based at %s", name, addr, base)
+		}
+	}
+}
+
+// decompNames is the symbol pane's request, reduced to the names only the
+// decompiler has and where it says they are.
+//
+// Filtered to FUN_, which is every name in a raw image and no name in the
+// program gdb is running. Without it the reply is the binary's own symbols
+// first and the decompiler's only if the page has room, so a program with more
+// symbols than the limit would make this look empty whatever the bias did.
+func decompNames(t *testing.T, do func(string, any) any) map[string]string {
+	t.Helper()
+	list := do(wire.TypeSymbolsList,
+		wire.SymbolsListRequest{Filter: "FUN_", Limit: 200}).(wire.SymbolsList)
+	out := map[string]string{}
+	for _, sym := range list.Symbols {
+		if sym.From == wire.SymbolFromDecompiler {
+			out[sym.Name] = sym.Address
+		}
+	}
+	return out
 }

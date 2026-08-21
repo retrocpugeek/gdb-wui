@@ -1008,6 +1008,22 @@ func sizedInt(size int) string {
 // empty, so a client can say the addresses are link-time rather than implying
 // they are runtime ones.
 func (s *Session) decompBias(r *request, client *ghidra.Client) (int64, string) {
+	if s.cfg.Decomp.Base != "" {
+		// A raw image was imported at the address it runs at, so the mapping
+		// was given rather than derived and the bias is zero — *known* to be
+		// zero, which is not the same as zero because nothing could be worked
+		// out. Everything downstream turns on the difference: a zero with no
+		// anchor, while the program is stopped, reads as "could not establish
+		// this", and the symbol pane answers it by showing nothing at all.
+		// Measured against an emulated kernel: a header reading "0 of 30854"
+		// over the words "this program has no symbols".
+		//
+		// Neither of the two ways of deriving one applies here. There is no
+		// symbol gdb and Ghidra share, and the entry-point arithmetic below
+		// reads Ghidra's image base, which a program imported through the
+		// binary loader reports as 0x0 whatever address its block sits at.
+		return 0, baseAnchor
+	}
 	s.decomp.mu.Lock()
 	from, ghidraAddr := s.decomp.biasFrom, s.decomp.biasAddr
 	s.decomp.mu.Unlock()
@@ -1077,13 +1093,6 @@ func (s *Session) decompBias(r *request, client *ghidra.Client) (int64, string) 
 // prints in `info files`. Neither needs a symbol table.
 func (s *Session) biasFromEntryPoint(r *request, client *ghidra.Client) (int64, string) {
 	if s.files == nil || s.st.exePath == "" {
-		return 0, ""
-	}
-	if s.cfg.Decomp.Base != "" {
-		// A raw image is placed where the configuration said, and Ghidra
-		// reports an image base of zero for it whatever the block start is.
-		// Both halves of the sum below would be wrong, and the mapping is
-		// already settled: what was given as the base is the runtime address.
 		return 0, ""
 	}
 	abs, err := s.files.AbsPath(s.st.exePath)
@@ -1169,6 +1178,11 @@ func (s *Session) exeImageRange(client *ghidra.Client) (lo, hi uint64, ok bool) 
 	}
 	return base, base + (maxV - minV), true
 }
+
+// baseAnchor names a mapping that was configured rather than measured, so that
+// BiasFrom is not empty for it: empty means "could not be established", and a
+// base given on the command line is the opposite of that.
+const baseAnchor = "<configured base>"
 
 // entryAnchor names the entry-point anchor in BiasFrom. It is not a symbol
 // name, and is not one a program could have.
