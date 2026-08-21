@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -20,10 +21,26 @@ type opts struct {
 	open     bool
 	idleExit time.Duration
 	version  bool
+	run      commands
 }
+
+// commands stands in for -gdb-command: a flag that accumulates, which is what
+// a JSON list in a config file is for.
+type commands []string
+
+func (c *commands) String() string { return strings.Join(*c, " ; ") }
+func (c *commands) Set(v string) error {
+	if v == "" {
+		return errors.New("empty command")
+	}
+	*c = append(*c, v)
+	return nil
+}
+func (c *commands) Get() any { return []string(*c) }
 
 func newOpts() *opts {
 	o := &opts{fs: flag.NewFlagSet("test", flag.ContinueOnError)}
+	o.fs.Var(&o.run, "gdb-command", "")
 	o.fs.StringVar(&o.project, "project", ".", "")
 	o.fs.StringVar(&o.gdb, "gdb", "gdb", "")
 	o.fs.BoolVar(&o.open, "open", true, "")
@@ -517,5 +534,81 @@ func TestDirectoryNamedLikeAConfigIsIgnored(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("loaded %q, want the search to have continued to %q", got, want)
+	}
+}
+
+// TestAListIsAppliedInOrder pins what a repeated flag looks like in a file.
+//
+// Order is the whole content of the setting: `set architecture` before `target
+// remote` works and the other way round does not, so a file that applied them
+// in map order or backwards would be a config that connects wrongly rather
+// than one that fails.
+func TestAListIsAppliedInOrder(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, `{
+		"gdb-command": ["set architecture arm", "target remote 127.0.0.1:9999"]
+	}`)
+	inDir(t, dir, t.TempDir())
+
+	o := newOpts()
+	if err := o.fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(o.fs, "", false); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"set architecture arm", "target remote 127.0.0.1:9999"}
+	if len(o.run) != len(want) {
+		t.Fatalf("gdb-command = %q, want %q", o.run, want)
+	}
+	for i := range want {
+		if o.run[i] != want[i] {
+			t.Errorf("gdb-command[%d] = %q, want %q", i, o.run[i], want[i])
+		}
+	}
+}
+
+// TestALoneValueStillWorks is the other half: a flag that takes a list takes a
+// bare string too, because writing one command as an array is a pedantry
+// nobody should have to observe.
+func TestALoneValueStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, `{"gdb-command": "target remote :9999"}`)
+	inDir(t, dir, t.TempDir())
+
+	o := newOpts()
+	if err := o.fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(o.fs, "", false); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(o.run) != 1 || o.run[0] != "target remote :9999" {
+		t.Errorf("gdb-command = %q", o.run)
+	}
+}
+
+// TestAListOnAScalarIsRefused: two values for a setting that keeps one means
+// somebody meant one of them to win, and the file does not say which. Silently
+// taking the last is the reading that produces a session configured to
+// something nobody wrote down.
+func TestAListOnAScalarIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, `{"gdb": ["gdb", "gdb-multiarch"]}`)
+	inDir(t, dir, t.TempDir())
+
+	o := newOpts()
+	if err := o.fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.Load(o.fs, "", false)
+	if err == nil {
+		t.Fatal("a list was accepted for a setting that takes one value")
+	}
+	if !strings.Contains(err.Error(), "gdb") || !strings.Contains(err.Error(), "list") {
+		t.Errorf("the error does not say what is wrong: %v", err)
+	}
+	if o.gdb != "gdb" {
+		t.Errorf("gdb = %q; a refused key was applied anyway", o.gdb)
 	}
 }

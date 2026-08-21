@@ -49,12 +49,16 @@ type options struct {
 	verbose        bool
 	showVersion    bool
 
-	gdbPath  string
-	exe      string
-	noGDB    bool
-	miLog    bool
-	printURL bool
-	idleExit time.Duration
+	gdbPath string
+	exe     string
+	// gdbCommands run at startup, after -exe. The way in for a target that
+	// has to be reached by hand: an emulator's stub needs an architecture set
+	// and an address connected to before there is anything to debug.
+	gdbCommands gdbCommands
+	noGDB       bool
+	miLog       bool
+	printURL    bool
+	idleExit    time.Duration
 
 	// The MCP bridge, which joins a running server rather than starting one.
 	// Three flags rather than one because reading a binary, writing into the
@@ -100,6 +104,11 @@ func main() {
 	flag.BoolVar(&opt.showVersion, "version", false, "print the version and exit")
 	flag.StringVar(&opt.gdbPath, "gdb", "gdb", "gdb executable")
 	flag.StringVar(&opt.exe, "exe", "", "program to load at startup, relative to -project")
+	flag.Var(&opt.gdbCommands, "gdb-command",
+		"a gdb `command` to run at startup, after -exe; repeat for each, and they "+
+			"run in the order given. gdb's -ex by another name, and how a target "+
+			"that has to be reached by hand is reached: -gdb-command 'set "+
+			"architecture arm' -gdb-command 'target remote 127.0.0.1:9999'")
 	flag.BoolVar(&opt.noGDB, "no-gdb", false, "browse the project without starting a debugger")
 	flag.BoolVar(&opt.miLog, "mi-log", false, "stream raw MI traffic to the browser's log pane")
 	flag.BoolVar(&opt.printURL, "print-url", false, "print a fresh login URL for an already-running gdb-wui and exit")
@@ -235,6 +244,42 @@ func (s *savePath) Set(v string) error {
 }
 
 func (s *savePath) IsBoolFlag() bool { return true }
+
+// gdbCommands is a repeatable flag: each -gdb-command adds one line, and they
+// run in the order given.
+//
+// One command per occurrence rather than one string of many, because gdb's own
+// vocabulary has no separator that is not also legal inside a command —
+// semicolons appear in expressions, and a newline inside a shell argument is
+// awkward to write. Repeating the flag is how gdb spells the same thing with
+// -ex, and the order on the command line is the order they run in.
+type gdbCommands []string
+
+func (c *gdbCommands) String() string {
+	if c == nil {
+		return ""
+	}
+	// Only ever read back by -help and by the "is this still the default"
+	// check in config.Save; the config file round-trips through Get, which
+	// keeps the list a list.
+	return strings.Join(*c, " ; ")
+}
+
+func (c *gdbCommands) Set(v string) error {
+	line := strings.TrimSpace(v)
+	if line == "" {
+		return errors.New("empty command")
+	}
+	if strings.ContainsAny(line, "\r\n") {
+		return errors.New("one command per -gdb-command; repeat the flag for more")
+	}
+	*c = append(*c, line)
+	return nil
+}
+
+// Get makes this a flag.Getter, which is how config.Save learns it is a list
+// and writes a JSON array rather than failing on the type.
+func (c *gdbCommands) Get() any { return []string(*c) }
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `gdb-wui %s — a web UI for GDB
@@ -416,8 +461,71 @@ func startDebugger(opt options, files *srcfs.FS, h *hub.Hub, logf func(string, .
 			log.Printf("loaded %s", opt.exe)
 		}
 	}
+
+	// After -exe, matching `gdb prog -ex ...`: loading the program is what
+	// tells gdb the architecture, and a command that assumes it has to come
+	// second. Through console.exec rather than straight down the wire, because
+	// these are the same commands somebody would type — `target remote` has to
+	// register as a connection, and everything has to be followed by the same
+	// resync a typed command gets.
+	for _, line := range opt.gdbCommands {
+		log.Printf("gdb command: %s", line)
+		payload, err := json.Marshal(wire.ConsoleExecRequest{Line: line})
+		if err != nil {
+			return nil, err
+		}
+		// Its own deadline per command, not the startup context's: connecting
+		// to a stub that is not listening yet, or a command that runs the
+		// program, is not the same budget as bringing gdb up.
+		cctx, ccancel := context.WithTimeout(context.Background(), gdbCommandTimeout)
+		_, werr := session.Handle(cctx, wire.Request{
+			Type:    wire.TypeConsoleExec,
+			Payload: payload,
+		})
+		ccancel()
+		if werr != nil {
+			// Not fatal, and the sequence continues: the commands are the
+			// user's, a later one may well fix what an earlier one got wrong,
+			// and refusing to start would leave them no console to fix it at.
+			log.Printf("gdb command %q: %s", line, werr.Message)
+		}
+	}
+	if len(opt.gdbCommands) > 0 {
+		// gdb's own errors go to the Console tab, where console output belongs,
+		// and are easy to miss from a terminal. This line is what says whether
+		// the sequence arrived anywhere: a `target remote` that was refused
+		// leaves no program and no connection, and says so here.
+		snap := session.Snapshot()
+		// A stop arrives asynchronously: `target remote` returns once gdb has
+		// answered it, and the *stopped saying the machine halted follows. Read
+		// immediately, the line says "noProgram" about a target sitting at its
+		// reset vector — measured against an emulator's stub, where the truth a
+		// moment later was "stopped". Only worth waiting for when something
+		// that should produce a stop actually happened, so a sequence that
+		// merely configured gdb pays nothing.
+		if r := snap.Remote; r != nil && r.Connected {
+			deadline := time.Now().Add(2 * time.Second)
+			for snap.RunState == wire.RunStateNoProgram && time.Now().Before(deadline) {
+				time.Sleep(50 * time.Millisecond)
+				snap = session.Snapshot()
+			}
+		}
+		if r := snap.Remote; r != nil && r.Connected && r.Address != "" {
+			log.Printf("after %d gdb command(s): %s, connected to %s",
+				len(opt.gdbCommands), snap.RunState, r.Address)
+		} else {
+			log.Printf("after %d gdb command(s): %s",
+				len(opt.gdbCommands), snap.RunState)
+		}
+	}
 	return session, nil
 }
+
+// gdbCommandTimeout bounds one startup command. Generous because the
+// commonest one is `target remote`, which waits on something outside this
+// process, and a stub started in another terminal a moment ago is the normal
+// case rather than an error.
+const gdbCommandTimeout = 60 * time.Second
 
 // watchIdle shuts the server down once nobody has been connected for a while.
 //
