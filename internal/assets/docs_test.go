@@ -33,8 +33,12 @@ func TestFlagsDocumented(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// flag.StringVar(&opt.project, "project", ...) and its Bool/Duration kin.
-	declared := regexp.MustCompile(`flag\.\w+Var\([^,]+,\s*"([^"]+)"`)
+	// flag.StringVar(&opt.project, "project", ...) and its Bool/Duration kin,
+	// and bare flag.Var for the ones with a type of their own — which this
+	// missed until -gdb-command was added and went undocumented unnoticed.
+	// Only where the name is a literal: -save-config names itself through a
+	// constant, and following that is more machinery than one flag is worth.
+	declared := regexp.MustCompile(`flag\.\w*Var\([^,]+,\s*"([^"]+)"`)
 	var flags []string
 	for _, m := range declared.FindAllSubmatch(main, -1) {
 		flags = append(flags, string(m[1]))

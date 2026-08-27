@@ -280,3 +280,51 @@ func TestSaveToAnUnwritableDirectoryFails(t *testing.T) {
 		t.Fatal("saving into an unwritable directory reported success")
 	}
 }
+
+// TestSaveRoundTripsAList is the pair to TestSaveRoundTrips, for the flag that
+// is given more than once.
+//
+// Out as a JSON array and back in as one Set per element, in order. The
+// alternative — writing the String() form, which joins them — would produce a
+// file that loads as a single command with semicolons in it, and gdb would
+// refuse it a run later.
+func TestSaveRoundTripsAList(t *testing.T) {
+	dir := t.TempDir()
+	inDir(t, dir, t.TempDir())
+
+	before := newOpts()
+	if err := before.fs.Parse([]string{
+		"-gdb-command", "set architecture arm",
+		"-gdb-command", "target remote 127.0.0.1:9999",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	written, _, err := config.Save(before.fs, "")
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	body, err := os.ReadFile(written)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A list in the file, not a joined string: the shape is the point.
+	if !strings.Contains(string(body), `[`) {
+		t.Errorf("gdb-command was not written as a list:\n%s", body)
+	}
+
+	after := newOpts()
+	if err := after.fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(after.fs, written, false); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(after.run) != len(before.run) {
+		t.Fatalf("read back %q, wrote %q", after.run, before.run)
+	}
+	for i := range before.run {
+		if after.run[i] != before.run[i] {
+			t.Errorf("[%d] read back %q, wrote %q", i, after.run[i], before.run[i])
+		}
+	}
+}

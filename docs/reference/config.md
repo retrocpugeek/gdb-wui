@@ -40,6 +40,22 @@ Values are strings, numbers or booleans. `idle-exit` is written as a string,
 because JSON has no duration type; gdb-wui parses it with the same code that
 parses `-idle-exit`.
 
+A flag meant to be given more than once takes a list, and the order is the
+order it runs in — `-gdb-command` is the one:
+
+```json
+{
+  "gdb-command": [
+    "set architecture arm",
+    "target remote 127.0.0.1:9999"
+  ]
+}
+```
+
+A list against any other key is an error, because repeating a setting that
+takes one value means one of them was meant to win and the file does not say
+which.
+
 Relative paths mean what they mean on the command line: **relative to the
 working directory**. `"project": "."` is the directory you ran gdb-wui in, not
 the directory the config file is in.

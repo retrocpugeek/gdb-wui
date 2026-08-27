@@ -1132,6 +1132,23 @@ function applySnapshot(hello) {
   } else {
     source.clearExecLine();
   }
+
+  // The disassembly and the decompilation are the two views a snapshot cannot
+  // hand their contents to: everything above was in the hello, those two have
+  // to fetch. Until this they only fetched on a stop, so a browser arriving at
+  // a session that was already stopped showed two empty panes and nothing
+  // would fill them until the program moved. Reachable by reloading the page,
+  // by opening a second tab, and every time with -gdb-command, which connects
+  // to a target before any browser exists to see the stop.
+  //
+  // The layout does call these once at load, but that is before the socket is
+  // up: the fetch fails as not_ready and the failure is swallowed, by design,
+  // because that is also what an ordinary unconfigured decompiler looks like.
+  if (hello.runState === "stopped") {
+    refreshDisasm(frame?.address);
+    refreshDecompStatus();
+    refreshDecomp(frame?.address);
+  }
 }
 
 // showLocate offers to find a file gdb named but we could not resolve. It is an

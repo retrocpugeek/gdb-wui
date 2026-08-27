@@ -197,6 +197,24 @@ func apply(fs_ *flag.FlagSet, path string, body []byte) error {
 		if given[key] {
 			continue
 		}
+		// A list for a flag that accumulates: each element is one occurrence,
+		// applied in the order written, which is the same thing repeating the
+		// flag on the command line does.
+		if list, ok := raw[key].([]any); ok {
+			if !repeatable(fs_.Lookup(key)) {
+				return fmt.Errorf("config: %s: %q takes one value, not a list", path, key)
+			}
+			for i, item := range list {
+				text, err := literal(item)
+				if err != nil {
+					return fmt.Errorf("config: %s: %q[%d]: %w", path, key, i, err)
+				}
+				if err := fs_.Set(key, text); err != nil {
+					return fmt.Errorf("config: %s: %q[%d]: %w", path, key, i, err)
+				}
+			}
+			continue
+		}
 		text, err := literal(raw[key])
 		if err != nil {
 			return fmt.Errorf("config: %s: %q: %w", path, key, err)
@@ -210,10 +228,26 @@ func apply(fs_ *flag.FlagSet, path string, body []byte) error {
 	return nil
 }
 
+// repeatable reports whether a flag accumulates rather than replaces, and so
+// may be written as a list.
+//
+// Asked of the value rather than of a registry: a Value whose Get answers a
+// []string is one that collected several, which is the same signal Save reads
+// to write the list back out. Nothing has to be kept in step.
+func repeatable(f *flag.Flag) bool {
+	g, ok := f.Value.(flag.Getter)
+	if !ok {
+		return false
+	}
+	_, ok = g.Get().([]string)
+	return ok
+}
+
 // literal renders a JSON scalar as the text the flag package expects.
 //
-// Only scalars: an object or an array in a file whose keys are all flags is a
-// mistake, and naming it is more use than ignoring it.
+// Only scalars: an object in a file whose keys are all flags is a mistake, and
+// naming it is more use than ignoring it. A list is handled by the caller, for
+// the flags that take one.
 func literal(v any) (string, error) {
 	switch t := v.(type) {
 	case string:
@@ -227,6 +261,8 @@ func literal(v any) (string, error) {
 		return t.String(), nil
 	case nil:
 		return "", errors.New("null is not a value; remove the key to use the default")
+	case []any:
+		return "", errors.New("a list, for a setting that takes one value")
 	default:
 		return "", fmt.Errorf("want a string, number or boolean, got %T", v)
 	}
