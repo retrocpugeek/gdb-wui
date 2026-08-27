@@ -755,6 +755,13 @@ func decompConfig(opt options, projectAbs string, logf func(string, ...any)) deb
 		logf("decompilation unavailable: %v", err)
 		return debugger.DecompConfig{}
 	}
+	// Refused here rather than on first use. An installation too old fails deep
+	// inside Ghidra's script compiler, minutes later, as a ClassNotFoundException
+	// that says nothing about the version — see ghidra.MinVersion.
+	if err := ghidra.CheckVersion(install); err != nil {
+		logf("decompilation unavailable: %v", err)
+		return debugger.DecompConfig{Unavailable: err.Error()}
+	}
 	cfg := debugger.DecompConfig{
 		Install:   install,
 		CacheRoot: opt.decompDir,

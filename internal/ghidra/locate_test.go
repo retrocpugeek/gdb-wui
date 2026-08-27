@@ -52,3 +52,78 @@ func TestCheckProjectPath(t *testing.T) {
 		t.Errorf("relative path was not resolved: %v", err)
 	}
 }
+
+// TestCheckVersion pins the boundary finding 28 cost a day to: 12.0.4 has no
+// DecompileOptions.setCommentIndent, so the scripts do not compile against it
+// and Ghidra reports that as a ClassNotFoundException naming no version.
+func TestCheckVersion(t *testing.T) {
+	tooOld := []string{"12.0.4", "12.1.1", "12.1", "12.0", "11.3.2", "9.2"}
+	for _, v := range tooOld {
+		err := CheckVersion(&Install{Dir: "/opt/ghidra", Version: v})
+		if err == nil {
+			t.Errorf("CheckVersion(%q) = nil, want an error", v)
+			continue
+		}
+		// The message has to carry both numbers, or it cannot be acted on.
+		for _, want := range []string{v, MinVersion, "/opt/ghidra"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("CheckVersion(%q) = %q, missing %q", v, err, want)
+			}
+		}
+	}
+
+	ok := []string{MinVersion, "12.1.2", "12.1.3", "12.1.10", "12.2", "13.0", "12.1.2.1"}
+	for _, v := range ok {
+		if err := CheckVersion(&Install{Dir: "/opt/ghidra", Version: v}); err != nil {
+			t.Errorf("CheckVersion(%q) = %v, want nil", v, err)
+		}
+	}
+
+	// Unknown or unparseable is allowed through: it costs the check, not the
+	// feature, and a release numbered some new way should still run.
+	unknown := []string{"", "12.1.2-DEV", "DEV", "12.x"}
+	for _, v := range unknown {
+		if err := CheckVersion(&Install{Dir: "/opt/ghidra", Version: v}); err != nil {
+			t.Errorf("CheckVersion(%q) = %v, want nil for an unreadable version", v, err)
+		}
+	}
+
+	if err := CheckVersion(nil); err != nil {
+		t.Errorf("CheckVersion(nil) = %v, want nil", err)
+	}
+}
+
+// TestCompareVersions covers the ordering CheckVersion rests on, including the
+// case that made it necessary: a component missing counts as zero, so 12.1 is
+// older than 12.1.2 rather than equal to it.
+func TestCompareVersions(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"12.1.2", "12.1.2", 0},
+		{"12.1", "12.1.2", -1},
+		{"12.1.2", "12.1", 1},
+		{"12.0.4", "12.1.2", -1},
+		{"12.1.10", "12.1.2", 1}, // numeric, not lexical
+		{"9.2", "12.1.2", -1},    // likewise
+		{"13", "12.1.2", 1},
+		{"12.1.2.0", "12.1.2", 0},
+	}
+	for _, c := range cases {
+		got, ok := compareVersions(c.a, c.b)
+		if !ok {
+			t.Errorf("compareVersions(%q, %q) not ok", c.a, c.b)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("compareVersions(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+
+	for _, v := range []string{"12.1.2-DEV", "", "12.x", "-1.0"} {
+		if _, ok := compareVersions(v, MinVersion); ok {
+			t.Errorf("compareVersions(%q, %q) ok = true, want false", v, MinVersion)
+		}
+	}
+}
