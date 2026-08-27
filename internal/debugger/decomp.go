@@ -72,6 +72,12 @@ type DecompConfig struct {
 	// on, so what is given here has to be the address the code actually runs
 	// at. For a kernel that is the link address, and only once the MMU is on.
 	Base string
+	// Unavailable says why the feature is off despite having been asked for,
+	// when Install is nil because something about the installation was
+	// rejected rather than absent. It reaches the pane instead of the generic
+	// "no Ghidra installation configured", which would be a lie: the user did
+	// configure one and needs to be told what is wrong with it.
+	Unavailable string
 }
 
 // projectSuffix keeps the kinds of project apart in the cache.
@@ -220,11 +226,12 @@ type decomp struct {
 func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 	cfg := s.cfg.Decomp
 	if cfg.Install == nil {
-		return wire.DecompStatus{
-			State: wire.DecompOff,
-			Error: "no Ghidra installation configured; pass -ghidra or set " +
-				ghidra.EnvInstall,
-		}, nil
+		reason := cfg.Unavailable
+		if reason == "" {
+			reason = "no Ghidra installation configured; pass -ghidra or set " +
+				ghidra.EnvInstall
+		}
+		return wire.DecompStatus{State: wire.DecompOff, Error: reason}, nil
 	}
 
 	s.maybeStartDecomp()

@@ -18,7 +18,7 @@ were in the DWARF that was stripped. `&head` is still `&head`, because the ELF
 symbol table survived and Ghidra reads that too. On a fully stripped binary
 every function is named after its address, such as `FUN_00401156`.
 
-This tab needs the `-ghidra` argument. See
+This tab needs the `-ghidra` argument, and Ghidra 12.1.2 or newer. See
 [Install](../install.md#installing-ghidra-optional).
 
 To decompile a particular function rather than the one being executed, type its

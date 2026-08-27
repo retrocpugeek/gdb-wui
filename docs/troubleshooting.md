@@ -9,6 +9,27 @@ nav_order: 6
 Errors you may see, and what they mean. Most are gdb's or Ghidra's own messages,
 passed through unchanged, so they sometimes need translating.
 
+## The decompiler needs 12.1.2 or newer
+
+```
+decompilation unavailable: ghidra: /opt/ghidra_12.0.4_PUBLIC is Ghidra 12.0.4,
+and the decompiler needs 12.1.2 or newer; unpack a newer release and point
+-ghidra or GHIDRA_INSTALL_DIR at it
+```
+
+Unpack Ghidra 12.1.2 or later from [ghidra-sre.org](https://ghidra-sre.org/) and
+point `-ghidra` at that instead. The scripts gdb-wui runs inside Ghidra call
+`DecompileOptions.setCommentIndent`, which arrived in 12.1, so against an older
+release they do not compile and the Decompiled tab never gets a decompiler.
+
+gdb-wui reads the version and refuses at startup because Ghidra's own failure
+says nothing useful. What reaches `application.log` is a bare
+`ClassNotFoundException: DecompServer not found by <hash> [1]` from the OSGi
+class loader, which reads like a bundle wiring problem; the javac errors that
+actually explain it go to `analyzeHeadless`'s standard output and are never
+logged. If you are reading a log from an older gdb-wui, they are in gdb-wui's
+own output just above `ERROR REPORT SCRIPT ERROR`.
+
 ## Path element starting with '.' is not permitted
 
 ```

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -21,6 +22,21 @@ const analyzeHeadless = "support/analyzeHeadless"
 // EnvInstall is the variable Ghidra's own tooling uses. Honouring it means a
 // machine already set up for Ghidra development needs no flag.
 const EnvInstall = "GHIDRA_INSTALL_DIR"
+
+// MinVersion is the oldest Ghidra the embedded scripts compile against.
+//
+// The boundary is DecompileOptions.setCommentIndent, which DecompServer.java
+// and ExportDecomp.java both call and which arrived in Ghidra 12.1. Against
+// 12.0.4 javac fails on those two files, Ghidra logs "skipping
+// .../DecompServer.java", and the bundle is built without the class — so
+// loading it throws ClassNotFoundException from the OSGi loader, which is
+// finding 28 and reads like a Felix wiring problem rather than a missing
+// method.
+//
+// 12.1.2 rather than 12.1, because 12.1.2 is the oldest release the scripts are
+// actually tested against. 12.1.0 and 12.1.1 probably work and are not claimed
+// to.
+const MinVersion = "12.1.2"
 
 // EnvMaxMem and EnvHeadlessMaxMem raise the JVM heap. analyzeHeadless defaults
 // to 2 GB, which a large image exhausts during analysis, and reads these two to
@@ -136,6 +152,64 @@ func readVersion(dir string) string {
 		}
 	}
 	return ""
+}
+
+// CheckVersion rejects an installation too old to run the embedded scripts.
+//
+// Checked here rather than left to Ghidra, because Ghidra's own failure names
+// neither the version nor the method it is missing: the javac errors that
+// explain it go to analyzeHeadless's stdout and never reach application.log,
+// so what survives in the log is a bare ClassNotFoundException. See MinVersion.
+//
+// A version that cannot be read or cannot be parsed is allowed through. It
+// costs the check, not the feature — the same trade readVersion makes — and a
+// release that numbers itself in some new way should not be refused for it.
+func CheckVersion(in *Install) error {
+	if in == nil || in.Version == "" {
+		return nil
+	}
+	cmp, ok := compareVersions(in.Version, MinVersion)
+	if !ok || cmp >= 0 {
+		return nil
+	}
+	return fmt.Errorf("ghidra: %s is Ghidra %s, and the decompiler needs %s or newer; "+
+		"unpack a newer release and point -ghidra or %s at it",
+		in.Dir, in.Version, MinVersion, EnvInstall)
+}
+
+// compareVersions orders two dotted numeric versions, reporting false if either
+// is not one. A missing component counts as zero, so 12.1 is older than 12.1.2.
+func compareVersions(a, b string) (int, bool) {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		an, ok := component(as, i)
+		if !ok {
+			return 0, false
+		}
+		bn, ok := component(bs, i)
+		if !ok {
+			return 0, false
+		}
+		switch {
+		case an < bn:
+			return -1, true
+		case an > bn:
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+// component reads one version component, absent meaning zero.
+func component(parts []string, i int) (int, bool) {
+	if i >= len(parts) {
+		return 0, true
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(parts[i]))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // CheckProjectPath rejects a path Ghidra will not accept as a project location.

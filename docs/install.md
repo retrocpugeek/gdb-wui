@@ -49,6 +49,10 @@ Ghidra is used only by the [Decompiled tab](features/decompilation.md). If you
 do not install it, everything else works as normal and no warning appears until
 you open that tab.
 
+Use Ghidra 12.1.2 or newer. Older releases are refused at startup, because the
+scripts gdb-wui runs inside Ghidra call a decompiler option that arrived in
+12.1 and will not compile without it.
+
 Ghidra is an 884 MB install and needs a system JDK 21 or later. Download a
 release from [ghidra-sre.org](https://ghidra-sre.org/), unpack it, and either
 set `GHIDRA_INSTALL_DIR` or pass the `-ghidra` argument:
