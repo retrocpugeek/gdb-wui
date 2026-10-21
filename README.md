@@ -6,6 +6,11 @@ debugging.
 
 **📖 [Documentation, with screenshots](https://retrocpugeek.github.io/gdb-wui/)**
 
+**▶ Try it live in your browser**, with nothing to install: gdb-wui and gdb on
+an emulated [ARM64](https://v86-arm.turret13.workers.dev/?build=gdb-wui) or
+[RISC-V](https://v86-riscv.turret13.workers.dev/?build=gdb-wui) Linux machine
+([what's there](https://retrocpugeek.github.io/gdb-wui/try-online.html)).
+
 ```sh
 go build ./cmd/gdb-wui
 ./gdb-wui -project /path/to/your/repo
