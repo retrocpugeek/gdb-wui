@@ -19,6 +19,11 @@ gdb-wui prints a URL and opens a browser at it. To start debugging, pick an
 executable from the file tree, click a line number to set a breakpoint, and
 step.
 
+**Or [try it in your browser](try-online.md)**, with nothing to install: gdb-wui
+and gdb on an emulated
+[ARM64](https://v86-arm.turret13.workers.dev/?build=gdb-wui) or
+[RISC-V](https://v86-riscv.turret13.workers.dev/?build=gdb-wui) Linux machine.
+
 [![The whole window, stopped at a breakpoint](images/overview.png)](images/overview.png)
 
 {: .warning }
@@ -51,6 +56,8 @@ neither can gdb-wui.
 
 ## Where to start
 
+- **[Try it in your browser](try-online.md)** — gdb-wui on an emulated Linux
+  machine, with programs to debug, before you install anything.
 - **[Install](install.md)** — what you need, and what is optional.
 - **[A first session](tour.md)** — load a program, break, step and inspect it, in
   about five minutes, using a program in this repository.
