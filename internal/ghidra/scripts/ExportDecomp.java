@@ -18,6 +18,13 @@
 // and line numbers from one PrettyPrinter pass, and per-line address *sets*
 // rather than ranges — are in docs/decompilation.md and DecompJson.java.
 //
+// Before the decompiled functions come two indexes, so that gdb-wui can serve
+// an export in place of a resident Ghidra (-ghidra-exports): "index" is every
+// function, decompiled or not — thunks, and any the decompiler refused — with
+// its signature and the address ranges of its body, which is what naming a
+// stack frame and finding the function under a program counter need; "data"
+// is the named globals, as the server's "data" op lists them.
+//
 //@category gdb-wui
 
 import java.io.BufferedWriter;
@@ -31,7 +38,9 @@ import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.script.GhidraScript;
+import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.symbol.Symbol;
 
 public class ExportDecomp extends GhidraScript {
 
@@ -86,6 +95,8 @@ public class ExportDecomp extends GhidraScript {
 				DecompJson.str(ghidra.framework.Application.getApplicationVersion()) +
 				", \"script\": \"ExportDecomp\"},");
 			out.println("  \"program\": " + DecompJson.program(currentProgram) + ",");
+			writeIndex(out);
+			writeData(out);
 			out.println("  \"functions\": [");
 
 			boolean first = true;
@@ -126,5 +137,48 @@ public class ExportDecomp extends GhidraScript {
 		long ms = System.currentTimeMillis() - started;
 		println("ExportDecomp: wrote " + args[0] + " — " + done + " function(s), " +
 			failed + " failed, " + ms + " ms");
+	}
+
+	// writeIndex lists every function in address order, decompiled or not.
+	private void writeIndex(PrintWriter out) {
+		out.println("  \"index\": [");
+		boolean first = true;
+		for (Function f : currentProgram.getFunctionManager().getFunctions(true)) {
+			if (f.isExternal()) {
+				continue;
+			}
+			StringBuilder b = new StringBuilder();
+			b.append("{\"name\":").append(DecompJson.str(f.getName()));
+			b.append(",\"entry\":").append(DecompJson.str(DecompJson.hex(f.getEntryPoint())));
+			b.append(",\"thunk\":").append(f.isThunk());
+			b.append(",\"signature\":").append(DecompJson.str(f.getPrototypeString(true, false)));
+			b.append(",\"ranges\":[");
+			boolean firstRange = true;
+			for (AddressRange r : f.getBody().getAddressRanges()) {
+				if (!firstRange) {
+					b.append(",");
+				}
+				firstRange = false;
+				b.append("[").append(DecompJson.str(DecompJson.hex(r.getMinAddress())));
+				b.append(",").append(DecompJson.str(DecompJson.hex(r.getMaxAddress()))).append("]");
+			}
+			b.append("]}");
+			out.print((first ? "" : ",\n") + "    " + b);
+			first = false;
+		}
+		out.println();
+		out.println("  ],");
+	}
+
+	// writeData lists the named globals, as DecompServer's "data" op does.
+	private void writeData(PrintWriter out) {
+		out.println("  \"data\": [");
+		boolean first = true;
+		for (Symbol sym : DecompJson.dataSymbols(currentProgram, null)) {
+			out.print((first ? "" : ",\n") + "    " + DecompJson.dataRef(currentProgram, sym));
+			first = false;
+		}
+		out.println();
+		out.println("  ],");
 	}
 }
