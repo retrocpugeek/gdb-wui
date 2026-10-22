@@ -134,6 +134,7 @@ func (s *Session) onStopped(rec mi.Record) {
 	s.st.stopSeq++
 
 	if strings.HasPrefix(reason, "exited") {
+		s.st.deferredStart = nil
 		var code *int
 		if raw, ok := rec.Results.StrOK("exit-code"); ok {
 			// gdb reports the exit code in octal, as "01" or "0".
@@ -160,6 +161,12 @@ func (s *Session) onStopped(rec mi.Record) {
 	// would otherwise wedge the whole session with no way back.
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.CommandTimeout)
 	defer cancel()
+
+	// A run that stopped at its first instruction only to place breakpoints
+	// on decompiler names goes on once they are placed (deferredbp.go).
+	if s.finishDeferredStart(ctx) {
+		return
+	}
 
 	out := wire.Stopped{
 		StopSeq:       s.st.stopSeq,

@@ -58,6 +58,15 @@ and no locals to wait for — and the arguments are still in the registers the
 calling convention put them in, which on that binary is the only place you were
 going to read them.
 
+Set one before the program has started and it is listed as **pending** until
+the program is loaded. A position-independent executable — what gcc builds by
+default — runs somewhere other than the addresses Ghidra knows it by, and where
+is only known once it is loaded; a breakpoint placed at the address Ghidra
+gives would be in the wrong place. So a run with one of these starts at the
+program's first instruction, places it at the address the program was loaded
+at, and carries on to wherever you were running to. **Run→entry** stops there
+as usual, with the breakpoint already placed.
+
 ## How breakpoints are named
 
 Each row is named the best way anything can name it: a file and a line where
