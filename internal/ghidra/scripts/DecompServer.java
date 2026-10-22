@@ -1111,110 +1111,18 @@ public class DecompServer extends GhidraScript {
 		if (limit <= 0 || limit > 5000) {
 			limit = 500;
 		}
-		String needle = filter == null ? "" : filter.toLowerCase();
-		List<Symbol> all = new ArrayList<>();
-		Set<Address> seen = new HashSet<>();
-
-		// Referenced addresses first, and this is the load-bearing half.
-		//
-		// A DAT_ label is not in the symbol table. Ghidra generates it on
-		// demand for an address something points at, and getDefinedSymbols()
-		// deliberately leaves those out — so enumerating the symbol table finds
-		// every global that has been renamed and none that has not, which is
-		// exactly backwards for a stripped binary. Measured: a fixture with one
-		// global answered with an empty list. What creates the name is a
-		// reference, so references are what to walk.
-		AddressIterator refs = currentProgram.getReferenceManager()
-			.getReferenceDestinationIterator(currentProgram.getMemory(), true);
-		while (refs.hasNext()) {
-			collectData(all, seen, refs.next(), needle);
-		}
-		// And then the symbol table, for data nothing points at: an ELF symbol
-		// for a global the code reaches through a computed address, and any
-		// label somebody made by hand.
-		for (Symbol sym : currentProgram.getSymbolTable().getDefinedSymbols()) {
-			if (!sym.isExternal() && sym.getSymbolType() == SymbolType.LABEL) {
-				collectData(all, seen, sym.getAddress(), needle);
-			}
-		}
-		// Address order, because the table is an index into a program and
-		// neither of those two walks is in one a reader could predict.
-		all.sort((a, b) -> a.getAddress().compareTo(b.getAddress()));
-
-		Listing listing = currentProgram.getListing();
+		List<Symbol> all = DecompJson.dataSymbols(currentProgram, filter);
 		StringBuilder b = new StringBuilder();
 		b.append("{\"id\":").append(id).append(",\"ok\":true,\"total\":").append(all.size());
 		b.append(",\"offset\":").append(offset).append(",\"data\":[");
 		for (int i = offset; i < Math.min(all.size(), offset + limit); i++) {
-			Symbol sym = all.get(i);
 			if (i > offset) {
 				b.append(",");
 			}
-			b.append("{\"name\":").append(DecompJson.str(sym.getName()));
-			b.append(",\"address\":").append(
-				DecompJson.str(DecompJson.hex(sym.getAddress())));
-			// The type only for the page being sent, since it costs a listing
-			// lookup each: a table typed char *[5] is worth showing, and asking
-			// for it across the whole program to render twenty rows is not.
-			Data at = listing.getDataAt(sym.getAddress());
-			b.append(",\"type\":").append(DecompJson.str(
-				at != null && at.isDefined() && at.getDataType() != null
-					? at.getDataType().getDisplayName()
-					: ""));
-			// How far the label runs, for a caller that has an address and wants
-			// the name it falls inside — a memory viewer's symbol column, which
-			// is the same question gdb answers with <name+off>.
-			//
-			// Zero when the bytes are undefined, and that is not the same as a
-			// length of one. getLength() answers 1 for an unanalysed byte, which
-			// is a fact about how Ghidra represents it rather than about the
-			// program: applet_names is a 1954-byte table and Ghidra calls it one
-			// undefined byte until somebody types it. Reporting 0 lets the
-			// caller say "this address, and nothing about what follows it"
-			// instead of claiming the label covers exactly one byte.
-			b.append(",\"length\":").append(
-				at != null && at.isDefined() ? at.getLength() : 0);
-			b.append("}");
+			b.append(DecompJson.dataRef(currentProgram, all.get(i)));
 		}
 		b.append("]}");
 		return send(b.toString());
-	}
-
-	// collectData takes one address if it is a global with a name.
-	//
-	// getPrimarySymbol answers with the generated DAT_ for an address that has
-	// no stored symbol, which is the whole reason this goes through the symbol
-	// table rather than reading labels: the name a reader sees in the
-	// decompiled text is the one that has to be findable here.
-	private void collectData(List<Symbol> into, Set<Address> seen, Address at, String needle) {
-		if (at == null || !at.isMemoryAddress() || !seen.add(at)) {
-			return;
-		}
-		// Only what the loader actually maps. Ghidra parses an ELF's own headers
-		// into blocks of their own and labels them — Elf64_Phdr_ARRAY,
-		// DAT_.shstrtab, ElfComment — and those are a description of the file
-		// rather than anything in the running program. They are not at any
-		// address gdb can read, they answer to no name a reader has seen, and
-		// there are enough of them to push the real globals off the first
-		// screenful of a search.
-		MemoryBlock block = currentProgram.getMemory().getBlock(at);
-		if (block == null || !block.isLoaded()) {
-			return;
-		}
-		if (currentProgram.getFunctionManager().getFunctionContaining(at) != null) {
-			// Code. A label inside a function body is a LAB_ jump target, there
-			// are far more of them than there are globals, and none of them is
-			// what anybody means by a name for a piece of data.
-			return;
-		}
-		Symbol sym = currentProgram.getSymbolTable().getPrimarySymbol(at);
-		if (sym == null || sym.isExternal() || sym.getSymbolType() == SymbolType.FUNCTION) {
-			return;
-		}
-		if (!needle.isEmpty() && !sym.getName().toLowerCase().contains(needle)) {
-			return;
-		}
-		into.add(sym);
 	}
 
 	private int countFunctions() {

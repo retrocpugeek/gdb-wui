@@ -249,6 +249,43 @@ open. Such an image also needs `-ghidra-processor` to say what its bytes are
 and `-ghidra-base` to say where they run, since nothing in the file does.
 See [a kernel image gdb will not load](kernel.md#decompiling-a-kernel-image-gdb-will-not-load).
 
+## Decompiling without Ghidra: sidecars
+
+Ghidra wants a desktop: an 884 MB install, a JDK, a gigabyte or two of memory
+and minutes of analysis. The machine being debugged is often none of those — a
+single-board computer, a router, an emulator. A **sidecar** is the whole
+decompilation of one binary in a file: written once on a machine that has
+Ghidra, it is shown on any other, with no Ghidra there at all.
+
+```sh
+# where Ghidra is
+./gdb-wui -ghidra ~/ghidra -write-sidecar build/firmware -decomp-sidecars sidecars/
+# anywhere else, Ghidra or not
+./gdb-wui -project . -exe firmware -decomp-sidecars sidecars/
+```
+
+`-write-sidecar` analyses the file in a project of its own, decompiles every
+function, writes `firmware.decomp.json` and exits; it takes the same
+`-ghidra-analysis`, `-ghidra-symbols`, `-ghidra-processor` and `-ghidra-base` as
+an import. That is tens of seconds for a program of a few thousand functions,
+and the file is about four kilobytes per function — ten megabytes for busybox,
+one compressed.
+
+`-decomp-sidecars` names a directory. A sidecar is matched to the program gdb
+loads by the binary's sha256, so names do not matter and a rebuilt binary is
+never shown a stale decompilation; loading another program switches to its
+sidecar. When there is none, the pane says so — or, with `-ghidra` as well,
+Ghidra decompiles it as usual.
+
+Everything the pane does reading a decompilation works from a sidecar: the
+program counter marked, [naming the call stack](#naming-the-call-stack),
+[following a call](#following-a-call), the decompiler's names in the Symbols
+pane, stepping by decompiled line. Changing it does not: renaming, retyping and
+comments need a Ghidra to re-decompile, and a sidecar is read-only.
+
+The format is described in the [decompilation
+reference](https://github.com/retrocpugeek/gdb-wui/blob/master/docs/decompilation.md#the-format).
+
 ## Using an existing Ghidra project
 
 To use names and types you have already created in Ghidra, pass the project and

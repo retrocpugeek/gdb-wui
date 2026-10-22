@@ -142,6 +142,10 @@ type Ready struct {
 	Schema        int     `json:"schema"`
 	Program       Program `json:"program"`
 	FunctionCount int     `json:"functionCount"`
+	// Sidecar is set when the far end is a sidecar (StartExport) rather than a
+	// resident Ghidra: its file name, and the Ghidra version that wrote it.
+	Sidecar        string `json:"sidecar,omitempty"`
+	SidecarVersion string `json:"sidecarVersion,omitempty"`
 }
 
 type reply struct {
@@ -800,6 +804,60 @@ func Import(ctx context.Context, install *Install, projectDir, projectName, bina
 	// the absence of the success line is the real check.
 	if !strings.Contains(string(out), "REPORT: Import succeeded") {
 		return fmt.Errorf("ghidra: importing %s did not report success", binary)
+	}
+	return nil
+}
+
+// ExportSidecar writes the decompilation of a program in a project (one Import
+// made) to out, with ExportDecomp.java: every function decompiled, and the
+// indexes that let an Export serve it in place of a resident Ghidra.
+//
+// Read-only on the project, and as slow as decompiling everything is: tens of
+// seconds for a few thousand functions.
+func ExportSidecar(ctx context.Context, install *Install, projectDir, projectName, program, out string,
+	logf func(string, ...any)) error {
+	if install == nil {
+		return errors.New("ghidra: no installation")
+	}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	abs, err := filepath.Abs(out)
+	if err != nil {
+		return fmt.Errorf("ghidra: %w", err)
+	}
+	dir, err := os.MkdirTemp("", "gdb-wui-export-")
+	if err != nil {
+		return fmt.Errorf("ghidra: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	if err := extractScripts(dir); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, install.Headless, projectDir, projectName,
+		"-process", program, "-noanalysis", "-readOnly",
+		"-scriptPath", dir, "-postScript", "ExportDecomp.java", abs)
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"JAVA_HOME=" + os.Getenv("JAVA_HOME"),
+		"LC_ALL=C",
+		"LANG=C",
+	}
+	cmd.Env = append(cmd.Env, heapEnv()...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	output, err := cmd.CombinedOutput()
+	for _, line := range strings.Split(string(output), "\n") {
+		if line != "" {
+			logf("ghidra export: %s", line)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("ghidra: exporting %s: %w", program, err)
+	}
+	// As with Import, the script's own report is the check.
+	if !strings.Contains(string(output), "ExportDecomp: wrote") {
+		return fmt.Errorf("ghidra: exporting %s did not report writing %s", program, out)
 	}
 	return nil
 }

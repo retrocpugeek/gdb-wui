@@ -72,6 +72,13 @@ type DecompConfig struct {
 	// on, so what is given here has to be the address the code actually runs
 	// at. For a kernel that is the link address, and only once the MMU is on.
 	Base string
+	// Sidecars is a directory of decompilations written by ExportDecomp.java
+	// (ghidra.ExportSidecar). One whose program has the sha256 of the binary
+	// gdb loaded is shown instead of running Ghidra, read-only, and needs no
+	// Ghidra installed at all: decompiled on a workstation, it can be read on
+	// a machine that could never run Ghidra. Loading another program switches
+	// to its sidecar. Without one, Install (if set) decompiles as usual.
+	Sidecars string
 	// Unavailable says why the feature is off despite having been asked for,
 	// when Install is nil because something about the installation was
 	// rejected rather than absent. It reaches the pane instead of the generic
@@ -200,6 +207,16 @@ type decomp struct {
 	// stable; its address has to be asked for again.
 	biasFrom string
 	biasAddr uint64
+	// sidecar is the file client is serving when it is a sidecar rather than
+	// a Ghidra, and sidecarMiss is set when there was none for the loaded
+	// program. Either way loading another program starts over
+	// (switchSidecar): a sidecar describes one binary, and costs nothing to
+	// replace.
+	sidecar     string
+	sidecarMiss bool
+	// loads counts programs loaded. A sidecar that finishes starting after
+	// another program was loaded describes the wrong one, and is dropped.
+	loads uint64
 	// index is every name the decompiler knows — its functions and its
 	// module-scope labels — in Ghidra's coordinates, with indexBy mapping a
 	// name to its position, indexAt mapping a label's address to it, and
@@ -225,7 +242,7 @@ type decomp struct {
 // thing to spawn.
 func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 	cfg := s.cfg.Decomp
-	if cfg.Install == nil {
+	if cfg.Install == nil && cfg.Sidecars == "" {
 		reason := cfg.Unavailable
 		if reason == "" {
 			reason = "no Ghidra installation configured; pass -ghidra or set " +
@@ -244,10 +261,17 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 	if state == "" {
 		state = wire.DecompOff
 	}
+	version := ""
+	if cfg.Install != nil {
+		version = cfg.Install.Version
+	}
+	if client != nil && client.Ready().Sidecar != "" {
+		version = client.Ready().SidecarVersion
+	}
 	out := wire.DecompStatus{
 		State:         state,
 		Error:         errText,
-		GhidraVersion: cfg.Install.Version,
+		GhidraVersion: version,
 		Editable:      writable,
 		// What one undo would reverse. Sent unasked because the client has to
 		// offer it before anything goes wrong: an agent that has just written
@@ -290,7 +314,7 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 // launches may not, and everything it needs is captured first.
 func (s *Session) maybeStartDecomp() {
 	cfg := s.cfg.Decomp
-	if cfg.Install == nil {
+	if cfg.Install == nil && cfg.Sidecars == "" {
 		return
 	}
 	// Once one is running, starting or has failed there is nothing to do, and
@@ -305,6 +329,33 @@ func (s *Session) maybeStartDecomp() {
 	s.decomp.mu.Unlock()
 	if busy {
 		return
+	}
+	// A sidecar for the program gdb loaded, if there is one, before anything
+	// that would start a Ghidra.
+	if cfg.Sidecars != "" && cfg.ProjectDir == "" && cfg.Binary == "" {
+		if s.st.exeSHA256 == "" {
+			// Nothing loaded yet to look one up for.
+			return
+		}
+		path, err := ghidra.FindExport(cfg.Sidecars, s.st.exeSHA256)
+		if err != nil {
+			s.logf("decompilation: -decomp-sidecars: %v", err)
+		}
+		if path != "" {
+			s.startSidecar(path)
+			return
+		}
+		if cfg.Install == nil {
+			err := fmt.Sprintf("no decompilation of %s (sha256 %s) in %s",
+				filepath.Base(s.st.exePath), short(s.st.exeSHA256), cfg.Sidecars)
+			s.decomp.mu.Lock()
+			s.decomp.state = wire.DecompFailed
+			s.decomp.err = err
+			s.decomp.sidecarMiss = true
+			s.decomp.mu.Unlock()
+			s.decompLog(wire.DecompLogInfo, "%s", err)
+			return
+		}
 	}
 	// With no configured project, decompile whatever gdb has loaded. Resolved
 	// here rather than at startup because the executable is usually chosen
@@ -532,6 +583,92 @@ func (s *Session) maybeStartDecomp() {
 			go s.watchDecomp(client)
 		}
 	}()
+}
+
+// startSidecar serves a sidecar in the background, as maybeStartDecomp starts
+// a Ghidra. Fast — it reads the file once to index it — but still off the
+// actor, since a large program's sidecar is tens of megabytes.
+func (s *Session) startSidecar(path string) {
+	s.decomp.mu.Lock()
+	s.decomp.starting = true
+	s.decomp.state = wire.DecompStarting
+	loads := s.decomp.loads
+	s.decomp.mu.Unlock()
+	go func() {
+		started := time.Now()
+		client, err := ghidra.StartExport(context.Background(), path, ghidra.Options{
+			Timeout: time.Minute,
+			Logf:    s.ghidraProcessLog,
+		})
+		s.decomp.mu.Lock()
+		s.decomp.starting = false
+		closed := s.decomp.closed
+		// Another program was loaded while this one's sidecar was read: back
+		// to not started, so the next look finds that program's instead.
+		stale := s.decomp.loads != loads
+		switch {
+		case closed:
+			s.decomp.state = wire.DecompOff
+		case stale:
+			s.decomp.state = ""
+			s.decomp.err = ""
+		case err != nil:
+			s.decomp.state = wire.DecompFailed
+			s.decomp.err = err.Error()
+		default:
+			s.decomp.state = wire.DecompReady
+			s.decomp.err = ""
+			s.decomp.client = client
+			s.decomp.writable = false
+			s.decomp.sidecar = path
+		}
+		s.decomp.mu.Unlock()
+		switch {
+		case closed || stale:
+			if client != nil {
+				_ = client.Close()
+			}
+			if stale {
+				s.emitOffActor(wire.EventDecompChanged, map[string]any{})
+			}
+			return
+		case err != nil:
+			s.decompLog(wire.DecompLogError, "cannot read %s: %v", path, err)
+		default:
+			r := client.Ready()
+			s.decompLogTimed(wire.DecompLogInfo, time.Since(started).Milliseconds(),
+				"showing %s, decompiled by Ghidra %s — %s, %s, %d functions; read-only",
+				r.Sidecar, r.SidecarVersion, r.Program.Name, r.Program.LanguageID, r.FunctionCount)
+			go s.watchDecomp(client)
+		}
+		s.emitOffActor(wire.EventDecompChanged, map[string]any{})
+	}()
+}
+
+// switchSidecar puts the decompiler back to not started when a program is
+// loaded, if what it showed came from a sidecar (or there was none): the next
+// look finds the new program's. A Ghidra, which took minutes to analyse its
+// binary, is kept, and its mismatch warning says what it is showing.
+func (s *Session) switchSidecar() {
+	s.decomp.mu.Lock()
+	// A sidecar still starting notices this when it finishes (startSidecar).
+	s.decomp.loads++
+	if s.decomp.starting || (s.decomp.sidecar == "" && !s.decomp.sidecarMiss) {
+		s.decomp.mu.Unlock()
+		return
+	}
+	client := s.decomp.client
+	s.decomp.client = nil
+	s.decomp.state = ""
+	s.decomp.err = ""
+	s.decomp.sidecar = ""
+	s.decomp.sidecarMiss = false
+	s.decomp.biasFrom, s.decomp.biasAddr = "", 0
+	s.decomp.mu.Unlock()
+	if client != nil {
+		_ = client.Close()
+	}
+	s.emit(wire.EventDecompChanged, map[string]any{})
 }
 
 func (s *Session) watchDecomp(client *ghidra.Client) {
