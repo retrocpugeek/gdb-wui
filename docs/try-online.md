@@ -42,20 +42,31 @@ could never run on the emulated machine. Each program was decompiled by Ghidra
 when the image was built, into a [sidecar](features/decompilation.md#decompiling-without-ghidra-sidecars),
 and gdb-wui shows the one whose sha256 matches the program it loads.
 
-That includes **busybox** — the real one, Buildroot's build with its symbols,
-a few thousand functions. Click it in the file tree, and in the gdb console
-type
+That includes **busybox** — the machine's own `/bin/busybox`, a few thousand
+functions and stripped: gdb knows not one name in it, so every name you see is
+Ghidra's. To follow `ls -l /` into it:
 
-```
-set args ls -l /
-break ls_main
-```
+1. Click **busybox** in the file tree, and in the gdb console type
+   `set args ls -l /`.
+2. Click **Run→entry**. That starts the program, stopped in the dynamic loader,
+   and it has to be started before a decompiler address means anything:
+   busybox is position-independent, so where it runs is only known once it is
+   loaded.
+3. In **Symbols**, type `entry`, right-click it, choose **Set breakpoint**, and
+   continue (▶). The **Decompiled** tab shows `entry` handing `main` to
+   `__libc_start_main` along with `argc`. Ghidra names one or the other: on
+   RISC-V it is `FUN_ram_0010b940(main, …)`, on ARM64
+   `__libc_start_main(FUN_0010d620, …)`.
+4. Set a breakpoint on that function the same way, from **Symbols**, and
+   continue. You are in busybox's `main`, recovered from a binary with no
+   symbols: two calls to `mallopt` (unnamed stubs on RISC-V), a call with
+   `"busybox"` (that is `lbb_prepare`), and
+   `argv[0]` stored in a `DAT_` global (that is `applet_name`), with the
+   program counter marked and the call stack named by the decompiler.
 
-then click **Run** and open **Decompiled**: it stops in `ls_main`, ls's own
-function, with the program counter marked in Ghidra's C and
-`run_applet_no_and_exit` below it on the call stack. The first function takes
-a few seconds while gdb-wui indexes the ten-megabyte sidecar; after that each
-one is read from it as you go. Press ▶ to let `ls` finish, or step through it.
+The first function takes a few seconds while gdb-wui indexes the
+nine-megabyte sidecar; after that each one is read from it as you go. Press ▶
+to let `ls` finish.
 
 ## Debugging through gdbserver
 
