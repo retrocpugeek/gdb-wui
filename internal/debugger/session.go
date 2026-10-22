@@ -561,6 +561,8 @@ func (s *Session) dispatch(r *request) (any, *wire.Error) {
 		return s.decompComment(r)
 	case wire.TypeDecompUndo:
 		return s.decompUndoLast(r)
+	case wire.TypeDecompUse:
+		return s.decompUse(r)
 
 	case wire.TypePathSubstitute:
 		return s.pathSubstitute(r)
@@ -625,7 +627,7 @@ func (s *Session) gate(typ string) *wire.Error {
 		// the inferior, and reading a running program's disassembly is exactly
 		// when someone works out what a function is called.
 		wire.TypeDecompRename, wire.TypeDecompRetype, wire.TypeDecompComment,
-		wire.TypeDecompUndo:
+		wire.TypeDecompUndo, wire.TypeDecompUse:
 		return nil
 	}
 

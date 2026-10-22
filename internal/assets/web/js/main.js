@@ -49,6 +49,8 @@ const ui = {
   sourceMeta: el("source-meta"),
   sourcePathB: el("source-path-b"),
   sourceMetaB: el("source-meta-b"),
+  decompPick: el("decomp-pick"),
+  decompPickB: el("decomp-pick-b"),
   centre: el("center"),
   splitBtn: el("btn-split"),
   splitOrientBtn: el("btn-split-orient"),
@@ -482,7 +484,8 @@ function decompEditTarget(ev) {
 function decompEditItems(target) {
   if (!target) return [];
   const st = store.get("session.decomp");
-  const why = st?.editable ? "" :
+  const why = st?.editable ? "" : st?.decompiler === "kuna"
+    ? "kuna keeps no database for an edit to go into" :
     "this Ghidra project is yours; gdb-wui only edits the one it imported itself";
   const items = [];
   const { fn, sym } = target;
@@ -606,7 +609,8 @@ ui.stack.addEventListener("contextmenu", (ev) => {
   hover.hide();
 
   const st = store.get("session.decomp");
-  const why = st?.editable ? "" :
+  const why = st?.editable ? "" : st?.decompiler === "kuna"
+    ? "kuna keeps no database for an edit to go into" :
     "this Ghidra project is yours; gdb-wui only edits the one it imported itself";
   showContextMenu(ev.clientX, ev.clientY, found.name, [{
     label: `Rename ${found.name}…`,
@@ -1028,8 +1032,16 @@ function handleEvent(msg) {
       // looking when it finishes; the pane fills itself instead.
       symbols.refresh();
       refreshDecompStatus().then((st) => {
+        updateCenterMeta();
         if (st?.state === "ready" && centre.isVisible("decomp")) {
-          refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address);
+          if (decompAfterSwitch) {
+            const entry = decompAfterSwitch;
+            decompAfterSwitch = null;
+            fetchDecomp(entry).catch(() =>
+              refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address));
+          } else {
+            refreshDecomp(stack.frameAt(store.get("selection.frame"))?.address);
+          }
         }
       });
       break;
@@ -2285,6 +2297,15 @@ function refreshDisasm(pc) {
 // updateCenterMeta labels each slot with what its own view is showing. Split,
 // there are two headers and one shared line cannot say which is which.
 function updateCenterMeta() {
+  // The decompiler picker belongs to whichever slot shows the decompiled view,
+  // and only when there is a choice to make.
+  const st = store.get("session.decomp");
+  const choices = st?.decompilers ?? [];
+  const pickSlot = choices.length > 1 && centre.isVisible("decomp") ? centre.slotOf("decomp") : null;
+  for (const [slot, pick] of [["a", ui.decompPick], ["b", ui.decompPickB]]) {
+    pick.classList.toggle("is-hidden", slot !== pickSlot);
+    if (slot === pickSlot && st?.decompiler && pick.value !== st.decompiler) pick.value = st.decompiler;
+  }
   for (const name of centre.visible()) {
     const slot = centre.slotOf(name);
     const path = slot === "b" ? ui.sourcePathB : ui.sourcePath;
@@ -2370,6 +2391,11 @@ function refreshDecomp(pc) {
 function decompMessage(err) {
   const msg = err?.message ?? String(err);
   if (/still starting/i.test(msg)) {
+    if (store.get("session.decomp")?.decompiler === "kuna") {
+      return "kuna is starting. It indexes the program's functions first, " +
+        "which takes a second or two; served by a web page, the first start " +
+        "also downloads kuna. This pane fills in when it finishes.";
+    }
     return "Ghidra is starting. Importing and analysing a binary takes " +
       "seconds for a small one and minutes for firmware; this pane fills in " +
       "when it finishes.";
@@ -2377,9 +2403,31 @@ function decompMessage(err) {
   if (/no decompiler is configured/i.test(msg)) {
     return "No decompiler configured. Start gdb-wui with -ghidra pointing at " +
       "a Ghidra installation, or set GHIDRA_INSTALL_DIR; or with " +
-      "-decomp-sidecars naming a directory of exported decompilations.";
+      "-decomp-sidecars naming a directory of exported decompilations; or " +
+      "with -kuna, for kuna.";
   }
   return msg;
+}
+
+// useDecompiler switches between Ghidra and kuna. The pane is emptied rather
+// than left showing the other decompiler's text, and filled again by the
+// decompChanged that follows once the new one is ready.
+let decompAfterSwitch = null;
+function useDecompiler(name) {
+  // The same function, in the other decompiler's words: that is the point of
+  // switching.
+  decompAfterSwitch = decomp.shown()?.entry ?? null;
+  send("decomp.use", { decompiler: name })
+    .then((st) => {
+      if (st?.state) store.set("session.decomp", st);
+      decomp.clear();
+      decomp.message(decompMessage({ message: "still starting" }), "src-empty");
+      updateCenterMeta();
+    })
+    .catch((err) => setStatus(err?.message ?? String(err), true));
+}
+for (const pick of [ui.decompPick, ui.decompPickB]) {
+  pick.addEventListener("change", () => useDecompiler(pick.value));
 }
 
 // refreshDecompStatus reports what the decompiler is doing, and the two

@@ -1,0 +1,392 @@
+{
+ "target": {
+  "archid": "AARCH64:LE:64:v8A:default",
+  "processor": "AARCH64",
+  "endian": "little",
+  "bits": 64
+ },
+ "function": {
+  "name": "main",
+  "address": 54816,
+  "kind": "func",
+  "size": 112,
+  "code": "int main(int argc,char **argv,char **envp)\n{\n  char *v1; // x0\n  \n  mallopt(0xffffffff,0x2000);\n  mallopt(0xfffffffd,0x7f00);\n  sub_d100(\"busybox\");\n  v1 = *argv;\n  dat_c7270 = v1;\n  if (*v1 == '-') {\n    v1 = &v1[1];\n    dat_c7270 = v1;\n  }\n  dat_c7270 = (unsigned long)sub_d894(v1);\n  dat_c78c8 = getuid();\n  sub_d274(dat_c7270,argv); // no-return\n}",
+  "error": null,
+  "proto": "int main(int argc,char **argv,char **envp);",
+  "line_mappings": [
+   {
+    "line_number": 5,
+    "addresses": [
+     54840
+    ]
+   },
+   {
+    "line_number": 6,
+    "addresses": [
+     54852
+    ]
+   },
+   {
+    "line_number": 7,
+    "addresses": [
+     54864
+    ]
+   },
+   {
+    "line_number": 8,
+    "addresses": [
+     54868
+    ]
+   },
+   {
+    "line_number": 9,
+    "addresses": [
+     54872
+    ]
+   },
+   {
+    "line_number": 10,
+    "addresses": [
+     54876,
+     54880
+    ]
+   },
+   {
+    "line_number": 11,
+    "addresses": [
+     54888
+    ]
+   },
+   {
+    "line_number": 12,
+    "addresses": [
+     54892
+    ]
+   },
+   {
+    "line_number": 14,
+    "addresses": [
+     54896
+    ]
+   },
+   {
+    "line_number": 15,
+    "addresses": [
+     54904
+    ]
+   },
+   {
+    "line_number": 16,
+    "addresses": [
+     54924
+    ]
+   }
+  ],
+  "variables": [
+   {
+    "name": "argc",
+    "type": "int",
+    "kind": "arg",
+    "arg_index": 0,
+    "stack_offset": null,
+    "size": 4
+   },
+   {
+    "name": "argv",
+    "type": "char **",
+    "kind": "arg",
+    "arg_index": 1,
+    "stack_offset": null,
+    "size": 8
+   },
+   {
+    "name": "envp",
+    "type": "char **",
+    "kind": "arg",
+    "arg_index": 2,
+    "stack_offset": null,
+    "size": 8
+   },
+   {
+    "name": "local_20",
+    "type": "undefined8",
+    "kind": "stack",
+    "arg_index": null,
+    "stack_offset": -32,
+    "size": 8
+   },
+   {
+    "name": "local_18",
+    "type": "undefined8",
+    "kind": "stack",
+    "arg_index": null,
+    "stack_offset": -24,
+    "size": 8
+   },
+   {
+    "name": "local_10",
+    "type": "undefined16",
+    "kind": "stack",
+    "arg_index": null,
+    "stack_offset": -16,
+    "size": 16
+   },
+   {
+    "name": "v1",
+    "type": "char *",
+    "kind": "register",
+    "arg_index": null,
+    "stack_offset": null,
+    "size": 8
+   }
+  ],
+  "globals": [
+   {
+    "name": "dat_c7270",
+    "address": 815728,
+    "declaration": "unsigned long dat_c7270",
+    "size": 8
+   },
+   {
+    "name": "dat_c7270",
+    "address": 815728,
+    "declaration": "char *dat_c7270",
+    "size": 8
+   },
+   {
+    "name": "dat_c78c8",
+    "address": 817352,
+    "declaration": "unsigned int dat_c78c8",
+    "size": 4
+   }
+  ],
+  "frame": {
+   "frame_pointer": null,
+   "stack_pointer": {
+    "register": "sp",
+    "offset": -32
+   },
+   "base": "stack_pointer"
+  },
+  "tokens": [
+   {
+    "line": 1,
+    "text": "argc",
+    "kind": "variable"
+   },
+   {
+    "line": 1,
+    "text": "argv",
+    "kind": "variable"
+   },
+   {
+    "line": 1,
+    "text": "envp",
+    "kind": "variable"
+   },
+   {
+    "line": 3,
+    "text": "v1",
+    "kind": "variable"
+   },
+   {
+    "line": 8,
+    "text": "v1",
+    "kind": "variable",
+    "address": 54868
+   },
+   {
+    "line": 8,
+    "text": "argv",
+    "kind": "variable",
+    "address": 54868
+   },
+   {
+    "line": 9,
+    "text": "dat_c7270",
+    "kind": "variable",
+    "address": 54872
+   },
+   {
+    "line": 9,
+    "text": "v1",
+    "kind": "variable",
+    "address": 54872
+   },
+   {
+    "line": 10,
+    "text": "v1",
+    "kind": "variable",
+    "address": 54876
+   },
+   {
+    "line": 11,
+    "text": "v1",
+    "kind": "variable",
+    "address": 54888
+   },
+   {
+    "line": 11,
+    "text": "v1",
+    "kind": "variable",
+    "address": 54888
+   },
+   {
+    "line": 12,
+    "text": "dat_c7270",
+    "kind": "variable",
+    "address": 54892
+   },
+   {
+    "line": 12,
+    "text": "v1",
+    "kind": "variable",
+    "address": 54892
+   },
+   {
+    "line": 14,
+    "text": "dat_c7270",
+    "kind": "variable",
+    "address": 54896
+   },
+   {
+    "line": 14,
+    "text": "v1",
+    "kind": "variable",
+    "address": 54896
+   },
+   {
+    "line": 15,
+    "text": "dat_c78c8",
+    "kind": "variable",
+    "address": 54904
+   },
+   {
+    "line": 16,
+    "text": "dat_c7270",
+    "kind": "variable",
+    "address": 54924
+   },
+   {
+    "line": 16,
+    "text": "argv",
+    "kind": "variable",
+    "address": 54924
+   }
+  ],
+  "instructions": [
+   {
+    "address": 54816,
+    "size": 4
+   },
+   {
+    "address": 54820,
+    "size": 4
+   },
+   {
+    "address": 54824,
+    "size": 4
+   },
+   {
+    "address": 54828,
+    "size": 4
+   },
+   {
+    "address": 54832,
+    "size": 4
+   },
+   {
+    "address": 54836,
+    "size": 4
+   },
+   {
+    "address": 54840,
+    "size": 4
+   },
+   {
+    "address": 54844,
+    "size": 4
+   },
+   {
+    "address": 54848,
+    "size": 4
+   },
+   {
+    "address": 54852,
+    "size": 4
+   },
+   {
+    "address": 54856,
+    "size": 4
+   },
+   {
+    "address": 54860,
+    "size": 4
+   },
+   {
+    "address": 54864,
+    "size": 4
+   },
+   {
+    "address": 54868,
+    "size": 4
+   },
+   {
+    "address": 54872,
+    "size": 4
+   },
+   {
+    "address": 54876,
+    "size": 4
+   },
+   {
+    "address": 54880,
+    "size": 4
+   },
+   {
+    "address": 54884,
+    "size": 4
+   },
+   {
+    "address": 54888,
+    "size": 4
+   },
+   {
+    "address": 54892,
+    "size": 4
+   },
+   {
+    "address": 54896,
+    "size": 4
+   },
+   {
+    "address": 54900,
+    "size": 4
+   },
+   {
+    "address": 54904,
+    "size": 4
+   },
+   {
+    "address": 54908,
+    "size": 4
+   },
+   {
+    "address": 54912,
+    "size": 4
+   },
+   {
+    "address": 54916,
+    "size": 4
+   },
+   {
+    "address": 54920,
+    "size": 4
+   },
+   {
+    "address": 54924,
+    "size": 4
+   }
+  ]
+ }
+}

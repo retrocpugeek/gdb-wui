@@ -6,8 +6,8 @@ import "strings"
 // source. gdb stays in charge — this is a view, not a second debugger.
 //
 // The producer is Ghidra, running as a separate process that gdb-wui
-// supervises. Everything here is a projection of the sidecar schema documented
-// in docs/decompilation.md.
+// supervises, or kuna, Ghidra's decompiler ported to Rust. Everything here is
+// a projection of the sidecar schema documented in docs/decompilation.md.
 
 // Request types.
 const (
@@ -18,7 +18,25 @@ const (
 	TypeDecompRetype   = "decomp.retype"
 	TypeDecompComment  = "decomp.comment"
 	TypeDecompUndo     = "decomp.undo"
+	TypeDecompUse      = "decomp.use"
 )
+
+// Decompilers, as decomp.status names them and decomp.use chooses between
+// them.
+const (
+	// DecompilerGhidra is Ghidra, resident or as a sidecar it exported.
+	DecompilerGhidra = "ghidra"
+	// DecompilerKuna is kuna, run natively or by the page an emulated guest
+	// is in.
+	DecompilerKuna = "kuna"
+)
+
+// DecompUseRequest picks the decompiler, when more than one is available
+// (DecompStatus.Decompilers). The one running is stopped and the chosen one
+// started on the program gdb has loaded.
+type DecompUseRequest struct {
+	Decompiler string `json:"decompiler"`
+}
 
 // Events.
 const (
@@ -67,6 +85,12 @@ type DecompStatus struct {
 	// GhidraVersion is part of the cache key as well as a display string: two
 	// Ghidra releases decompile differently.
 	GhidraVersion string `json:"ghidraVersion,omitempty"`
+	// Decompiler is the one in use, DecompilerGhidra or DecompilerKuna, once
+	// one has started.
+	Decompiler string `json:"decompiler,omitempty"`
+	// Decompilers lists what decomp.use can choose between, when that is
+	// more than one.
+	Decompilers []string `json:"decompilers,omitempty"`
 	// Program identifies what the decompiler has open.
 	Program *DecompProgram `json:"program,omitempty"`
 	// FunctionCount is how many functions it knows about.
