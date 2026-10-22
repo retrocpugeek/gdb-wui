@@ -80,6 +80,12 @@ messages.
 
 ## Producing a sidecar by hand
 
+`gdb-wui -ghidra DIR -write-sidecar FILE` does all of this: it imports FILE into
+a project of its own, runs `ExportDecomp.java`, and writes `FILE.decomp.json`.
+`-decomp-sidecars` then shows it with no Ghidra running — see
+[decompiling without Ghidra](features/decompilation.md#decompiling-without-ghidra-sidecars).
+By hand, with a repository checkout:
+
 ```sh
 mkdir -p /tmp/proj
 analyzeHeadless /tmp/proj decomp -import /tmp/tour/globals-nodebug \
@@ -145,6 +151,16 @@ that also needs a system JDK 21 or later, and both have to remain optional.
     "pointerSize": 8,
     "imageBase": "0x100000"
   },
+  "index": [
+    { "name": "inspect", "entry": "0x1011e9", "thunk": false,
+      "signature": "void inspect(config * cfg)",
+      "ranges": [["0x1011e9", "0x10125e"]] },
+    …
+  ],
+  "data": [
+    { "name": "head", "address": "0x104010", "type": "node", "length": 16 },
+    …
+  ],
   "functions": [
     {
       "name": "inspect",
@@ -182,6 +198,16 @@ that also needs a system JDK 21 or later, and both have to remain optional.
 
 Every address is a hex string. A 64-bit address does not survive JSON's
 float64, and this document is for firmware.
+
+`index` is every function in the program, decompiled or not — thunks, and any
+the decompiler refused — with the address ranges of its body, and `data` is the
+named globals as the Symbols pane lists them. They are what lets a sidecar be
+served in place of a resident Ghidra (`-decomp-sidecars`): naming a stack frame
+and finding the function under the program counter need every function, not
+only the decompiled ones. Both come before `functions`, so a reader can index a
+large sidecar without decoding its text; gdb-wui reads a function's record from
+the file when it is shown. A sidecar written before they existed is still read,
+with the functions it decompiled as the whole index and no data.
 
 `schema` is checked, not assumed: a cached sidecar outlives the code that wrote
 it, and a consumer that guesses at unknown fields is a consumer that renders the

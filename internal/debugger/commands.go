@@ -82,6 +82,8 @@ func (s *Session) exeLoad(r *request) (any, *wire.Error) {
 	// it, and reading the file once at load time is cheaper and more truthful
 	// than reading it later, when it may have been rebuilt underneath us.
 	s.st.exeSHA256 = s.hashExe(req.Path)
+	// A sidecar describes one binary; the new one may have its own.
+	s.switchSidecar()
 	s.st.runState = wire.RunStateNoProgram
 	s.st.threads = nil
 	s.st.frames = nil

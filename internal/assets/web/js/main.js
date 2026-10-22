@@ -2376,7 +2376,8 @@ function decompMessage(err) {
   }
   if (/no decompiler is configured/i.test(msg)) {
     return "No decompiler configured. Start gdb-wui with -ghidra pointing at " +
-      "a Ghidra installation, or set GHIDRA_INSTALL_DIR.";
+      "a Ghidra installation, or set GHIDRA_INSTALL_DIR; or with " +
+      "-decomp-sidecars naming a directory of exported decompilations.";
   }
   return msg;
 }

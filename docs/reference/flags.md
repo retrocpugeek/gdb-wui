@@ -33,7 +33,8 @@ nav_order: 1
 
 ## Decompilation
 
-These are all optional, and do nothing without Ghidra. See
+These are all optional, and do nothing without Ghidra — except
+`-decomp-sidecars`, which shows decompilations written beforehand. See
 [decompilation](../features/decompilation.md).
 
 | Flag | What it does |
@@ -47,6 +48,8 @@ These are all optional, and do nothing without Ghidra. See
 | `-ghidra-processor ID` | A Ghidra language ID, as `ARM:LE:32:v7`, saying what the bytes are. Required with `-ghidra-base`, since a raw image says nothing about itself. |
 | `-ghidra-base ADDR` | The address a raw `-ghidra-binary` is loaded at. It imports the file through Ghidra's binary loader, and it is the whole of the mapping between the debugger's addresses and the decompiler's — nothing checks it and nothing corrects it. |
 | `-decomp-dir DIR` | Where to cache projects gdb-wui creates itself. Default `<project>/gdb-wui-decomp`. |
+| `-decomp-sidecars DIR` | A directory of sidecars: decompilations written by `-write-sidecar`. The one whose binary has the sha256 of the program gdb loads is shown, read-only, with no Ghidra needed. See [decompiling without Ghidra](../features/decompilation.md#decompiling-without-ghidra-sidecars). |
+| `-write-sidecar FILE` | Decompile FILE with Ghidra into `FILE.decomp.json`, in `-decomp-sidecars` (default the current directory), and exit. Takes the import flags above. |
 
 {: .warning }
 > `-decomp-dir` must not contain a path element beginning with a dot, because

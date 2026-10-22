@@ -88,6 +88,8 @@ type options struct {
 	ghidraProcessor string
 	ghidraBase      string
 	decompDir       string
+	decompSidecars  string
+	writeSidecar    string
 }
 
 func main() {
@@ -141,6 +143,10 @@ func main() {
 			"binary loader, and it is the whole of the mapping between the debugger's "+
 			"addresses and the decompiler's")
 	flag.StringVar(&opt.decompDir, "decomp-dir", "", "where to cache Ghidra projects gdb-wui creates (default <project>/gdb-wui-decomp)")
+	flag.StringVar(&opt.decompSidecars, "decomp-sidecars", "",
+		"a directory of decompilations written by ExportDecomp.java: the one for the loaded program is shown, read-only, without running Ghidra")
+	flag.StringVar(&opt.writeSidecar, "write-sidecar", "",
+		"decompile FILE with Ghidra into FILE.decomp.json, in -decomp-sidecars (default the current directory), and exit")
 	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
 		"exit after this long with no browser connected (0 disables)")
 	flag.StringVar(&opt.configPath, "config", "",
@@ -211,9 +217,78 @@ func main() {
 		}
 		return
 	}
+	if opt.writeSidecar != "" {
+		if err := writeSidecar(opt); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(opt); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// writeSidecar is -write-sidecar: analyse a binary in a project of its own and
+// export every function, for -decomp-sidecars to show without a Ghidra — on
+// this machine later, or on one that could never run Ghidra.
+func writeSidecar(opt options) error {
+	install, err := ghidra.Locate(opt.ghidraDir)
+	if err != nil {
+		return err
+	}
+	if err := ghidra.CheckVersion(install); err != nil {
+		return err
+	}
+	bin, err := filepath.Abs(opt.writeSidecar)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(bin); err != nil {
+		return err
+	}
+	outDir := opt.decompSidecars
+	if outDir == "" {
+		outDir = "."
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+	out := filepath.Join(outDir, filepath.Base(bin)+".decomp.json")
+	// A project that exists only for this: the sidecar is the product, and a
+	// cached project would be a second copy of the analysis to keep in step.
+	proj, err := os.MkdirTemp("", "gdbwui-sidecar")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(proj)
+	if err := ghidra.CheckProjectPath(proj); err != nil {
+		return err
+	}
+	logf := func(string, ...any) {}
+	if opt.verbose {
+		logf = log.Printf
+	}
+	ctx := context.Background()
+	started := time.Now()
+	log.Printf("analysing %s with Ghidra %s", filepath.Base(bin), install.Version)
+	if err := ghidra.Import(ctx, install, proj, "sidecar", bin, ghidra.ImportOptions{
+		Analysis:  opt.ghidraAnalysis,
+		Symbols:   opt.ghidraSymbols,
+		Processor: opt.ghidraProcessor,
+		Base:      opt.ghidraBase,
+	}, logf); err != nil {
+		return err
+	}
+	log.Printf("decompiling every function")
+	if err := ghidra.ExportSidecar(ctx, install, proj, "sidecar", filepath.Base(bin), out, logf); err != nil {
+		return err
+	}
+	st, err := os.Stat(out)
+	if err != nil {
+		return err
+	}
+	log.Printf("wrote %s (%d KB) in %s", out, st.Size()/1024, time.Since(started).Round(time.Second))
+	return nil
 }
 
 // savePath backs -save-config, which takes an optional value: bare it writes
@@ -740,6 +815,28 @@ func openBrowser(url string, logf func(string, ...any)) {
 // log, not a refusal to start. The UI learns the feature is unavailable from
 // decomp.status and says how to enable it.
 func decompConfig(opt options, projectAbs string, logf func(string, ...any)) debugger.DecompConfig {
+	cfg := ghidraConfig(opt, projectAbs, logf)
+	if opt.decompSidecars != "" {
+		// Checked now, like the Ghidra flags: a directory that is not there
+		// would otherwise only show as every program having no sidecar.
+		abs, err := filepath.Abs(opt.decompSidecars)
+		if err == nil {
+			var st os.FileInfo
+			if st, err = os.Stat(abs); err == nil && !st.IsDir() {
+				err = fmt.Errorf("%s is not a directory", abs)
+			}
+		}
+		if err != nil {
+			logf("decompilation: -decomp-sidecars: %v", err)
+		} else {
+			cfg.Sidecars = abs
+		}
+	}
+	return cfg
+}
+
+// ghidraConfig resolves the Ghidra options, or returns a zero value.
+func ghidraConfig(opt options, projectAbs string, logf func(string, ...any)) debugger.DecompConfig {
 	// Only go looking when asked. Discovering a Ghidra nobody mentioned and
 	// silently offering to spawn a JVM from it is too much initiative.
 	// Every ghidra flag counts as asking, including the two that only modify
