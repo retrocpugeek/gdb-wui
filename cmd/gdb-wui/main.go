@@ -90,6 +90,8 @@ type options struct {
 	decompDir       string
 	decompSidecars  string
 	writeSidecar    string
+	kuna            string
+	kunaSpecs       string
 }
 
 func main() {
@@ -147,6 +149,11 @@ func main() {
 		"a directory of decompilations written by ExportDecomp.java: the one for the loaded program is shown, read-only, without running Ghidra")
 	flag.StringVar(&opt.writeSidecar, "write-sidecar", "",
 		"decompile FILE with Ghidra into FILE.decomp.json, in -decomp-sidecars (default the current directory), and exit")
+	flag.StringVar(&opt.kuna, "kuna", "",
+		"decompile with kuna, Ghidra's decompiler ported to Rust, with no Ghidra: the `path` of a native "+
+			"kuna_wasm, or tcp:HOST:PORT for one served over TCP (the emulator pages serve one)")
+	flag.StringVar(&opt.kunaSpecs, "kuna-specs", os.Getenv("KUNA_SPECS"),
+		"kuna's SLEIGH specs (its specs/ directory, after `make specs`), for a native -kuna (default $KUNA_SPECS)")
 	flag.DurationVar(&opt.idleExit, "idle-exit", 0,
 		"exit after this long with no browser connected (0 disables)")
 	flag.StringVar(&opt.configPath, "config", "",
@@ -830,6 +837,31 @@ func decompConfig(opt options, projectAbs string, logf func(string, ...any)) deb
 			logf("decompilation: -decomp-sidecars: %v", err)
 		} else {
 			cfg.Sidecars = abs
+		}
+	}
+	if addr, ok := strings.CutPrefix(opt.kuna, "tcp:"); ok {
+		cfg.KunaAddr = addr
+	} else if opt.kuna != "" {
+		// Checked now for the same reason: a kuna that is not there would
+		// only show up as every decompile failing.
+		bin, err := filepath.Abs(opt.kuna)
+		if err == nil {
+			_, err = os.Stat(bin)
+		}
+		specs := opt.kunaSpecs
+		if err == nil && specs == "" {
+			err = errors.New("needs -kuna-specs, or KUNA_SPECS, naming kuna's specs directory")
+		}
+		if err == nil {
+			specs, err = filepath.Abs(specs)
+		}
+		if err == nil {
+			_, err = os.Stat(specs)
+		}
+		if err != nil {
+			logf("decompilation: -kuna: %v", err)
+		} else {
+			cfg.KunaWasm, cfg.KunaSpecs = bin, specs
 		}
 	}
 	return cfg

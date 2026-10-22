@@ -34,7 +34,8 @@ nav_order: 1
 ## Decompilation
 
 These are all optional, and do nothing without Ghidra — except
-`-decomp-sidecars`, which shows decompilations written beforehand. See
+`-decomp-sidecars`, which shows decompilations written beforehand, and `-kuna`,
+which decompiles with kuna instead. See
 [decompilation](../features/decompilation.md).
 
 | Flag | What it does |
@@ -50,6 +51,8 @@ These are all optional, and do nothing without Ghidra — except
 | `-decomp-dir DIR` | Where to cache projects gdb-wui creates itself. Default `<project>/gdb-wui-decomp`. |
 | `-decomp-sidecars DIR` | A directory of sidecars: decompilations written by `-write-sidecar`. The one whose binary has the sha256 of the program gdb loads is shown, read-only, with no Ghidra needed. See [decompiling without Ghidra](../features/decompilation.md#decompiling-without-ghidra-sidecars). |
 | `-write-sidecar FILE` | Decompile FILE with Ghidra into `FILE.decomp.json`, in `-decomp-sidecars` (default the current directory), and exit. Takes the import flags above. |
+| `-kuna PATH` | Decompile with [kuna](https://github.com/Noelo-Lab/kuna), Ghidra's decompiler ported to Rust, with no Ghidra: the path of a native `kuna_wasm`, or `tcp:HOST:PORT` for one served over TCP. Read-only. See [decompiling with kuna](../features/decompilation.md#decompiling-with-kuna). |
+| `-kuna-specs DIR` | kuna's SLEIGH specs (its `specs/` directory, after `make specs`), for a native `-kuna`. Defaults to `$KUNA_SPECS`. |
 
 {: .warning }
 > `-decomp-dir` must not contain a path element beginning with a dot, because

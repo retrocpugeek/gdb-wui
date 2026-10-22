@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,12 +80,32 @@ type DecompConfig struct {
 	// a machine that could never run Ghidra. Loading another program switches
 	// to its sidecar. Without one, Install (if set) decompiles as usual.
 	Sidecars string
+	// KunaWasm and KunaSpecs are a native kuna_wasm and its SLEIGH specs, and
+	// KunaAddr a kuna served over TCP instead (ghidra.DialKuna) — the page an
+	// emulated guest runs in serves one. Either decompiles the program gdb
+	// loaded, any program, with no Ghidra: a second of work per function
+	// rather than an import and an analysis, read-only. A sidecar is still
+	// preferred when there is one, and a Ghidra when one is installed, until
+	// decomp.use says otherwise.
+	KunaWasm  string
+	KunaSpecs string
+	KunaAddr  string
 	// Unavailable says why the feature is off despite having been asked for,
 	// when Install is nil because something about the installation was
 	// rejected rather than absent. It reaches the pane instead of the generic
 	// "no Ghidra installation configured", which would be a lie: the user did
 	// configure one and needs to be told what is wrong with it.
 	Unavailable string
+}
+
+// kuna reports whether a kuna is configured.
+func (c DecompConfig) kuna() bool {
+	return c.KunaAddr != "" || (c.KunaWasm != "" && c.KunaSpecs != "")
+}
+
+// any reports whether any decompiler is configured.
+func (c DecompConfig) any() bool {
+	return c.Install != nil || c.Sidecars != "" || c.kuna()
 }
 
 // projectSuffix keeps the kinds of project apart in the cache.
@@ -214,6 +235,14 @@ type decomp struct {
 	// replace.
 	sidecar     string
 	sidecarMiss bool
+	// using is the decompiler the client is, wire.DecompilerGhidra or
+	// wire.DecompilerKuna, and prefer the one decomp.use last asked for.
+	// A kuna is per program like a sidecar, and sidecar is set for one too.
+	using  string
+	prefer string
+	// found caches FindExport for one sha256, which decomp.status needs on
+	// every call to say whether Ghidra's decompilation is on offer.
+	foundFor, found string
 	// loads counts programs loaded. A sidecar that finishes starting after
 	// another program was loaded describes the wrong one, and is dropped.
 	loads uint64
@@ -242,7 +271,7 @@ type decomp struct {
 // thing to spawn.
 func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 	cfg := s.cfg.Decomp
-	if cfg.Install == nil && cfg.Sidecars == "" {
+	if !cfg.any() {
 		reason := cfg.Unavailable
 		if reason == "" {
 			reason = "no Ghidra installation configured; pass -ghidra or set " +
@@ -255,7 +284,7 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 
 	s.decomp.mu.Lock()
 	state, errText, client := s.decomp.state, s.decomp.err, s.decomp.client
-	writable := s.decomp.writable
+	writable, using := s.decomp.writable, s.decomp.using
 	s.decomp.mu.Unlock()
 
 	if state == "" {
@@ -268,11 +297,16 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 	if client != nil && client.Ready().Sidecar != "" {
 		version = client.Ready().SidecarVersion
 	}
+	if using == wire.DecompilerKuna {
+		version = ""
+	}
 	out := wire.DecompStatus{
 		State:         state,
 		Error:         errText,
 		GhidraVersion: version,
 		Editable:      writable,
+		Decompiler:    using,
+		Decompilers:   s.decompilers(),
 		// What one undo would reverse. Sent unasked because the client has to
 		// offer it before anything goes wrong: an agent that has just written
 		// forty annotations is exactly when "undo all of that" is wanted, and
@@ -314,7 +348,7 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 // launches may not, and everything it needs is captured first.
 func (s *Session) maybeStartDecomp() {
 	cfg := s.cfg.Decomp
-	if cfg.Install == nil && cfg.Sidecars == "" {
+	if !cfg.any() {
 		return
 	}
 	// Once one is running, starting or has failed there is nothing to do, and
@@ -330,19 +364,32 @@ func (s *Session) maybeStartDecomp() {
 	if busy {
 		return
 	}
+	// kuna, when it was asked for or is all there is. Like a sidecar it
+	// decompiles the program gdb loaded, so a configured project or binary
+	// leaves it out.
+	perProgram := cfg.ProjectDir == "" && cfg.Binary == ""
+	s.decomp.mu.Lock()
+	prefer := s.decomp.prefer
+	s.decomp.mu.Unlock()
+	useKuna := cfg.kuna() && perProgram
+	if useKuna && (prefer == wire.DecompilerKuna || (cfg.Install == nil && cfg.Sidecars == "")) {
+		s.startKuna()
+		return
+	}
 	// A sidecar for the program gdb loaded, if there is one, before anything
 	// that would start a Ghidra.
-	if cfg.Sidecars != "" && cfg.ProjectDir == "" && cfg.Binary == "" {
+	if cfg.Sidecars != "" && perProgram {
 		if s.st.exeSHA256 == "" {
 			// Nothing loaded yet to look one up for.
 			return
 		}
-		path, err := ghidra.FindExport(cfg.Sidecars, s.st.exeSHA256)
-		if err != nil {
-			s.logf("decompilation: -decomp-sidecars: %v", err)
-		}
+		path := s.findSidecar()
 		if path != "" {
 			s.startSidecar(path)
+			return
+		}
+		if useKuna && cfg.Install == nil {
+			s.startKuna()
 			return
 		}
 		if cfg.Install == nil {
@@ -449,6 +496,7 @@ func (s *Session) maybeStartDecomp() {
 	}
 	s.decomp.starting = true
 	s.decomp.state = wire.DecompStarting
+	s.decomp.using = wire.DecompilerGhidra
 	s.decomp.mu.Unlock()
 
 	go func() {
@@ -554,6 +602,7 @@ func (s *Session) maybeStartDecomp() {
 			s.decomp.err = ""
 			s.decomp.client = client
 			s.decomp.writable = writable
+			s.decomp.using = wire.DecompilerGhidra
 		}
 		s.decomp.mu.Unlock()
 
@@ -589,17 +638,139 @@ func (s *Session) maybeStartDecomp() {
 // a Ghidra. Fast — it reads the file once to index it — but still off the
 // actor, since a large program's sidecar is tens of megabytes.
 func (s *Session) startSidecar(path string) {
+	s.startPerProgram(wire.DecompilerGhidra, path, func() (*ghidra.Client, error) {
+		return ghidra.StartExport(context.Background(), path, ghidra.Options{
+			Timeout: time.Minute,
+			Logf:    s.ghidraProcessLog,
+		})
+	})
+}
+
+// startKuna decompiles the program gdb loaded with kuna, natively or over
+// TCP, in the background like a sidecar.
+func (s *Session) startKuna() {
+	cfg := s.cfg.Decomp
+	if s.st.exePath == "" || s.files == nil {
+		// Nothing loaded yet.
+		return
+	}
+	abs, err := s.files.AbsPath(s.st.exePath)
+	if err != nil {
+		return
+	}
+	s.startPerProgram(wire.DecompilerKuna, ghidra.KunaGenerator, func() (*ghidra.Client, error) {
+		// Generous: the page serving kuna fetches and compiles it on the
+		// first connection, and a guest's virtual network is no fast way to
+		// send it the binary.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		var engine ghidra.KunaEngine
+		if cfg.KunaAddr != "" {
+			s.decompLog(wire.DecompLogInfo, "asking the kuna at %s to decompile %s", cfg.KunaAddr, filepath.Base(abs))
+			e, err := ghidra.DialKuna(ctx, cfg.KunaAddr, abs)
+			if err != nil {
+				return nil, err
+			}
+			engine = e
+		} else {
+			engine = ghidra.KunaCommand(cfg.KunaWasm, cfg.KunaSpecs, abs)
+		}
+		return ghidra.StartKuna(ctx, engine, abs, ghidra.Options{
+			Timeout: 3 * time.Minute,
+			Logf:    s.ghidraProcessLog,
+		})
+	})
+}
+
+// findSidecar is FindExport for the program gdb loaded, remembered for its
+// sha256.
+func (s *Session) findSidecar() string {
+	sha := s.st.exeSHA256
+	s.decomp.mu.Lock()
+	if s.decomp.foundFor == sha {
+		defer s.decomp.mu.Unlock()
+		return s.decomp.found
+	}
+	s.decomp.mu.Unlock()
+	path, err := ghidra.FindExport(s.cfg.Decomp.Sidecars, sha)
+	if err != nil {
+		s.logf("decompilation: -decomp-sidecars: %v", err)
+	}
+	s.decomp.mu.Lock()
+	s.decomp.foundFor, s.decomp.found = sha, path
+	s.decomp.mu.Unlock()
+	return path
+}
+
+// decompilers is what decomp.use can choose between for the program gdb
+// loaded, or nil when there is no choice.
+func (s *Session) decompilers() []string {
+	cfg := s.cfg.Decomp
+	if !cfg.kuna() || cfg.ProjectDir != "" || cfg.Binary != "" {
+		return nil
+	}
+	if cfg.Install == nil && (cfg.Sidecars == "" || s.st.exeSHA256 == "" || s.findSidecar() == "") {
+		return nil
+	}
+	return []string{wire.DecompilerGhidra, wire.DecompilerKuna}
+}
+
+// decompUse switches decompiler: the one running is stopped and the chosen
+// one starts on the next look, which the changed event prompts.
+func (s *Session) decompUse(r *request) (any, *wire.Error) {
+	req, werr := decode[wire.DecompUseRequest](r.req.Payload)
+	if werr != nil {
+		return nil, werr
+	}
+	offered := s.decompilers()
+	if !slices.Contains(offered, req.Decompiler) {
+		return nil, wire.NewError(wire.CodeBadRequest, fmt.Sprintf(
+			"%q is not a decompiler on offer here (%s)", req.Decompiler, strings.Join(offered, ", ")))
+	}
+	s.decomp.mu.Lock()
+	s.decomp.prefer = req.Decompiler
+	if s.decomp.using == req.Decompiler || s.decomp.starting {
+		// Already in use, or a start is in flight and will be replaced when it
+		// lands (startPerProgram checks loads).
+		if s.decomp.starting {
+			s.decomp.loads++
+		}
+		s.decomp.mu.Unlock()
+		return wire.DecompStatus{}, nil
+	}
+	client := s.decomp.client
+	s.decomp.client = nil
+	s.decomp.state = ""
+	s.decomp.err = ""
+	s.decomp.sidecar = ""
+	s.decomp.sidecarMiss = false
+	s.decomp.using = ""
+	s.decomp.writable = false
+	s.decomp.biasFrom, s.decomp.biasAddr = "", 0
+	s.decomp.mu.Unlock()
+	if client != nil {
+		_ = client.Close()
+	}
+	s.maybeStartDecomp()
+	s.emit(wire.EventDecompChanged, map[string]any{})
+	return s.decompStatus(r)
+}
+
+// startPerProgram starts a decompiler that describes only the program gdb
+// loaded — a sidecar, or kuna — in the background. Loading another program
+// replaces it (switchSidecar).
+func (s *Session) startPerProgram(using, label string, start func() (*ghidra.Client, error)) {
+	path := label
 	s.decomp.mu.Lock()
 	s.decomp.starting = true
 	s.decomp.state = wire.DecompStarting
+	// Said while starting as well, so the pane can say which is.
+	s.decomp.using = using
 	loads := s.decomp.loads
 	s.decomp.mu.Unlock()
 	go func() {
 		started := time.Now()
-		client, err := ghidra.StartExport(context.Background(), path, ghidra.Options{
-			Timeout: time.Minute,
-			Logf:    s.ghidraProcessLog,
-		})
+		client, err := start()
 		s.decomp.mu.Lock()
 		s.decomp.starting = false
 		closed := s.decomp.closed
@@ -621,6 +792,7 @@ func (s *Session) startSidecar(path string) {
 			s.decomp.client = client
 			s.decomp.writable = false
 			s.decomp.sidecar = path
+			s.decomp.using = using
 		}
 		s.decomp.mu.Unlock()
 		switch {
@@ -632,8 +804,20 @@ func (s *Session) startSidecar(path string) {
 				s.emitOffActor(wire.EventDecompChanged, map[string]any{})
 			}
 			return
+		case err != nil && using == wire.DecompilerKuna:
+			s.decompLog(wire.DecompLogError, "kuna: %v", err)
 		case err != nil:
 			s.decompLog(wire.DecompLogError, "cannot read %s: %v", path, err)
+		case using == wire.DecompilerKuna:
+			r := client.Ready()
+			version := ""
+			if r.SidecarVersion != "" {
+				version = " " + r.SidecarVersion
+			}
+			s.decompLogTimed(wire.DecompLogInfo, time.Since(started).Milliseconds(),
+				"decompiling %s with kuna%s — %s, %d functions; read-only",
+				r.Program.Name, version, r.Program.LanguageID, r.FunctionCount)
+			go s.watchDecomp(client)
 		default:
 			r := client.Ready()
 			s.decompLogTimed(wire.DecompLogInfo, time.Since(started).Milliseconds(),
@@ -663,6 +847,7 @@ func (s *Session) switchSidecar() {
 	s.decomp.err = ""
 	s.decomp.sidecar = ""
 	s.decomp.sidecarMiss = false
+	s.decomp.using = ""
 	s.decomp.biasFrom, s.decomp.biasAddr = "", 0
 	s.decomp.mu.Unlock()
 	if client != nil {
@@ -825,6 +1010,12 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 	out.PCLine, out.PCLineAmbiguous, out.PCLineApprox =
 		pcLine(out.Lines, pc, out.BodyStart, out.BodyEnd)
 
+	lang := s.decompLanguage()
+	s.decomp.mu.Lock()
+	if s.decomp.using == wire.DecompilerKuna {
+		lang = kunaFrames
+	}
+	s.decomp.mu.Unlock()
 	for _, v := range fn.Variables {
 		out.Vars = append(out.Vars, wire.DecompVar{
 			Name:    v.Name,
@@ -833,7 +1024,7 @@ func (s *Session) renderDecomp(fn *ghidra.Function, bias int64, biasFrom, pc str
 			Source:  decompSource(v.Source),
 			Param:   v.Param,
 			Storage: storageKind(v.Storage.Kind),
-			Expr:    varExpr(v, fn.Frame, s.decompLanguage()),
+			Expr:    varExpr(v, fn.Frame, lang),
 			PC:      shiftAddr(v.PC, bias),
 		})
 	}
@@ -1009,7 +1200,12 @@ func varExpr(v ghidra.Var, frame ghidra.Frame, lang string) string {
 		var base string
 		var delta int
 		switch {
-		case strings.HasPrefix(lang, "x86"), strings.HasPrefix(lang, "ARM"),
+		// kuna's offsets are from the stack pointer at entry on every
+		// architecture, RISC-V included, where Ghidra's are 8 bytes off it:
+		// measured on gcc -O0 riscv64 and aarch64 code against the DWARF
+		// and the stores the prologue makes.
+		case lang == kunaFrames,
+			strings.HasPrefix(lang, "x86"), strings.HasPrefix(lang, "ARM"),
 			strings.HasPrefix(lang, "AARCH64"), strings.HasPrefix(lang, "PowerPC"),
 			strings.HasPrefix(lang, "MIPS"):
 			// One rule, on every architecture measured: the address is
@@ -1060,6 +1256,10 @@ func varExpr(v ghidra.Var, frame ghidra.Frame, lang string) string {
 		return ""
 	}
 }
+
+// kunaFrames stands for the language in varExpr when kuna decompiled the
+// function: its frame offsets follow one rule everywhere.
+const kunaFrames = "kuna"
 
 // ghidraPrimitives maps the decompiler's spelling of a base type onto one gdb
 // will parse. Ghidra's names are its own: `undefined4`, `uint`, `qword` and

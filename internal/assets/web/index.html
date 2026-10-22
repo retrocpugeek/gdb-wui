@@ -123,11 +123,21 @@
         <span class="slot-name" data-slot-name="a"></span>
         <span id="source-path" class="panel-title"></span>
         <span id="source-meta" class="panel-sub"></span>
+        <select id="decomp-pick" class="kind-select decomp-pick is-hidden"
+                aria-label="Decompiler" title="Which decompiler the Decompiled view shows">
+          <option value="ghidra">Ghidra</option>
+          <option value="kuna">kuna</option>
+        </select>
       </div>
       <div class="slot-head is-hidden" data-slot-head="b">
         <span class="slot-name" data-slot-name="b"></span>
         <span id="source-path-b" class="panel-title"></span>
         <span id="source-meta-b" class="panel-sub"></span>
+        <select id="decomp-pick-b" class="kind-select decomp-pick is-hidden"
+                aria-label="Decompiler" title="Which decompiler the Decompiled view shows">
+          <option value="ghidra">Ghidra</option>
+          <option value="kuna">kuna</option>
+        </select>
       </div>
       <div id="split-center-x" class="splitter splitter-v is-hidden" role="separator"
            aria-orientation="vertical" aria-label="Resize the split" tabindex="0"></div>

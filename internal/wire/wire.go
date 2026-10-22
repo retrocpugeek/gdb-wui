@@ -188,6 +188,7 @@ var RequestTypes = []string{
 	TypeDecompRetype,
 	TypeDecompComment,
 	TypeDecompUndo,
+	TypeDecompUse,
 }
 
 // SessionRequestTypes is the subset the hub answers with no debugger attached.

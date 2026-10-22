@@ -123,6 +123,7 @@ Everything below needs a debugger session except the `session.*` group; with
 | `decomp.retype` | `{kind, function, symbol?, name?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A C type for a local, or a whole prototype for a function. |
 | `decomp.comment` | `{kind, function, address?, name?, value, stopSeq?}` | [`DecompEdit`](#decompilation) | A note against a line or a function. An empty `value` removes it. |
 | `decomp.undo` | `{stopSeq?}` | [`DecompEdit`](#decompilation) | Reverses the last edit of this session. "nothing to undo" is an error. |
+| `decomp.use` | `{decompiler}` | [`DecompStatus`](#decompilation) | Switches between `ghidra` and `kuna`, when `decomp.status` lists both in `decompilers`. The one running is stopped and the other started on the loaded program. |
 
 `exec.pause` is the one request that does not queue behind the others. The
 server's actor loop is usually blocked in a gdb round-trip when a user presses
@@ -710,6 +711,12 @@ linked and nothing is vendored. The feature is optional. With no `-ghidra` and n
 `state` is `off`, `starting`, `ready` or `failed`. Clients do observe `starting`:
 opening an existing project takes seconds, and importing and analysing a binary
 takes minutes.
+
+`decompiler` is the decompiler in use or starting, `ghidra` or `kuna` (see
+`-kuna`). `decompilers` lists both when the loaded program can be shown by
+either — a Ghidra or a sidecar, and a kuna — and is absent when there is no
+choice; `decomp.use` picks one. kuna is read-only, so `editable` is false while
+it is in use.
 
 `editable` says whether `decomp.rename`, `decomp.retype` and `decomp.comment`
 will be answered. It is false for a project named with `-ghidra-project`.

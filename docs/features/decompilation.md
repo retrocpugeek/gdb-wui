@@ -286,6 +286,52 @@ comments need a Ghidra to re-decompile, and a sidecar is read-only.
 The format is described in the [decompilation
 reference](https://github.com/retrocpugeek/gdb-wui/blob/master/docs/decompilation.md#the-format).
 
+## Decompiling with kuna
+
+[kuna](https://github.com/Noelo-Lab/kuna) is Ghidra's decompiler ported to
+Rust. It needs no JVM, no project and no analysis: it indexes a program's
+functions in a fraction of a second and decompiles each one as it is opened,
+in about half a second for busybox. That makes it the decompiler for a program
+nobody wrote a sidecar for, on a machine that cannot run Ghidra.
+
+gdb-wui runs it through `kuna_wasm`, the entry point kuna's own browser page
+uses, built natively:
+
+```sh
+# in a kuna checkout
+make specs
+(cd decompiler && cargo build --release -p kuna-wasm)
+# then
+./gdb-wui -project . -exe firmware \
+    -kuna ~/kuna/decompiler/target/release/kuna_wasm -kuna-specs ~/kuna/specs
+```
+
+Or the same commands answered over TCP, with `-kuna tcp:HOST:PORT`: that is how
+the [try-online](../try-online.md) machines do it, where gdb-wui runs in the
+emulated guest and kuna, as WebAssembly, in the page around it. The protocol is
+in [`internal/ghidra/kuna.go`](https://github.com/retrocpugeek/gdb-wui/blob/master/internal/ghidra/kuna.go).
+
+Like a sidecar, kuna decompiles the program gdb loaded, and loading another
+switches to it. It is read-only: kuna keeps no database for a rename or a
+comment to go into. Its names are its own — `sub_d830` for a function nobody
+named, `dat_eb270` for a global — and on a stripped program it recovers `main`
+and the names of library functions called through the PLT.
+
+What it says about a variable's location is less settled than Ghidra's: it
+merges a variable across every place it lives (`a4 | a5 | stack - 0x58`) and
+does not say which holds the value at a given instruction. A variable with one
+stack slot among them is read from the slot — its home, in unoptimised code,
+where every variable is kept in memory and loaded into registers to be used; in
+optimised code a register may be ahead of it. One that lives in a single
+register is read from the register. Any other is listed without a value, because
+a wrong guess would read as one.
+
+### Ghidra and kuna side by side
+
+With both a Ghidra (or a sidecar for the program) and `-kuna`, a sidecar or
+Ghidra is used first, and the Decompiled view's header has a picker: switching
+shows the same function in the other decompiler's words.
+
 ## Using an existing Ghidra project
 
 To use names and types you have already created in Ghidra, pass the project and

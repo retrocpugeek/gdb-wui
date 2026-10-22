@@ -21,6 +21,9 @@ would on a board on your desk. The gdb-wui window appears next to the machine's
 serial console about half a minute after the page loads; until then the panel
 says what it is waiting for.
 
+Use a desktop browser. gdb-wui is a desktop application — it wants a wide
+screen, a mouse and a keyboard — and on a phone most of it is out of reach.
+
 [![gdb-wui stopped in hello.c on the emulated RISC-V machine](images/try-online.png)](images/try-online.png)
 
 ## What is there to debug
@@ -64,6 +67,20 @@ Ghidra's. To follow `ls -l /` into it:
 The first function takes a few seconds while gdb-wui indexes the
 nine-megabyte sidecar; after that each one is read from it as you go. Press ▶
 to let `ls` finish.
+
+## Decompiled by kuna, in the page
+
+The same view can come from [kuna](features/decompilation.md#decompiling-with-kuna)
+instead: switch the picker in the **Decompiled** header from Ghidra to kuna.
+kuna runs as WebAssembly in this page, beside the emulator, and gdb-wui in the
+guest asks it for each function over the emulated network — so it decompiles
+any program in the machine, not only the ones decompiled when the image was
+built. The first switch downloads kuna, a few megabytes; after that a function
+takes a second or two.
+
+On a stripped busybox kuna finds `main` and the names of the library functions
+it calls: `entry` shows `__libc_start_main(main, …)` on ARM64, and `main` calls
+`mallopt`, `getuid` and `sub_d100("busybox")`.
 
 ## Debugging through gdbserver
 
