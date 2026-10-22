@@ -48,15 +48,12 @@ Ghidra's. To follow `ls -l /` into it:
 
 1. Click **busybox** in the file tree, and in the gdb console type
    `set args ls -l /`.
-2. Click **Run→entry**. That starts the program, stopped in the dynamic loader,
-   and it has to be started before a decompiler address means anything:
-   busybox is position-independent, so where it runs is only known once it is
-   loaded.
-3. In **Symbols**, type `entry`, right-click it, choose **Set breakpoint**, and
-   continue (▶). The **Decompiled** tab shows `entry` handing `main` to
-   `__libc_start_main` along with `argc`. Ghidra names one or the other: on
-   RISC-V it is `FUN_ram_0010b940(main, …)`, on ARM64
-   `__libc_start_main(FUN_0010d620, …)`.
+2. In **Symbols**, type `entry`, right-click it, choose **Set breakpoint**, and
+   click **Run**. The breakpoint is pending until the program is loaded: busybox
+   is position-independent, so where it runs is only known then.
+3. **Decompiled** shows `entry` handing `main` to `__libc_start_main` along
+   with `argc`. Ghidra names one or the other: on RISC-V it is
+   `FUN_ram_0010b940(main, …)`, on ARM64 `__libc_start_main(FUN_0010d620, …)`.
 4. Set a breakpoint on that function the same way, from **Symbols**, and
    continue. You are in busybox's `main`, recovered from a binary with no
    symbols: two calls to `mallopt` (unnamed stubs on RISC-V), a call with

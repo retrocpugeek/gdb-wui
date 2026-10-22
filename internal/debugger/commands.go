@@ -128,9 +128,11 @@ func (s *Session) execRun(r *request) (any, *wire.Error) {
 		// reconcileBreakpoints.
 		cmd += " --start"
 	}
+	cmd, deferred := s.startCommand(r, cmd, req.StopAtEntry, req.StopAtMain)
 	if _, werr := s.send(r.ctx, cmd); werr != nil {
 		return nil, werr
 	}
+	s.st.deferredStart = deferred
 	// gdb answers ^running and the *running record sets the state; setting it
 	// here too avoids a window where a second request slips past the gate.
 	s.setRunning(0)
@@ -236,7 +238,10 @@ func (s *Session) execRunTo(r *request) (any, *wire.Error) {
 		}
 	}
 
-	bp, werr := s.insertBreakpoint(r, breakpointSpec{location: spec, temporary: true})
+	// A decompiler name before the program starts is one gdb cannot resolve
+	// yet, and is placed once the program is loaded (deferredbp.go)
+	bp, werr := s.insertBreakpoint(r, breakpointSpec{location: spec, temporary: true,
+		pending: !s.started() && s.deferDecompName(r, spec)})
 	if werr != nil {
 		return nil, werr
 	}
@@ -256,10 +261,12 @@ func (s *Session) execRunTo(r *request) (any, *wire.Error) {
 	} else {
 		s.ensureTerminal(r.ctx)
 		s.deleteAllVarobjs(r.ctx)
-		if _, werr := s.send(r.ctx, "-exec-run"); werr != nil {
+		cmd, deferred := s.startCommand(r, "-exec-run", false, false)
+		if _, werr := s.send(r.ctx, cmd); werr != nil {
 			s.dropBreakpoint(r, bp.Number)
 			return nil, werr
 		}
+		s.st.deferredStart = deferred
 		s.setRunning(0)
 	}
 	return wire.ExecAck{RunState: s.st.runState, StopSeq: s.st.stopSeq}, nil
@@ -659,6 +666,12 @@ func (s *Session) locationSpec(r *request, loc string) string {
 		return "*" + loc
 	}
 	if plausibleDecompName(loc) && !s.gdbKnowsSymbol(r, loc) {
+		// Before a position-independent program starts, its addresses are
+		// not the ones it will run at: the name stays, as a pending
+		// breakpoint placed once it is loaded (deferredbp.go).
+		if s.deferDecompName(r, loc) {
+			return loc
+		}
 		if addr, ok := s.decompAddressOf(r, loc); ok {
 			return fmt.Sprintf("*0x%x", addr)
 		}

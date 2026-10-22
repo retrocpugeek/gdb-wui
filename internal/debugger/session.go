@@ -145,6 +145,9 @@ type state struct {
 	// -exec-run --start injects a temporary one — and a mirror that shows them
 	// would put phantom markers in the gutter.
 	ours map[int]bool
+	// deferredStart is set while a run started at the first instruction to
+	// place breakpoints on decompiler names (deferredbp.go).
+	deferredStart *deferredStart
 
 	gdbVersion string
 	features   []string
