@@ -249,6 +249,24 @@ open. Such an image also needs `-ghidra-processor` to say what its bytes are
 and `-ghidra-base` to say where they run, since nothing in the file does.
 See [a kernel image gdb will not load](kernel.md#decompiling-a-kernel-image-gdb-will-not-load).
 
+## A program gdb-wui did not load
+
+The decompiler normally works on the program loaded from the file tree. When
+gdb has one gdb-wui never loaded — `target remote` to a gdbserver started
+with a program, `attach`, a `file` typed in the console — it asks gdb which
+one that is, and decompiles it:
+
+- A path on this machine is read where it is.
+- A `target:` path, which is how gdb names a file on the far side of a
+  gdbserver, is copied from the target with gdb's own `remote get` into a
+  directory of the session's, removed when it ends. The gdbserver may be on
+  another machine with a different file at the same path, so the copy is what
+  is decompiled — and what the bias and the sidecar lookup use.
+
+Copying goes at the speed of the connection: a second for a few hundred
+kilobytes over a network, longer over a serial line. Connecting to a different
+program replaces the decompilation, as loading one does.
+
 ## Decompiling without Ghidra: sidecars
 
 Ghidra wants a desktop: an 884 MB install, a JDK, a gigabyte or two of memory

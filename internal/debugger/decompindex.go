@@ -164,7 +164,7 @@ func (s *Session) decompIndex(r *request) ([]decompEntry, map[string]int) {
 	if client == nil {
 		// Asking is what starts it, as everywhere else. This request gets
 		// nothing; the next one, after analysis, gets the index.
-		s.maybeStartDecomp()
+		s.maybeStartDecomp(r.ctx)
 		return nil, nil
 	}
 	if s.decomp.indexFor == client && s.decomp.indexBy != nil {
