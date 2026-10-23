@@ -185,8 +185,9 @@ func (s *Session) decompLogTimed(level string, ms int64, format string, args ...
 	// something failed is the commonest way to lose the one line that explains
 	// a failure.
 	s.logf("decomp: %s", text)
+	using, _ := s.decompUsing.Load().(string)
 	s.emitOffActor(wire.EventDecompLog, wire.DecompLog{
-		Text: text, Level: level, Millis: ms,
+		Text: text, Level: level, Millis: ms, Decompiler: using,
 	})
 }
 
@@ -240,6 +241,8 @@ type decomp struct {
 	// A kuna is per program like a sidecar, and sidecar is set for one too.
 	using  string
 	prefer string
+	// readyAt is when the client last became ready.
+	readyAt time.Time
 	// found caches FindExport for one sha256, which decomp.status needs on
 	// every call to say whether Ghidra's decompilation is on offer.
 	foundFor, found string
@@ -291,6 +294,7 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 	s.decomp.mu.Lock()
 	state, errText, client := s.decomp.state, s.decomp.err, s.decomp.client
 	writable, using := s.decomp.writable, s.decomp.using
+	readyAt, sidecar := s.decomp.readyAt, s.decomp.sidecar
 	s.decomp.mu.Unlock()
 
 	if state == "" {
@@ -320,11 +324,27 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 		// makes until they already regret something.
 		Undo: s.topRun(),
 	}
+	switch {
+	case using == wire.DecompilerKuna && cfg.KunaAddr != "":
+		out.Endpoint = cfg.KunaAddr
+	case using == wire.DecompilerKuna:
+		out.Endpoint = cfg.KunaWasm
+	case sidecar != "":
+		out.Endpoint = filepath.Base(sidecar)
+	case using == wire.DecompilerGhidra:
+		out.Endpoint = cfg.ProjectDir
+	}
 	if client == nil {
 		return out, nil
 	}
 	ready := client.Ready()
 	out.FunctionCount = ready.FunctionCount
+	if using == wire.DecompilerKuna {
+		out.KunaVersion = ready.SidecarVersion
+	}
+	if !readyAt.IsZero() {
+		out.ReadySince = readyAt.UTC().Format(time.RFC3339)
+	}
 	out.Program = &wire.DecompProgram{
 		Name:        ready.Program.Name,
 		SHA256:      ready.Program.SHA256,
@@ -502,6 +522,7 @@ func (s *Session) maybeStartDecomp(ctx context.Context) {
 	s.decomp.starting = true
 	s.decomp.state = wire.DecompStarting
 	s.decomp.using = wire.DecompilerGhidra
+	s.decompUsing.Store(s.decomp.using)
 	s.decomp.mu.Unlock()
 
 	go func() {
@@ -607,7 +628,9 @@ func (s *Session) maybeStartDecomp(ctx context.Context) {
 			s.decomp.err = ""
 			s.decomp.client = client
 			s.decomp.writable = writable
+			s.decomp.readyAt = time.Now()
 			s.decomp.using = wire.DecompilerGhidra
+			s.decompUsing.Store(s.decomp.using)
 		}
 		s.decomp.mu.Unlock()
 
@@ -669,7 +692,9 @@ func (s *Session) startKuna() {
 		var engine ghidra.KunaEngine
 		if cfg.KunaAddr != "" {
 			s.decompLog(wire.DecompLogInfo, "asking the kuna at %s to decompile %s", cfg.KunaAddr, filepath.Base(abs))
-			e, err := ghidra.DialKuna(ctx, cfg.KunaAddr, abs)
+			e, err := ghidra.DialKuna(ctx, cfg.KunaAddr, abs, func(f string, a ...any) {
+				s.decompLog(wire.DecompLogWarn, f, a...)
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -747,6 +772,7 @@ func (s *Session) decompUse(r *request) (any, *wire.Error) {
 	s.decomp.sidecar = ""
 	s.decomp.sidecarMiss = false
 	s.decomp.using = ""
+	s.decompUsing.Store(s.decomp.using)
 	s.decomp.writable = false
 	s.decomp.biasFrom, s.decomp.biasAddr = "", 0
 	s.decomp.mu.Unlock()
@@ -768,6 +794,7 @@ func (s *Session) startPerProgram(using, label string, start func() (*ghidra.Cli
 	s.decomp.state = wire.DecompStarting
 	// Said while starting as well, so the pane can say which is.
 	s.decomp.using = using
+	s.decompUsing.Store(s.decomp.using)
 	loads := s.decomp.loads
 	s.decomp.mu.Unlock()
 	go func() {
@@ -794,7 +821,9 @@ func (s *Session) startPerProgram(using, label string, start func() (*ghidra.Cli
 			s.decomp.client = client
 			s.decomp.writable = false
 			s.decomp.sidecar = path
+			s.decomp.readyAt = time.Now()
 			s.decomp.using = using
+			s.decompUsing.Store(s.decomp.using)
 		}
 		s.decomp.mu.Unlock()
 		switch {
@@ -807,7 +836,7 @@ func (s *Session) startPerProgram(using, label string, start func() (*ghidra.Cli
 			}
 			return
 		case err != nil && using == wire.DecompilerKuna:
-			s.decompLog(wire.DecompLogError, "kuna: %v", err)
+			s.decompLog(wire.DecompLogError, "%v", err)
 		case err != nil:
 			s.decompLog(wire.DecompLogError, "cannot read %s: %v", path, err)
 		case using == wire.DecompilerKuna:
@@ -850,6 +879,7 @@ func (s *Session) switchSidecar() {
 	s.decomp.sidecar = ""
 	s.decomp.sidecarMiss = false
 	s.decomp.using = ""
+	s.decompUsing.Store(s.decomp.using)
 	s.decomp.biasFrom, s.decomp.biasAddr = "", 0
 	s.decomp.mu.Unlock()
 	if client != nil {

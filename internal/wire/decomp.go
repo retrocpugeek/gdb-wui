@@ -91,6 +91,14 @@ type DecompStatus struct {
 	// Decompilers lists what decomp.use can choose between, when that is
 	// more than one.
 	Decompilers []string `json:"decompilers,omitempty"`
+	// KunaVersion is the kuna build in use, when it says (a commit).
+	KunaVersion string `json:"kunaVersion,omitempty"`
+	// Endpoint is where the decompiler is: the address of a kuna served over
+	// TCP or the path of a native one, a sidecar's file name, or a Ghidra
+	// project's directory.
+	Endpoint string `json:"endpoint,omitempty"`
+	// ReadySince is when it last became ready, RFC 3339.
+	ReadySince string `json:"readySince,omitempty"`
 	// Program identifies what the decompiler has open.
 	Program *DecompProgram `json:"program,omitempty"`
 	// FunctionCount is how many functions it knows about.
@@ -125,6 +133,10 @@ const (
 type DecompLog struct {
 	Text  string `json:"text"`
 	Level string `json:"level,omitempty"`
+	// Decompiler is the decompiler the line is about, DecompilerGhidra or
+	// DecompilerKuna, or empty for one about neither — which program to
+	// decompile, say.
+	Decompiler string `json:"decompiler,omitempty"`
 	// Millis times an operation that finished. Zero for anything else. Kept
 	// separate from Text so a client can render it consistently rather than
 	// parsing it back out.

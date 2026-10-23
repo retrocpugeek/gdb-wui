@@ -13,6 +13,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A whole run is a couple of minutes. Without a limit a hung step waits
+    # out GitHub's default of six hours, holding the pull request's check
+    # pending all that time.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +45,10 @@ jobs:
       # rather than believed. qemu-user carries every emulator; the compilers
       # are separate packages, and the whole install is around half a minute.
       - name: Install gdb and the cross-architecture toolchains
+        # Half a minute normally. The one that hung did so here, in apt, on a
+        # run whose twin for the same commit finished in two minutes: failing
+        # fast and running it again is the remedy.
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install -y gdb gdb-multiarch qemu-user \

@@ -93,52 +93,95 @@ func (k *kunaCommand) Close() error { return nil }
 //	{"op":"upload","sha256":S,"size":N} + N bytes -> {"ok":true}
 //	{"op":"run","sha256":S,"args":[...]}         -> {"ok":true,"result":DOC}
 //
-// A binary the far end already holds, by hash, is not sent again.
-func DialKuna(ctx context.Context, addr, binary string) (KunaEngine, error) {
-	data, err := os.ReadFile(binary)
-	if err != nil {
+// A binary the far end already holds, by hash, is not sent again. logf hears
+// of reconnections.
+func DialKuna(ctx context.Context, addr, binary string, logf func(format string, args ...any)) (KunaEngine, error) {
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	k := &kunaRemote{addr: addr, binary: binary, logf: logf}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if err := k.connect(ctx); err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(data)
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("kuna at %s: %w", addr, err)
+	return k, nil
+}
+
+// kunaRemote is a kuna served over TCP. The far end can go away under it —
+// the page serving kuna restarts its worker, which forgets the binaries it
+// was given, or the connection drops — and a decompiler that then failed
+// every request until gdb-wui restarted would be no use. So a request that
+// finds the connection gone, or the binary forgotten, connects and sends the
+// binary again, once, and is retried.
+type kunaRemote struct {
+	addr    string
+	binary  string
+	logf    func(format string, args ...any)
+	sha     string
+	version string
+
+	// mu serialises the requests: the protocol is one at a time.
+	mu   sync.Mutex
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+// errKunaConn marks a failure of the connection rather than of kuna.
+type errKunaConn struct{ err error }
+
+func (e errKunaConn) Error() string { return e.err.Error() }
+func (e errKunaConn) Unwrap() error { return e.err }
+
+// connect dials and hands kuna the binary, under mu.
+func (k *kunaRemote) connect(ctx context.Context) error {
+	if k.conn != nil {
+		k.conn.Close()
+		k.conn = nil
 	}
-	k := &kunaRemote{addr: addr, conn: conn, r: bufio.NewReaderSize(conn, 1<<20),
-		sha: hex.EncodeToString(sum[:])}
+	data, err := os.ReadFile(k.binary)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	k.sha = hex.EncodeToString(sum[:])
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", k.addr)
+	if err != nil {
+		return errKunaConn{fmt.Errorf("kuna at %s: %w", k.addr, err)}
+	}
+	k.conn, k.r = conn, bufio.NewReaderSize(conn, 1<<20)
+	if err := k.upload(ctx, data); err != nil {
+		conn.Close()
+		k.conn = nil
+		return err
+	}
+	return nil
+}
+
+// upload makes sure kuna has the binary, under mu.
+func (k *kunaRemote) upload(ctx context.Context, data []byte) error {
 	var have struct {
 		Have    bool   `json:"have"`
 		Version string `json:"version"`
 	}
 	if err := k.call(ctx, map[string]any{"op": "load", "sha256": k.sha, "size": len(data),
-		"name": filepath.Base(binary)}, nil, &have); err != nil {
-		conn.Close()
-		return nil, err
+		"name": filepath.Base(k.binary)}, nil, &have); err != nil {
+		return err
 	}
 	k.version = have.Version
 	if !have.Have {
-		if err := k.call(ctx, map[string]any{"op": "upload", "sha256": k.sha, "size": len(data)},
-			data, nil); err != nil {
-			conn.Close()
-			return nil, err
-		}
+		return k.call(ctx, map[string]any{"op": "upload", "sha256": k.sha, "size": len(data)},
+			data, nil)
 	}
-	return k, nil
+	return nil
 }
 
-type kunaRemote struct {
-	addr    string
-	sha     string
-	version string
-	mu      sync.Mutex
-	conn    net.Conn
-	r       *bufio.Reader
-}
-
+// call makes one request, under mu.
 func (k *kunaRemote) call(ctx context.Context, req map[string]any, payload []byte, out any) error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
+	if k.conn == nil {
+		return errKunaConn{fmt.Errorf("kuna at %s: not connected", k.addr)}
+	}
 	if dl, ok := ctx.Deadline(); ok {
 		_ = k.conn.SetDeadline(dl)
 		defer k.conn.SetDeadline(time.Time{})
@@ -148,16 +191,16 @@ func (k *kunaRemote) call(ctx context.Context, req map[string]any, payload []byt
 		return err
 	}
 	if _, err := k.conn.Write(append(line, '\n')); err != nil {
-		return fmt.Errorf("kuna at %s: %w", k.addr, err)
+		return errKunaConn{fmt.Errorf("kuna at %s: %w", k.addr, err)}
 	}
 	if payload != nil {
 		if _, err := k.conn.Write(payload); err != nil {
-			return fmt.Errorf("kuna at %s: %w", k.addr, err)
+			return errKunaConn{fmt.Errorf("kuna at %s: %w", k.addr, err)}
 		}
 	}
 	reply, err := k.r.ReadBytes('\n')
 	if err != nil {
-		return fmt.Errorf("kuna at %s: %w", k.addr, err)
+		return errKunaConn{fmt.Errorf("kuna at %s: %w", k.addr, err)}
 	}
 	var head struct {
 		OK    bool   `json:"ok"`
@@ -176,18 +219,59 @@ func (k *kunaRemote) call(ctx context.Context, req map[string]any, payload []byt
 }
 
 func (k *kunaRemote) Run(ctx context.Context, args ...string) ([]byte, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	var res struct {
 		Result json.RawMessage `json:"result"`
 	}
-	if err := k.call(ctx, map[string]any{"op": "run", "sha256": k.sha, "args": args}, nil, &res); err != nil {
+	run := func() error {
+		return k.call(ctx, map[string]any{"op": "run", "sha256": k.sha, "args": args}, nil, &res)
+	}
+	err := run()
+	var conn errKunaConn
+	switch {
+	case err == nil:
+		return res.Result, nil
+	case errors.As(err, &conn):
+		k.logf("lost the connection to the kuna at %s (%v); connecting again", k.addr, conn.err)
+		if err := k.connect(ctx); err != nil {
+			return nil, err
+		}
+	case strings.HasPrefix(err.Error(), "no binary "):
+		// The far end restarted and forgot it.
+		k.logf("the kuna at %s no longer has %s; sending it again", k.addr, filepath.Base(k.binary))
+		data, rerr := os.ReadFile(k.binary)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if err := k.upload(ctx, data); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, err
+	}
+	if err := run(); err != nil {
 		return nil, err
 	}
 	return res.Result, nil
 }
 
-func (k *kunaRemote) Version() string { return k.version }
+func (k *kunaRemote) Version() string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.version
+}
 
-func (k *kunaRemote) Close() error { return k.conn.Close() }
+func (k *kunaRemote) Close() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.conn == nil {
+		return nil
+	}
+	err := k.conn.Close()
+	k.conn = nil
+	return err
+}
 
 // kunaList is kuna_wasm's `list` document.
 type kunaList struct {
