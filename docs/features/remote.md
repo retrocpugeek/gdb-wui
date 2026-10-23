@@ -120,8 +120,9 @@ Two things an attached process does not bring with it:
 
 - **No terminal.** It keeps the one it already had, so its output goes there
   and the terminal pane stays empty.
-- **No decompilation**, until you click its ELF in the file tree. The decompiler
-  works from a file you loaded, and attaching loads nothing.
+- **No file of its own**, so the decompiler asks gdb which program it has and
+  reads that file. Clicking its ELF in the file tree works too. See
+  [a program gdb-wui did not load](decompilation.md#a-program-gdb-wui-did-not-load).
 
 On Linux, `attach` usually needs permission. The default
 `kernel.yama.ptrace_scope` of 1 allows tracing only a descendant, so attaching
@@ -151,8 +152,9 @@ green. The program is stopped in whatever it was doing, which is `sleep`, so the
 
 `counter` is a global it increments every second, so the
 [Variables pane](variables.md) has something to watch: add `counter`, continue,
-pause again, and it has moved. Click `tracee` in the file tree first if you want
-[decompilation](decompilation.md) as well — attaching loads no file of its own.
+pause again, and it has moved. The [Decompiled view](decompilation.md) works
+too: attaching loads no file of its own, so the decompiler reads the one gdb
+found for the process.
 
 Press **detach** when you are done, and the process carries on without you.
 

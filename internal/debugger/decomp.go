@@ -243,6 +243,12 @@ type decomp struct {
 	// found caches FindExport for one sha256, which decomp.status needs on
 	// every call to say whether Ghidra's decompilation is on offer.
 	foundFor, found string
+	// gdbExe is the executable gdb reported when gdb-wui loaded none — under
+	// `target remote`, say — and gdbAbs and gdbSHA the file read for it here
+	// and its hash; fetchDir holds the ones copied from a target. See
+	// decompprogram.go.
+	gdbExe, gdbAbs, gdbSHA string
+	fetchDir               string
 	// loads counts programs loaded. A sidecar that finishes starting after
 	// another program was loaded describes the wrong one, and is dropped.
 	loads uint64
@@ -280,7 +286,7 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 		return wire.DecompStatus{State: wire.DecompOff, Error: reason}, nil
 	}
 
-	s.maybeStartDecomp()
+	s.maybeStartDecomp(r.ctx)
 
 	s.decomp.mu.Lock()
 	state, errText, client := s.decomp.state, s.decomp.err, s.decomp.client
@@ -332,7 +338,7 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 	// answer, and the user has to be told which they are looking at.
 	// Not when the binary was named: the two files being different is then the
 	// point of the flag, and warning about it would fire on every start.
-	if want := s.st.exeSHA256; s.cfg.Decomp.Binary == "" &&
+	if _, want := s.decompProgram(); s.cfg.Decomp.Binary == "" &&
 		want != "" && ready.Program.SHA256 != "" &&
 		!strings.EqualFold(want, ready.Program.SHA256) {
 		out.Mismatch = fmt.Sprintf(
@@ -346,11 +352,15 @@ func (s *Session) decompStatus(r *request) (any, *wire.Error) {
 //
 // Called from the actor, so it may read session state; the goroutine it
 // launches may not, and everything it needs is captured first.
-func (s *Session) maybeStartDecomp() {
+func (s *Session) maybeStartDecomp(ctx context.Context) {
 	cfg := s.cfg.Decomp
 	if !cfg.any() {
 		return
 	}
+	// What gdb has, when gdb-wui loaded nothing: before the check below,
+	// because a different program replaces a per-program decompiler.
+	s.learnGDBProgram(ctx)
+	progAbs, progSHA := s.decompProgram()
 	// Once one is running, starting or has failed there is nothing to do, and
 	// that is worth knowing before the work below rather than only after it:
 	// naming the project hashes the binary, which is tens of milliseconds on a
@@ -379,11 +389,11 @@ func (s *Session) maybeStartDecomp() {
 	// A sidecar for the program gdb loaded, if there is one, before anything
 	// that would start a Ghidra.
 	if cfg.Sidecars != "" && perProgram {
-		if s.st.exeSHA256 == "" {
+		if progSHA == "" {
 			// Nothing loaded yet to look one up for.
 			return
 		}
-		path := s.findSidecar()
+		path := s.findSidecar(progSHA)
 		if path != "" {
 			s.startSidecar(path)
 			return
@@ -394,7 +404,7 @@ func (s *Session) maybeStartDecomp() {
 		}
 		if cfg.Install == nil {
 			err := fmt.Sprintf("no decompilation of %s (sha256 %s) in %s",
-				filepath.Base(s.st.exePath), short(s.st.exeSHA256), cfg.Sidecars)
+				filepath.Base(progAbs), short(progSHA), cfg.Sidecars)
 			s.decomp.mu.Lock()
 			s.decomp.state = wire.DecompFailed
 			s.decomp.err = err
@@ -435,15 +445,10 @@ func (s *Session) maybeStartDecomp() {
 				return
 			}
 		} else {
-			if s.st.exePath == "" || s.st.exeSHA256 == "" || s.files == nil {
+			if progAbs == "" || progSHA == "" {
 				return
 			}
-			var err error
-			abs, err = s.files.AbsPath(s.st.exePath)
-			if err != nil {
-				return
-			}
-			key = s.st.exeSHA256
+			abs, key = progAbs, progSHA
 		}
 		root := cfg.CacheRoot
 		if root == "" {
@@ -650,12 +655,9 @@ func (s *Session) startSidecar(path string) {
 // TCP, in the background like a sidecar.
 func (s *Session) startKuna() {
 	cfg := s.cfg.Decomp
-	if s.st.exePath == "" || s.files == nil {
+	abs, _ := s.decompProgram()
+	if abs == "" {
 		// Nothing loaded yet.
-		return
-	}
-	abs, err := s.files.AbsPath(s.st.exePath)
-	if err != nil {
 		return
 	}
 	s.startPerProgram(wire.DecompilerKuna, ghidra.KunaGenerator, func() (*ghidra.Client, error) {
@@ -684,8 +686,7 @@ func (s *Session) startKuna() {
 
 // findSidecar is FindExport for the program gdb loaded, remembered for its
 // sha256.
-func (s *Session) findSidecar() string {
-	sha := s.st.exeSHA256
+func (s *Session) findSidecar(sha string) string {
 	s.decomp.mu.Lock()
 	if s.decomp.foundFor == sha {
 		defer s.decomp.mu.Unlock()
@@ -709,7 +710,8 @@ func (s *Session) decompilers() []string {
 	if !cfg.kuna() || cfg.ProjectDir != "" || cfg.Binary != "" {
 		return nil
 	}
-	if cfg.Install == nil && (cfg.Sidecars == "" || s.st.exeSHA256 == "" || s.findSidecar() == "") {
+	_, sha := s.decompProgram()
+	if cfg.Install == nil && (cfg.Sidecars == "" || sha == "" || s.findSidecar(sha) == "") {
 		return nil
 	}
 	return []string{wire.DecompilerGhidra, wire.DecompilerKuna}
@@ -751,7 +753,7 @@ func (s *Session) decompUse(r *request) (any, *wire.Error) {
 	if client != nil {
 		_ = client.Close()
 	}
-	s.maybeStartDecomp()
+	s.maybeStartDecomp(r.ctx)
 	s.emit(wire.EventDecompChanged, map[string]any{})
 	return s.decompStatus(r)
 }
@@ -882,9 +884,14 @@ func (s *Session) closeDecomp() {
 	s.decomp.client = nil
 	s.decomp.closed = true
 	s.decomp.state = wire.DecompOff
+	fetched := s.decomp.fetchDir
+	s.decomp.fetchDir = ""
 	s.decomp.mu.Unlock()
 	if client != nil {
 		_ = client.Close()
+	}
+	if fetched != "" {
+		_ = os.RemoveAll(fetched)
 	}
 }
 
@@ -899,7 +906,12 @@ func (s *Session) decompFunction(r *request) (any, *wire.Error) {
 	s.decomp.mu.Unlock()
 
 	if client == nil {
-		s.maybeStartDecomp()
+		s.maybeStartDecomp(r.ctx)
+		// Read again: asking is what starts it, and the state from before
+		// the ask said nothing had been.
+		s.decomp.mu.Lock()
+		state, errText = s.decomp.state, s.decomp.err
+		s.decomp.mu.Unlock()
 		msg := "the decompiler is not ready"
 		switch state {
 		case wire.DecompStarting:
@@ -908,6 +920,9 @@ func (s *Session) decompFunction(r *request) (any, *wire.Error) {
 			msg = "the decompiler failed: " + errText
 		case "", wire.DecompOff:
 			msg = "no decompiler is configured"
+			if s.cfg.Decomp.any() {
+				msg = "the decompiler has no program yet: load one, or start one under gdb"
+			}
 		}
 		return nil, wire.NewError(wire.CodeNotReady, msg)
 	}
@@ -1436,11 +1451,8 @@ func (s *Session) decompBias(r *request, client *ghidra.Client) (int64, string) 
 // the ELF header, which gdb-wui can read itself; its runtime value is what gdb
 // prints in `info files`. Neither needs a symbol table.
 func (s *Session) biasFromEntryPoint(r *request, client *ghidra.Client) (int64, string) {
-	if s.files == nil || s.st.exePath == "" {
-		return 0, ""
-	}
-	abs, err := s.files.AbsPath(s.st.exePath)
-	if err != nil {
+	abs, _ := s.decompProgram()
+	if abs == "" {
 		return 0, ""
 	}
 	f, err := elf.Open(abs)
@@ -1484,15 +1496,12 @@ func (s *Session) biasFromEntryPoint(r *request, client *ghidra.Client) (int64, 
 // Read from the ELF rather than asked of Ghidra, which reports where the image
 // starts but not how far it goes.
 func (s *Session) exeImageRange(client *ghidra.Client) (lo, hi uint64, ok bool) {
-	if s.files == nil || s.st.exePath == "" || s.cfg.Decomp.Base != "" {
+	abs, _ := s.decompProgram()
+	if abs == "" || s.cfg.Decomp.Base != "" {
 		// With a raw image the executable gdb loaded, if there is one at all,
 		// describes a different file. Declining to answer costs the "not
 		// inside this program" message and leaves Ghidra's own "no function"
 		// in its place, which is worse but not wrong.
-		return 0, 0, false
-	}
-	abs, err := s.files.AbsPath(s.st.exePath)
-	if err != nil {
 		return 0, 0, false
 	}
 	f, err := elf.Open(abs)
@@ -1885,7 +1894,7 @@ func (s *Session) decompNames(r *request) (any, *wire.Error) {
 		// Same as the pane: asking is what starts it. Configuring -ghidra is
 		// the opt-in, and a user who never opens the Decompiled tab should
 		// still get their stack named.
-		s.maybeStartDecomp()
+		s.maybeStartDecomp(r.ctx)
 		if state == "" {
 			state = wire.DecompOff
 		}

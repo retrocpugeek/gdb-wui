@@ -4,7 +4,9 @@ package debugger_test
 
 import (
 	"context"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -90,5 +92,64 @@ func TestDecompFromKuna(t *testing.T) {
 	do(wire.TypeDecompUse, wire.DecompUseRequest{Decompiler: wire.DecompilerGhidra})
 	if st = waitReady(t, do); st.Decompiler != wire.DecompilerGhidra || st.GhidraVersion == "" {
 		t.Fatalf("demo, Ghidra again: status %+v", st)
+	}
+}
+
+// TestDecompKunaOverGdbserver decompiles a program gdb-wui never loaded: one a
+// gdbserver runs, from outside the project, reached with `target remote`. gdb
+// reports it as target:<path>, and the decompiler is given a copy fetched
+// through gdb.
+func TestDecompKunaOverGdbserver(t *testing.T) {
+	bin, specs := os.Getenv("KUNA_WASM"), os.Getenv("KUNA_SPECS")
+	if bin == "" || specs == "" {
+		t.Skip("KUNA_WASM and KUNA_SPECS are not set")
+	}
+	server, err := exec.LookPath("gdbserver")
+	if err != nil {
+		t.Skip("gdbserver is not installed")
+	}
+	var dir string
+	kit := decompHarnessWith(t, func(cfg *debugger.DecompConfig) {
+		dir = filepath.Dir(cfg.CacheRoot)
+		*cfg = debugger.DecompConfig{KunaWasm: bin, KunaSpecs: specs}
+	})
+	do := kit.do
+
+	// Outside the project, under a name the project does not have.
+	elsewhere := filepath.Join(t.TempDir(), "remote-prog")
+	data, err := os.ReadFile(filepath.Join(dir, "stripped"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(elsewhere, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	gs := exec.Command(server, addr, elsewhere)
+	if err := gs.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { gs.Process.Kill(); gs.Wait() }()
+	time.Sleep(500 * time.Millisecond)
+
+	do(wire.TypeConsoleExec, wire.ConsoleExecRequest{Line: "target remote " + addr})
+	st := waitReady(t, do)
+	if st.Decompiler != wire.DecompilerKuna || st.Program == nil || st.Program.Name != "remote-prog" {
+		t.Fatalf("status %+v", st)
+	}
+	fn := do(wire.TypeDecompFunction, wire.DecompFunctionRequest{Target: "main"}).(wire.DecompFunction)
+	if !strings.Contains(fn.Text, "printf") {
+		t.Errorf("main over gdbserver: %.300q", fn.Text)
+	}
+	// Stopped at the dynamic loader's entry: an address in no part of the
+	// program, said so rather than "no decompiler".
+	if _, werr := kit.try(wire.TypeDecompFunction, wire.DecompFunctionRequest{}); werr == nil ||
+		strings.Contains(werr.Message, "no decompiler") {
+		t.Errorf("the loader's frame: %v", werr)
 	}
 }
