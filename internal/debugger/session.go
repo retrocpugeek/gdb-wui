@@ -80,6 +80,9 @@ type Session struct {
 	// decomp is the optional decompiler. It is not in st, because its cold start
 	// takes seconds to minutes and must not happen on the actor.
 	decomp decomp
+	// decompUsing mirrors decomp.using for the log lines, which are written
+	// from places that may hold decomp.mu.
+	decompUsing atomic.Value
 
 	// reqs carries browser requests to the actor.
 	reqs chan *request

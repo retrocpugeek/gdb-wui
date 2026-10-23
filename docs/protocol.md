@@ -718,6 +718,11 @@ either — a Ghidra or a sidecar, and a kuna — and is absent when there is no
 choice; `decomp.use` picks one. kuna is read-only, so `editable` is false while
 it is in use.
 
+`endpoint` says where the decompiler is — the address of a kuna served over
+TCP or the path of a native one, a sidecar's file name, or a Ghidra project's
+directory — `kunaVersion` is the kuna build when it reports one, and
+`readySince` is when it last became ready (RFC 3339).
+
 `editable` says whether `decomp.rename`, `decomp.retype` and `decomp.comment`
 will be answered. It is false for a project named with `-ghidra-project`.
 
@@ -953,7 +958,9 @@ told; changing a prototype also changes how every *caller* decompiles, so the
 event means "refetch what you are showing" rather than "patch this function".
 
 `decompLog` is not behind a flag, unlike the raw MI stream, because its volume
-is one line per operation — start, import, ready, and one per decompile.
+is one line per operation — start, import, ready, and one per decompile. Its
+`decompiler` names the decompiler a line is about, `ghidra` or `kuna`, and is
+absent for one about neither, such as copying a program from a remote target.
 Without it, a pane that says "starting" for a minute gives no way to tell
 whether anything is happening. Ghidra's own output is filtered on the way
 through: its `REPORT:` milestones and its complaints go to the browser, while

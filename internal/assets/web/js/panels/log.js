@@ -61,10 +61,13 @@ export function createLog({ element }) {
     // operation, and Ghidra's milestones. Not behind a flag like the MI
     // stream, because the volume is human-paced and the alternative is a pane
     // that says "starting" for a minute with nothing to show for it.
-    decomp(text, level = "info", millis = 0) {
+    // Each line is prefixed with the decompiler it is about, which the server
+    // names, and "decompiler" for one about neither.
+    decomp(text, level = "info", millis = 0, decompiler = "") {
       const kind = level === "error" ? "decomp-error"
         : level === "warn" ? "decomp-warn" : "decomp";
-      push(kind, millis > 0 ? `ghidra: ${text} (${formatMillis(millis)})` : `ghidra: ${text}`);
+      const who = decompiler || "decompiler";
+      push(kind, millis > 0 ? `${who}: ${text} (${formatMillis(millis)})` : `${who}: ${text}`);
     },
     system(text) {
       push("system", text);

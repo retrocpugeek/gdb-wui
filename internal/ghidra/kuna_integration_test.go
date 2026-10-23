@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,14 +106,19 @@ func TestKunaOverTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
+	var mu sync.Mutex
 	uploads := 0
 	held := map[string][]byte{}
+	var conns []net.Conn
 	go func() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
 			go func() {
 				defer conn.Close()
 				r := bufio.NewReader(conn)
@@ -131,17 +137,28 @@ func TestKunaOverTCP(t *testing.T) {
 					var reply any
 					switch req.Op {
 					case "load":
+						mu.Lock()
 						_, have := held[req.SHA]
+						mu.Unlock()
 						reply = map[string]any{"ok": true, "have": have, "version": "test"}
 					case "upload":
 						buf := make([]byte, req.Size)
 						if _, err := io.ReadFull(r, buf); err != nil {
 							return
 						}
+						mu.Lock()
 						held[req.SHA] = buf
 						uploads++
+						mu.Unlock()
 						reply = map[string]any{"ok": true}
 					case "run":
+						mu.Lock()
+						_, ok := held[req.SHA]
+						mu.Unlock()
+						if !ok {
+							reply = map[string]any{"ok": false, "error": "no binary " + req.SHA}
+							break
+						}
 						out, err := native.Run(context.Background(), req.Args...)
 						if err != nil {
 							reply = map[string]any{"ok": false, "error": err.Error()}
@@ -158,7 +175,7 @@ func TestKunaOverTCP(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	for i := 0; i < 2; i++ {
-		engine, err := ghidra.DialKuna(ctx, ln.Addr().String(), bin)
+		engine, err := ghidra.DialKuna(ctx, ln.Addr().String(), bin, t.Logf)
 		if err != nil {
 			t.Fatalf("DialKuna: %v", err)
 		}
@@ -174,7 +191,53 @@ func TestKunaOverTCP(t *testing.T) {
 		}
 		c.Close()
 	}
+	mu.Lock()
 	if uploads != 1 {
 		t.Errorf("%d uploads, want the binary sent once", uploads)
+	}
+	mu.Unlock()
+
+	// The far end goes away, and then forgets the binary: each time the next
+	// decompile connects or sends it again, and works.
+	engine, err := ghidra.DialKuna(ctx, ln.Addr().String(), bin, t.Logf)
+	if err != nil {
+		t.Fatalf("DialKuna: %v", err)
+	}
+	c, err := ghidra.StartKuna(ctx, engine, bin, ghidra.Options{Timeout: time.Minute})
+	if err != nil {
+		t.Fatalf("StartKuna: %v", err)
+	}
+	defer c.Close()
+	list, err := c.Functions(ctx, 0, 5000, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fresh []string
+	for _, f := range list.Functions {
+		if !f.Thunk {
+			fresh = append(fresh, f.Entry)
+		}
+	}
+	if len(fresh) < 2 {
+		t.Fatalf("only %d functions", len(fresh))
+	}
+	mu.Lock()
+	for _, conn := range conns {
+		conn.Close()
+	}
+	mu.Unlock()
+	if _, err := c.Decompile(ctx, fresh[0]); err != nil {
+		t.Errorf("after the connection dropped: %v", err)
+	}
+	mu.Lock()
+	clear(held)
+	mu.Unlock()
+	if _, err := c.Decompile(ctx, fresh[1]); err != nil {
+		t.Errorf("after the far end forgot the binary: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if uploads != 2 {
+		t.Errorf("%d uploads, want one more after the far end forgot", uploads)
 	}
 }

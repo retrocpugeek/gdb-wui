@@ -350,6 +350,20 @@ With both a Ghidra (or a sidecar for the program) and `-kuna`, a sidecar or
 Ghidra is used first, and the Decompiled view's header has a picker: switching
 shows the same function in the other decompiler's words.
 
+### Which decompiler, and how it is doing
+
+The end of the Decompiled view's header says which decompiler is in use and
+what it knows — `kuna 8ad9545 · 918 functions`, `Ghidra 12.1.3 · 2464
+functions` — or that it is starting, or in red that it failed. Its tooltip has
+the rest: where the decompiler is (the address of a kuna over TCP, a sidecar's
+file), the program and its language, when it became ready, and the error. The
+Log tab has a line for each thing it does, prefixed `kuna:` or `ghidra:`.
+
+A kuna over TCP is a connection that can go: the page serving it can restart
+its worker, which forgets the program it was sent. The next decompile then
+connects again or sends the program again, once, and says so in the log,
+rather than failing until gdb-wui is restarted.
+
 ## Using an existing Ghidra project
 
 To use names and types you have already created in Ghidra, pass the project and

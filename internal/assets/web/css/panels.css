@@ -297,6 +297,7 @@
 }
 .src-empty { color: var(--fg-2); }
 .src-error { color: var(--danger); }
+.panel-sub.is-error { color: var(--danger); }
 
 /* --- generic lists (stack, breakpoints) ----------------------------------- */
 

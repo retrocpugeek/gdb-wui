@@ -1012,7 +1012,8 @@ function handleEvent(msg) {
       }
       break;
     case "decompLog":
-      log.decomp(msg.payload?.text ?? "", msg.payload?.level, msg.payload?.millis);
+      log.decomp(msg.payload?.text ?? "", msg.payload?.level, msg.payload?.millis,
+        msg.payload?.decompiler);
       break;
     case "decompChanged":
       // The stack was drawn before the decompiler had anything to say. Ask
@@ -2321,10 +2322,50 @@ function updateCenterMeta() {
     path.textContent = "";
     meta.textContent =
       name === "disasm" ? disasm.summary()
-        : name === "decomp" ? decomp.summary()
+        : name === "decomp" ? [decomp.summary(), decompStatusLabel(st)].filter(Boolean).join(" · ")
           : name === "memory" ? memory.summary()
             : "";
+    meta.title = name === "decomp" ? decompStatusDetail(st) : "";
+    meta.classList.toggle("is-error", name === "decomp" && st?.state === "failed");
   }
+}
+
+// decompStatusLabel is the decompiler's state in a few words, for the end of
+// the Decompiled header: which one, which build and how much it knows, or that
+// it is starting or has failed. The end, because the header truncates from the
+// left and this is what must stay visible when the pane is narrow.
+function decompStatusLabel(st) {
+  if (!st || st.state === "off" || !st.decompiler) return "";
+  const kuna = st.decompiler === "kuna";
+  const name = kuna ? "kuna" : "Ghidra";
+  const version = kuna ? (st.kunaVersion ?? "").slice(0, 7) : (st.ghidraVersion ?? "");
+  switch (st.state) {
+    case "starting": return `${name} starting…`;
+    case "failed": return `${name} failed`;
+    case "ready": {
+      const parts = [version ? `${name} ${version}` : name];
+      if (st.functionCount) parts.push(`${st.functionCount} functions`);
+      return parts.join(" · ");
+    }
+  }
+  return name;
+}
+
+// decompStatusDetail is the header's tooltip: where the decompiler is, since
+// when, and what went wrong.
+function decompStatusDetail(st) {
+  if (!st || st.state === "off" || !st.decompiler) return "";
+  const lines = [];
+  const kuna = st.decompiler === "kuna";
+  lines.push(kuna
+    ? `kuna${st.kunaVersion ? " " + st.kunaVersion : ""}, Ghidra's decompiler in Rust; read-only`
+    : `Ghidra${st.ghidraVersion ? " " + st.ghidraVersion : ""}${st.editable ? "" : "; read-only"}`);
+  if (st.endpoint) lines.push((kuna && /:\d+$/.test(st.endpoint) ? "at " : "from ") + st.endpoint);
+  if (st.program?.name) lines.push(`decompiling ${st.program.name}${st.program.languageId ? " (" + st.program.languageId + ")" : ""}`);
+  if (st.readySince) lines.push(`ready since ${new Date(st.readySince).toLocaleTimeString()}`);
+  if (st.state === "starting") lines.push("starting");
+  if (st.state === "failed" && st.error) lines.push(`failed: ${st.error}`);
+  return lines.join("\n");
 }
 
 // fetchDecomp puts one particular function in the pane, named by an address or
@@ -2437,6 +2478,7 @@ function refreshDecompStatus() {
   return send("decomp.status", {})
     .then((st) => {
       store.set("session.decomp", st);
+      updateCenterMeta();
       if (st.mismatch) setStatus(st.mismatch, true);
       return st;
     })
