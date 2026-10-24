@@ -29,7 +29,10 @@ export function createVirtualList({ container, rowHeight, renderRow, overscan = 
   function visibleRange() {
     const scrollTop = container.scrollTop;
     const height = container.clientHeight || rowHeight * 20;
-    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+    // At most count: a list that shrank while its panel was hidden keeps the
+    // old scrollTop (nothing lays out a hidden scroller to clamp it), which
+    // can be past the new end.
+    const first = Math.min(count, Math.max(0, Math.floor(scrollTop / rowHeight) - overscan));
     const visible = Math.ceil(height / rowHeight) + overscan * 2;
     return { first, last: Math.min(count, first + visible) };
   }
