@@ -55,10 +55,14 @@ type options struct {
 	// has to be reached by hand: an emulator's stub needs an architecture set
 	// and an address connected to before there is anything to debug.
 	gdbCommands gdbCommands
-	noGDB       bool
-	miLog       bool
-	printURL    bool
-	idleExit    time.Duration
+	// How long gdb has to come up and load -exe. Generous by default; longer
+	// still on a slow machine, such as one emulated in a browser, where a gdb
+	// can take more than half a minute to start.
+	gdbStartTimeout time.Duration
+	noGDB           bool
+	miLog           bool
+	printURL        bool
+	idleExit        time.Duration
 
 	// The MCP bridge, which joins a running server rather than starting one.
 	// Three flags rather than one because reading a binary, writing into the
@@ -113,6 +117,8 @@ func main() {
 			"run in the order given. gdb's -ex by another name, and how a target "+
 			"that has to be reached by hand is reached: -gdb-command 'set "+
 			"architecture arm' -gdb-command 'target remote 127.0.0.1:9999'")
+	flag.DurationVar(&opt.gdbStartTimeout, "gdb-start-timeout", 30*time.Second,
+		"how long gdb has to start and load -exe before gdb-wui gives up")
 	flag.BoolVar(&opt.noGDB, "no-gdb", false, "browse the project without starting a debugger")
 	flag.BoolVar(&opt.miLog, "mi-log", false, "stream raw MI traffic to the browser's log pane")
 	flag.BoolVar(&opt.printURL, "print-url", false, "print a fresh login URL for an already-running gdb-wui and exit")
@@ -505,7 +511,7 @@ func run(opt options) error {
 
 // startDebugger brings up gdb and the session that drives it.
 func startDebugger(opt options, files *srcfs.FS, h *hub.Hub, logf func(string, ...any)) (*debugger.Session, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), opt.gdbStartTimeout)
 	defer cancel()
 
 	session, err := debugger.New(ctx, debugger.Config{
